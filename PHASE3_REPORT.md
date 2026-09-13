@@ -365,14 +365,21 @@ Commit `84116bb` had exactly one intended effect: backfill the real Phase 3 comm
 remote-synchronisation result into §11 of this report. What it actually committed was a
 `PHASE3_REPORT.md` whose non-ASCII characters had been re-encoded through a lossy path:
 
-| Intended character | Committed rendering, quoted as code points |
-| --- | --- |
-| `—` U+2014 em dash | U+9225 U+003F |
-| `–` U+2013 en dash | U+9225 U+003F, or U+9225 U+63C7 where the next byte happened to complete a valid sequence |
-| `…` U+2026 ellipsis | U+9225 U+003F |
-| `§` U+00A7 section sign | U+0025 U+003F |
+| Intended character | Committed rendering, quoted as code points | Occurrences |
+| --- | --- | --- |
+| `—` U+2014 em dash, `–` U+2013 en dash, `…` U+2026 ellipsis | U+9225 U+003F | 51 |
+| `–` U+2013 en dash before `P3.7` | U+9225 U+63DA | 1 |
+| `–` U+2013 en dash before `A7` (two sites) | U+9225 U+63C2 | 2 |
+| `–` U+2013 en dash before `D016` | U+9225 U+63C7 | 1 |
+| `§` U+00A7 section sign before `8` | U+6402 U+0038 | 1 |
 
 A UTF-8 byte order mark was introduced at the start of the file as well.
+
+The majority form is the telling one. Where the byte after the CJK character could not be
+represented, it was replaced by an ASCII `?`; where it happened to complete a valid sequence with
+its neighbour instead, the two bytes survived as a second CJK character. That is why four different
+renderings appear for three intended characters, and why the original characters cannot be recovered
+from the result — see §12.2.
 
 The rendering is quoted by code point rather than written out. A committed example of the corruption
 would itself trip the integrity guard added in §12.5, and reproducing it verbatim would be a
