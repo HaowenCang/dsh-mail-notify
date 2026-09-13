@@ -20,6 +20,44 @@
 
 ---
 
+## 文档状态说明（Phase 2 更新）
+
+本文件是项目的总设计文档，记录业务要求、安全约束与最终目标。其结构在一次运行时实证之后经过了重新编排，编排变更见下方 `## Execution Roadmap`。
+
+Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，原文语义未被删除：
+
+1. `§6`、`§15` 的 `smtpPasswordEnv` 更名为 `smtpPasswordCredential`。
+2. `§3` 的 `toolErrors` 更名为 `explicitToolErrorCount`，并明确其口径。
+3. `§2` 的 `completed → 通知` 补充无可见文本的抑制条件。
+
+本文件的原始「第一阶段 / 第二阶段 / 第三阶段」编排（§11–§13）保留原样作为设计意图记录，但**不再表示实际执行顺序**；实际执行阶段以 `## Execution Roadmap` 为准。详细裁决理由见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D016。
+
+---
+
+## Execution Roadmap
+
+项目的实际执行历史与最初设想不同。最初的编排把「Inspect」与「创造模式原型」当作两个先后阶段，把正式实现当作第三阶段；实际执行中，Inspect 的结论能否成立只能由运行中的原型判定，二者不可分离，因此合并为 Phase 1，并把「设计冻结」独立为 Phase 2。
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| Phase 1 — Runtime verification | 运行时 API Inspect、Host-only 动态原型验证、Runtime Contract 固化 | **PASS** |
+| Phase 2 — Design freeze | 设计冻结与正式实现规格：决策记录、架构、配置、安全、测试矩阵、实现计划 | **PASS** |
+| Phase 3 — Formal implementation | TypeScript 正式项目、测试矩阵、打包与安装验证 | pending |
+
+重新编排的理由：
+
+1. **Inspect 与原型不可分离。** 原型本身是 Inspect 结论的唯一运行时证据来源。实际执行中原型的三个缺陷（mid-turn 状态丢失导致分类错误、时长被伪造为 `0`、可选字段使整批输出不可序列化）都只能在运行中发现，静态 Inspect 无法暴露。把二者拆成两个阶段会产出未经运行时证伪的契约。
+2. **设计冻结是独立且必要的阶段。** Phase 1 移交的唯一实质设计决策（工具错误判定口径）在 Phase 2 才被解决，而它直接决定候选 DTO 的字段与完成分类语义。若 Phase 1 结束后直接编码，该决策会在实现中途被动做出，缺少文档依据，且会影响已经写好的模块边界。
+3. **交付物形态不同。** Phase 1/2 的交付物是文档与判据；Phase 3 的交付物是代码与可安装产物。二者的验收标准、失败模式与所需证据类型不同，混为一阶段会使「看起来已完成」与「实际可用」难以区分。
+
+Phase 4 的拆分（例如把「运行时集成与发布」独立出来）在 Phase 3 的实际工作量明确之前不作预设。当前 §20 的验证与交付标准已包含打包、安装与回滚验证，暂不拆分。
+
+各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)。
+
+Phase 2 冻结的实现规格见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md)、[`docs/SECURITY.md`](docs/SECURITY.md)、[`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)、[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)、[`docs/DECISIONS.md`](docs/DECISIONS.md)。
+
+---
+
 # 0. 工作原则
 
 本项目必须遵守以下规则。
@@ -99,7 +137,7 @@
 
 默认：
 
-`completed` → 通知
+`completed` → 通知，但仅在存在用户可见文本时（`visibleText.trim().length === 0` 时抑制，见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D011）
 
 `max-tokens` → 通知，但必须明确标记为 max-tokens，不得写成成功完成
 
@@ -127,11 +165,11 @@
 
 `completed-clean`
 
-Turn reason 是 completed 且 toolErrors == 0。
+Turn reason 是 completed 且 `explicitToolErrorCount == 0`。
 
 `completed-with-tool-errors`
 
-Turn reason 是 completed 且 toolErrors > 0。
+Turn reason 是 completed 且 `explicitToolErrorCount > 0`。
 
 `max-tokens`
 
@@ -142,6 +180,8 @@ Turn 达到模型输出 Token 上限。
 Turn 发生错误。
 
 邮件主题和正文必须准确反映这些状态。
+
+**口径说明（Phase 2 冻结）。** 原 `toolErrors` 更名为 `explicitToolErrorCount`，含义严格限定为「DSH runtime 明确标记为失败的工具结果数量」，判据为 `event.data.message.content[0].isError === true` 或 `event.data.error !== undefined`。基于 stdout/stderr 文本推断的 shell 失败**不计入**——bash / pwsh 的非零退出被 DSH 设计为正常 Tool Result。因此 `completed-clean` 的含义是「DSH 未报告显式工具失败」，不等价于「所有命令的业务执行均成功」。若未来需要检测命令执行问题，使用独立概念 `executionIssueCount`，且不采用字符串解析算法。依据见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D005。
 
 ---
 
@@ -237,11 +277,13 @@ SMTP Password 不允许直接放入 cordis.patch.yml。
 
 配置只保存：
 
-`smtpPasswordEnv`
+`smtpPasswordCredential`
 
 例如：
 
 `DSH_MAIL_SMTP_PASSWORD`
+
+**更名说明（Phase 2）。** 本字段原名 `smtpPasswordEnv`，现更名为 `smtpPasswordCredential`。原因是运行时 `CredentialRef` 是一个**分层解析器**（按序解析自进程环境变量、provider 管理的存储与 `.env` 文件），名称中的 `Env` 会误导用户以为只能通过环境变量配置。字段名与运行时类型 `CredentialRef`、服务方法 `resolve(ref: CredentialRef)` 保持一致，实质要求（secret 不进入 `cordis.patch.yml`、每次操作解析、不缓存）不变。依据见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D010 与 D016 第 3 项。
 
 在每一次发送操作开始时通过 Credential service 解析 secret。
 
@@ -343,6 +385,8 @@ Session disposed 时清理该 Session 所有状态。
 
 # 11. 第一阶段：Inspect
 
+> **阶段编号说明（Phase 2）。** 本节与 §12、§13 保留了最初的三阶段编排，作为设计意图记录。实际执行中，本节与 §12 合并为 **Phase 1（Runtime verification）**，§13 成为 **Phase 3（Formal implementation）**，二者之间增设 **Phase 2（Design freeze）**。理由见文首 `## Execution Roadmap`。以下内容的要求本身未被修改。
+
 现在不要编写正式 npm 插件。
 
 首先：
@@ -443,6 +487,8 @@ tool error count
 
 # 13. 第三阶段：正式项目
 
+> **阶段对应（Phase 2）。** 本节即 **Phase 3（Formal implementation）**。本节的模块清单为最低要求，Phase 2 已将模块布局扩展并逐模块冻结职责边界，见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 第 3 节与 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)。执行顺序亦已拆分为 P3.1–P3.7 七步。
+
 动态原型验证通过之后，在 workspace 中建立：
 
 dsh-mail-notify/
@@ -514,7 +560,7 @@ smtpSecure
 
 smtpUser
 
-smtpPasswordEnv
+smtpPasswordCredential
 
 from
 
@@ -646,6 +692,20 @@ Credential 配置方法
 
 故障排查
 
+**交付阶段划分（Phase 2 更新）。** 上述清单原为一次性交付，现按阶段划分：
+
+| 文档 | 交付阶段 | 说明 |
+| --- | --- | --- |
+| `docs/ARCHITECTURE.md` | Phase 2 已交付 | 数据流与模块边界已冻结 |
+| `docs/SECURITY.md` | Phase 2 已交付 | 安全边界已声明 |
+| `docs/TEST_PLAN.md` | Phase 2 已交付 | 测试矩阵已列出 |
+| `docs/PRODUCT_SPEC.md` | Phase 3 | 功能范围与非目标在实现完成后才能准确陈述；Phase 2 的范围声明见 `docs/ARCHITECTURE.md` 第 11 节「明确非目标」 |
+| `docs/DSH_INTEGRATION.md` | Phase 3 | 内容为「本插件**实际使用**的接口及版本」，在正式代码存在前无法确定；当前由 [`PHASE1_RUNTIME_CONTRACT.md`](PHASE1_RUNTIME_CONTRACT.md) 承担该职责 |
+| `docs/RELEASE.md` | Phase 3 | 描述尚不存在的构建与安装流程会产出与最终实现不符的内容 |
+| `README.md` 的完整用户文档 | Phase 3 | 安装 / 配置 / Credential / 启动 / 测试邮件 / 卸载 / 故障排查七项，在产物可安装之前无法编写 |
+
+Phase 2 另交付四份本文档未列出的规格文件：[`docs/DECISIONS.md`](docs/DECISIONS.md)（决策记录）、[`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md)（配置规范）、[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)（实现计划）、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)（阶段报告）。依据见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D016 第 7 项。
+
 ---
 
 # 19. 安全要求
@@ -723,6 +783,8 @@ credential
 ---
 
 # 21. 工作方式
+
+> **阶段适用范围（Phase 2）。** 本节面向实现阶段。Phase 2 的职责是设计冻结，其交付物是规格文档，因此「实际完成项目文件」在该阶段解释为「实际完成文档、判定与裁决」，而不是创建源码。Phase 2 明确禁止创建 `src/`、安装 Nodemailer、连接 SMTP、发送邮件或请求用户提供密码。
 
 不要只告诉用户应该写什么。
 
