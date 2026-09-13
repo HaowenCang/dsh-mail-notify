@@ -323,7 +323,7 @@ final remote   (见 §12 提交后回填)
 sync status    (见 §12)
 ```
 
-本阶段无 `src/**` 修改，因此提交分两步：文档提交先行，随后是本报告的最终修订提交。按 §31，未使用 `fix: support dsh 0.1.5-rc.2` 形式的消息，因为没有对应代码修复。
+本阶段无 `src/**` 修改，因此提交分两步：文档提交先行（`ee8c956`），随后是本报告的最终修订提交。按 §31，未使用 `fix: support dsh 0.1.5-rc.2` 形式的消息，因为没有对应代码修复。
 
 未执行：`npm publish`、`git tag v0.1.0`、`git push --tags`、GitHub Release。
 
