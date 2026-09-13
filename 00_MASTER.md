@@ -46,6 +46,7 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 3.1 — Report integrity | 报告编码与文本完整性回归修复 | **PASS** |
 | Phase 4 — Real SMTP E2E + Release Candidate Audit | 真实 SMTP 合成 smoke 与真实 Agent → Email E2E、v0.1.0 RC 全量审计、三个缺陷修复 | **PASS — RC READY**（见 [`PHASE4_REPORT.md`](PHASE4_REPORT.md)） |
 | Phase 4.1 — Credential rotation + DSH rc.2 compatibility | 旧 SMTP 授权码轮换与凭据描述校验、DSH `0.1.5-rc.2` 静态与运行时兼容性验证、Git 全历史 secret 扫描 | **PASS — RELEASE READY**（见 [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)） |
+| Phase 5 — v0.1.0 Formal Release | 将已验证的 `02191a4` 作为不可变的 `v0.1.0` 正式发布：npm package、Git tag、GitHub Release，以及发布后逐项核验 | **PASS**（见 [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md)） |
 
 重新编排的理由：
 
@@ -58,6 +59,8 @@ Phase 4 的拆分（例如把「运行时集成与发布」独立出来）在 Ph
 Phase 4 已按「真实 SMTP E2E 验证 + Release Candidate 审计」执行完毕，结论为 **PASS — RC READY**，并暴露、修复了装配层与配置层的三个缺陷；正式发布（`npm publish`、Git tag、GitHub Release）仍留待后续独立阶段，不在 Phase 4 范围内。
 
 Phase 4.1 处理正式发布前剩余的两个前提：旧 SMTP 授权码的暴露后处置，以及当前最新 DSH `0.1.5-rc.2` 的兼容性验证。结论为 **PASS — RELEASE READY**：轮换后的凭据通过 Credential 服务解析并被 `smtp.163.com` 接受；rc.2 的静态契约与运行时行为均验证通过，且未发现需要修改 `src/**` 的兼容性缺陷。`peerDependencies` 保持 `^0.1.5-rc.1` 不变——该范围在 npm 与 pnpm 下均接受 `0.1.5-rc.2`，但范围本身不是兼容性证据，实测矩阵记入 [`README.md`](README.md)。正式发布仍不在本阶段范围内。
+
+Phase 5 只做发布，不新增功能、不重构，也不修改 SMTP、Credential、runtime adapter 或测试语义。发布对象被固定为已完整验证的 `02191a43894f7cf9323641a1d117ae838c4a0c88` / `0.1.0`：执行开始时先核对 HEAD 与该 commit 相等，之后全部变更均不发生在此之前。npm `dsh-mail-notify@0.1.0`、Git 注释 tag `v0.1.0`（指向 `02191a4`）与 GitHub Release `v0.1.0` 均已创建，且本地 tarball、npm registry 产物与 GitHub Release asset 的 SHA-256 三者一致。发布后的 README 与报告以 post-release documentation commit 形式位于 `main > v0.1.0`，tag 不随之移动。结论为 **PASS**，详见 [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md)。
 
 各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)。
 

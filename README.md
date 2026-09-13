@@ -19,10 +19,11 @@ not assert that later `0.1.5` releases work.
 
 Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md).
 
-**v0.1.0 release candidate validated.** The candidate was validated end to end against a real SMTP
-server: a synthetic smoke message and a real top-level Agent turn both reached `mail.sent` from the
-shipped package. See [`PHASE4_REPORT.md`](PHASE4_REPORT.md). It is not published: no npm release, no
-Git tag, and no GitHub Release exists for it.
+**v0.1.0 released.** The candidate was validated end to end against a real SMTP server: a synthetic
+smoke message and a real top-level Agent turn both reached `mail.sent` from the shipped package. See
+[`PHASE4_REPORT.md`](PHASE4_REPORT.md). It is published as `dsh-mail-notify@0.1.0` on npm, tagged
+`v0.1.0` at commit `02191a4`, with the release archive attached to the GitHub Release. See
+[`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md).
 
 The plugin never reads reasoning text, tool arguments, tool results, the system prompt, or your
 own prompt (unless you explicitly enable the last one), and it never puts the SMTP password in a
@@ -52,6 +53,12 @@ limitations discovered later:
 
 The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so installing the
 package also mounts it.
+
+```powershell
+dsh plugin --profile web add dsh-mail-notify@0.1.0
+```
+
+For development, or on a machine without registry access, install the packed archive instead:
 
 ```powershell
 # From the directory holding the packed archive:
@@ -216,9 +223,11 @@ tests use the built-in debug sink or a stub transport, and no test opens a socke
 ## Update
 
 ```powershell
-npm pack
-dsh plugin --profile web add ./dsh-mail-notify-<new-version>.tgz
+dsh plugin --profile web add dsh-mail-notify@<new-version>
 ```
+
+For a locally packed archive, `npm pack` followed by
+`dsh plugin --profile web add ./dsh-mail-notify-<new-version>.tgz` works the same way.
 
 Restart DSH afterwards. An update replaces the installed copy; your patch file is untouched.
 
@@ -307,6 +316,8 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`PHASE3_REPORT.md`](PHASE3_REPORT.md) | Phase 3 report: implementation, verification results, packaging, runtime integration, git sync |
 | [`PHASE4_REPORT.md`](PHASE4_REPORT.md) | Phase 4 report: real SMTP end-to-end validation and the v0.1.0 release candidate audit, including the four defects found and fixed |
 | [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) | Phase 4.1 report: SMTP credential rotation, DSH `0.1.5-rc.2` compatibility verification, secret history scan, and the release-readiness decision |
+| [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
+| [`RELEASE_NOTES_V0.1.0.md`](RELEASE_NOTES_V0.1.0.md) | The release notes published on the GitHub Release |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D016 decision records with reasons, rejected alternatives, and consequences |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module layout and per-module responsibility boundaries |
 | [`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md) | Configuration specification: fields, defaults, validation, failure behaviour |
