@@ -43,6 +43,8 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 1 — Runtime verification | 运行时 API Inspect、Host-only 动态原型验证、Runtime Contract 固化 | **PASS** |
 | Phase 2 — Design freeze | 设计冻结与正式实现规格：决策记录、架构、配置、安全、测试矩阵、实现计划 | **PASS** |
 | Phase 3 — Formal implementation | TypeScript 正式项目、测试矩阵、打包与安装验证 | **PASS WITH SMTP SMOKE DEFERRED**（见 [`PHASE3_REPORT.md`](PHASE3_REPORT.md)） |
+| Phase 3.1 — Report integrity | 报告编码与文本完整性回归修复 | **PASS** |
+| Phase 4 — Real SMTP E2E + Release Candidate Audit | 真实 SMTP 合成 smoke 与真实 Agent → Email E2E、v0.1.0 RC 全量审计、三个缺陷修复 | **PASS — RC READY**（见 [`PHASE4_REPORT.md`](PHASE4_REPORT.md)） |
 
 重新编排的理由：
 
@@ -52,7 +54,9 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 
 Phase 4 的拆分（例如把「运行时集成与发布」独立出来）在 Phase 3 的实际工作量明确之前不作预设。当前 §20 的验证与交付标准已包含打包、安装与回滚验证，暂不拆分。
 
-各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)。
+Phase 4 已按「真实 SMTP E2E 验证 + Release Candidate 审计」执行完毕，结论为 **PASS — RC READY**，并暴露、修复了装配层与配置层的三个缺陷；正式发布（`npm publish`、Git tag、GitHub Release）仍留待后续独立阶段，不在 Phase 4 范围内。
+
+各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)。
 
 Phase 2 冻结的实现规格见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md)、[`docs/SECURITY.md`](docs/SECURITY.md)、[`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)、[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)、[`docs/DECISIONS.md`](docs/DECISIONS.md)。
 
