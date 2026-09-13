@@ -437,9 +437,9 @@ DSH uninstall     → 依赖与 dsh.profile.bundles 条目同时移除，compose
 
 ```text
 starting SHA    eebe8a9c4fee2f807727a7d092ad61f38a894ebf
-final local     555eef4cb9ffcb101b2b797f82efe63452039c56
-remote SHA      555eef4cb9ffcb101b2b797f82efe63452039c56
-sync status     git rev-list --left-right --count origin/main...HEAD = 0	0（已同步）
+final local     代码、测试与文档的终态为 555eef4cb9ffcb101b2b797f82efe63452039c56；
+                其后的提交只修正本报告自身记录的事实，不再改动实现、测试或其它文档
+remote SHA      git rev-list --left-right --count origin/main...HEAD = 0	0（与本地 HEAD 相同）
 v0.1.0 tag      0d113e70406330c373eb0a1fef6cc8e78a837c30（annotated tag 对象；指向的 commit 仍为 02191a43894f7cf9323641a1d117ae838c4a0c88）
 working tree    clean
 ```
@@ -459,7 +459,7 @@ dsh-mail-notify-0.1.1.tgz   89 996 bytes
 sha256                      f867733873f274c195fad66ccd3a656b7edb83a1a2362f5f8601af3bde58375f
 ```
 
-未执行 `reset --hard`、`clean`、`rebase`、force push，未移动或重建任何 tag，未执行 `npm publish`、`git tag v0.1.1`、`git push --tags`、GitHub Release。`git status --porcelain` 在三次提交后为空。
+未执行 `reset --hard`、`clean`、`rebase`、force push，未移动或重建任何 tag，未执行 `npm publish`、`git tag v0.1.1`、`git push --tags`、GitHub Release。`git status --porcelain` 在每次提交后均为空。
 
 ---
 
