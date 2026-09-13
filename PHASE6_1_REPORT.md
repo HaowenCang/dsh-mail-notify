@@ -522,14 +522,23 @@ Nodemailer 的 license 在本次 major 升级中未发生变化，因此**不需
 
 ```text
 starting SHA   c636d0e86f699898629b1e191f21f2c819c3347d
-final SHA      （见 §21）
+final local    a233c25（docs: record phase 6.1 dependency security review）
 remote SHA     （见 §21，要求与 final SHA 相等）
 v0.1.0 tag     0d113e70406330c373eb0a1fef6cc8e78a837c30 -> 02191a43894f7cf9323641a1d117ae838c4a0c88（未移动）
 sync           ahead/behind = 0 0，working tree clean
 ```
 
-提交按三层拆分：依赖升级、验证测试、文档。未 rebase 已发布的 `v0.1.0`，未 force push，
-未移动 `v0.1.0`，未 amend 任何历史发布提交。
+三个提交分别承担依赖升级、验证测试与文档：
+
+| 提交 | 主题 | 内容 |
+| --- | --- | --- |
+| `d93a267` | `chore: upgrade nodemailer to supported major` | `package.json`、`package-lock.json` |
+| `69b7b61` | `test: revalidate smtp transport on nodemailer 10` | 三个测试文件 |
+| `a233c25` | `docs: record phase 6.1 dependency security review` | 报告、四份文档、归档密钥扫描脚本 |
+
+未 rebase 已发布的 `v0.1.0`，未 force push，未移动 `v0.1.0`，未 amend 任何历史发布提交。
+本报告自身的 Git 记录以追加的 report-only 提交固定，与 Phase 6 采用同一做法：报告不声称自己
+所在的提交，而声称代码、测试与文档的终态。
 
 ---
 
