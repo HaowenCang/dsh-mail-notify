@@ -7,6 +7,7 @@ turn's final user-visible model output over SMTP.
 - Version: `0.1.1` (release candidate; `0.1.0` is the released version)
 - Host-only: no browser half, no UI, no Client package
 - Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
+- Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
 
 **Verified DSH versions.** Both candidates below were tested, not inferred from the peer range. The
 `^0.1.5-rc.1` range in `package.json` is a SemVer range, not a compatibility statement, and it does
@@ -14,11 +15,22 @@ not assert that later `0.1.5` releases work.
 
 | DSH version | Status | Evidence |
 | --- | --- | --- |
-| `0.1.5-rc.1` | Verified | Full suite and the runtime contract probe against that installation; real SMTP send; live top-level turn end to end; multi-step turn telemetry |
-| `0.1.5-rc.2` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over a loopback SMTP peer; multi-step turn telemetry |
+| `0.1.5-rc.1` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over both a loopback SMTP peer and real SMTP; multi-step turn telemetry |
+| `0.1.5-rc.2` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over both a loopback SMTP peer and real SMTP; multi-step turn telemetry |
 
-Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) and
-[`PHASE6_REPORT.md`](PHASE6_REPORT.md).
+Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md),
+[`PHASE6_REPORT.md`](PHASE6_REPORT.md), and [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md).
+
+**Nodemailer 10.** Phase 6's telemetry release candidate originally retained Nodemailer 7.x; the
+pre-release security review upgraded it to the supported major. Nodemailer supports only its current
+major for security fixes, and 7.x was inside the affected range of several advisories including
+`GHSA-2x7j-588g-ccc2` (a quadratic-time address parser). The range is declared as `^10.0.9`, so a
+fresh install cannot resolve back onto an unpatched line and cannot cross to `11` unattended.
+Nodemailer 10 ships its own TypeScript declarations, so `@types/nodemailer` is not installed
+alongside it — the two together produce conflicting declarations of the same module. The upgrade
+changed no source line: the plugin reaches Nodemailer through one file and one call shape. See
+[`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md).
+
 
 **v0.1.1 is a release candidate, not a release.** It has not been published to npm, tagged, or
 released on GitHub. It changes what the email's token line means, so a reader who compares a `0.1.0`

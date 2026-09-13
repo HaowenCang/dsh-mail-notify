@@ -89,6 +89,14 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
 
 不提供任何形式的 TLS 关闭开关，包括「仅用于调试」的开关：此类开关在实践中会被长期留在配置里，且会让证书错误这一本应可见的运维问题静默通过（D010）。
 
+### 依赖的受支持 major
+
+传输层是 Nodemailer，其 Security Policy 只为**当前 major** 提供安全修复，不向旧 major 回移补丁。因此依赖范围必须始终停在受支持的 major 上：当前为 `^10.0.9`——caret 在 10 上不允许跨到 11，下界为已修补的版本而非 `10.0.0`。把范围放宽到可以在无人值守安装中跨 major，等同于让一次普通 `npm install` 决定未来接受哪些未经验证的破坏性变更。
+
+Nodemailer 10 自带 TypeScript declarations，`@types/nodemailer` **不得**同时安装：两套声明描述同一模块，会产生冲突声明与过时的 API 类型。该约束由 `tests/package/tarball.test.ts` 的 PKG-01b 在打包产物上断言，而不是仅写在文档里。
+
+传输不变量由 `tests/unit/transport.test.ts` 逐字段断言：`createTransport` 收到的对象**精确等于** `{host, port, secure, auth:{user, pass}}`，`sendMail` 收到的对象精确等于 `{from, to, subject, text}`。精确比较而非子集比较，是因为第五个键（`tls`、`proxy`、`getSocket` 等）正是需要防住的回归。不可达路径因此保持不可达：file content resolution、URL content resolution、`raw` option、`jsonTransport`。若某个版本的 Nodemailer 自身出现 advisory，判据是官方当前 advisory，而不是「本插件配置下不可达」——不可达降低实际风险，但不构成继续使用不受支持版本的理由（见 [`../PHASE6_1_REPORT.md`](../PHASE6_1_REPORT.md)）。
+
 ---
 
 ## 4. 日志脱敏
@@ -218,6 +226,8 @@ git diff
 
 npm tarball 的 `files` 白名单必须排除：`.env` 及任何变体、`*.pem` / `*.key`、测试 fixture 目录中的非必要文件、本地缓存。发布前的 tarball 内容检查是 Phase 3 的验收项之一。
 
+产物的密钥扫描是**字节级**的，且分两个面进行：工作树与 git 全历史由 `secret-scan.mjs` 覆盖，随包分发的归档由 `npm run scan:secrets`（`scripts/scan-tarball-secrets.mjs`）覆盖。两者都把 DSH Credential store 中的每个真实值读入内存做 UTF-8 与 UTF-16LE 双编码比较，值只以长度与 8 位摘要出现在输出中，从不打印、从不作为参数传递；归档扫描另外检查 PEM 私钥、SSH key blob、赋值型 password 字面量、AWS access key id 与 `sk-` 形式的 API key。判定标准是两类命中数均为 0。
+
 ### 测试中的凭据
 
 测试**不得**使用真实密码作为 fixture，即使是被认为「已经废弃」的密码：废弃密码仍可能在其他系统中有效，且会进入 CI 日志与本地开发者的检出。测试使用的凭据值必须是明显的合成值（如 `test-password-not-real`），并在测试中以 mock transporter 消费，不触及网络（见 [`TEST_PLAN.md`](TEST_PLAN.md) 第 7 节）。
@@ -230,6 +240,7 @@ npm tarball 的 `files` 白名单必须排除：`.env` 及任何变体、`*.pem`
 | --- | --- |
 | 不修改 DSH 核心源码 | 交付要求（`00_MASTER.md` 引言、§19） |
 | 不引入除 Nodemailer 之外的网络依赖 | 缩小供应链面与出网路径 |
+| 运行时依赖固定在受支持的 Nodemailer major | 旧 major 不再收到安全修复；跨 major 的无人值守安装等于接受未验证的破坏性变更 |
 | 发送路径不向 `session/event` 监听器抛异常 | 失败不得影响 Agent Loop（架构不变量三） |
 | 不吞掉异常 | `00_MASTER.md` §19 明确禁止。失败必须产生日志与计数 |
 | 队列有界、缓存有界、重试有界 | §19 明确禁止无限队列 / 无限 Map / 无限 retry |

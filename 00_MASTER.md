@@ -48,6 +48,7 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 4.1 — Credential rotation + DSH rc.2 compatibility | 旧 SMTP 授权码轮换与凭据描述校验、DSH `0.1.5-rc.2` 静态与运行时兼容性验证、Git 全历史 secret 扫描 | **PASS — RELEASE READY**（见 [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)） |
 | Phase 5 — v0.1.0 Formal Release | 将已验证的 `02191a4` 作为不可变的 `v0.1.0` 正式发布：npm package、Git tag、GitHub Release，以及发布后逐项核验 | **PASS**（见 [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md)） |
 | Phase 6 — Turn-level telemetry correctness hotfix | 查明真实运行时语义、修复 Turn 级 Token／Duration 遥测（`BUG-TEL-001`）、schema v2 迁移、全量回归与 rc.1/rc.2 复验，产出 v0.1.1 RC | **PASS — v0.1.1 RC READY**（见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)） |
+| Phase 6.1 — Nodemailer 10 security uplift | 将已停止安全维护的 Nodemailer 7.x 升级到受支持的 10.x，删除 legacy `@types/nodemailer`，并在新依赖下重新完成 v0.1.1 的全量回归、打包、全新安装、rc.1/rc.2 与真实 SMTP 复验 | **PASS — v0.1.1 RELEASE READY**（见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)） |
 
 重新编排的理由：
 
@@ -65,7 +66,9 @@ Phase 5 只做发布，不新增功能、不重构，也不修改 SMTP、Credent
 
 Phase 6 处理发布后由真实邮件暴露的遥测语义缺陷：`usage` 实际只承载最后一个携带 usage 的 `assistant/message`，被用户理解为整个 Turn 的用量。本阶段先以真实运行时取证确认该语义（858 份 session log、1 432 个已结束 Turn），再以新增的 `telemetry.ts` 实现 Turn 级按 bucket 折叠，并按 D013 将 `schemaVersion` 递增为 `2`；Duration 在同一批真实 Turn 上被独立复核，**未复现缺陷**，因此未改动算法。结论为 **PASS — v0.1.1 RC READY**，详见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)。本阶段不发布：`npm publish`、`git tag v0.1.1`、GitHub Release 均未执行。
 
-各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)、[`PHASE6_REPORT.md`](PHASE6_REPORT.md)。
+Phase 6.1 处理 v0.1.1 正式发布前暴露的依赖安全缺陷：Phase 6 的遥测 RC 原先保留 Nodemailer 7.x，而 7.x 已不在 Nodemailer 的受支持范围内（只有 `10.x` 收到安全修复），且处于 `GHSA-2x7j-588g-ccc2` 等 10 条 advisory 的影响区间内。本阶段把运行时依赖升级到 `^10.0.9`，删除与内置声明冲突的 `@types/nodemailer`，并证明升级**未改动任何源码**：本包只在一个文件中以一条调用形态使用 Nodemailer。随后在同一 tarball 上重新完成全量回归（337 项）、打包、隔离全新安装、rc.1/rc.2 两个 DSH 版本的受控 Turn 与真实 163 投递，以及三个面的密钥扫描。「当前配置下该 advisory 不可达」被记录为降低实际风险的事实，而非推迟升级的理由。结论为 **PASS — v0.1.1 RELEASE READY**，详见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)。本阶段同样不发布。
+
+各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)、[`PHASE6_REPORT.md`](PHASE6_REPORT.md)、[`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)。
 
 Phase 2 冻结的实现规格见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md)、[`docs/SECURITY.md`](docs/SECURITY.md)、[`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)、[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)、[`docs/DECISIONS.md`](docs/DECISIONS.md)。
 
@@ -265,6 +268,8 @@ SMTP Password
 # 6. SMTP
 
 正式 npm 插件使用 Nodemailer。
+
+依赖范围必须停在 Nodemailer 的**受支持 major** 上：它只为当前 major 提供安全修复，不向旧 major 回移补丁。当前声明为 `^10.0.9`——caret 在 10 上不允许跨到 11，下界取已修补版本而非 `10.0.0`。Nodemailer 自带 TypeScript declarations，因此不得同时安装 `@types/nodemailer`（两套声明描述同一模块，会产生冲突声明与过时 API 类型）。
 
 不要自己实现 SMTP 协议。
 

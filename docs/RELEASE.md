@@ -10,7 +10,14 @@ the expected result is stated next to it.
 | Node | `^22.19.0 \|\| >=24.0.0` (`v24.13.0` used) |
 | npm | `11.12.0` used |
 | DSH | `0.1.5-rc.1` installed and on `PATH` as `dsh` |
+| Runtime dependency | `nodemailer@10.0.9` (declared `^10.0.9`; the only runtime dependency) |
 | Peer packages resolvable from the profile | `@deepseek-ai/cordis`, `@deepseek-ai/schemastery`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-credentials` |
+
+Nodemailer's own security policy supports only its current major, so the declared range stays on
+`10.x`: `^10.0.9` cannot reach `11` unattended, and its lower bound is the patched line rather than
+`10.0.0`. Nodemailer 10 bundles its TypeScript declarations, so `@types/nodemailer` must not be
+installed beside it — the two declare the same module and conflict. `npm ls nodemailer` should report
+exactly one entry, and Nodemailer reports zero runtime dependencies of its own.
 
 The peers are declared with wide ranges (`^4.0.2`, `^3.18.2`, `^0.1.5-rc.1`) on purpose: the plugin
 must share one Cordis and one Schemastery instance with the host. Pinning exact versions invites a
