@@ -1,8 +1,6 @@
 # TEST_PLAN — dsh-mail-notify
 
-本文件定义 Phase 3 的测试矩阵、测试层次与断言要求。矩阵中的每条用例都对应 [`DECISIONS.md`](DECISIONS.md) 中某项可验证的冻结断言；未在矩阵中出现的决策不视为已冻结。
-
-**当前仓库不存在任何测试代码。** 本文件是 Phase 3 的验收清单。
+本文件定义测试矩阵、测试层次与断言要求。矩阵中的每条用例都对应 [`DECISIONS.md`](DECISIONS.md) 中某项可验证的冻结断言；未在矩阵中出现的决策不视为已冻结。文件成文于 Phase 3，`§6.2`、`§6.3`、`§14.1`、`§14.2`、`PKG-07`、`PKG-08` 与 `DUR-05/06` 由 Phase 6 增补；既有条目未被改写。
 
 ---
 
@@ -10,7 +8,7 @@
 
 | 层次 | 对象 | 工具策略 | 是否触网 |
 | --- | --- | --- | --- |
-| L1 纯函数单测 | `content.ts`、`completion.ts`、`normalize.ts`、`subject.ts`、`retry.ts`、`turn-state.ts`、`notifier.ts` | 无 mock、无 I/O、时间由参数注入 | 不触网 |
+| L1 纯函数单测 | `content.ts`、`completion.ts`、`normalize.ts`、`subject.ts`、`retry.ts`、`turn-state.ts`、`telemetry.ts`、`notifier.ts` | 无 mock、无 I/O、时间由参数注入 | 不触网 |
 | L2 队列与生命周期单测 | `queue.ts`、`event-handler.ts` | 注入假 sink、假 timer、假记录器 | 不触网 |
 | L3 适配器测试 | `runtime-adapter.ts` | 手工构造的 `SessionEvent` 形状对象（含畸形样本） | 不触网 |
 | L4 SMTP 集成测试 | `mailer.ts` + `retry.ts` + `queue.ts` | Nodemailer `streamTransport` / `jsonTransport` 或自定义 stub transport；错误由 stub 抛出 | **不触网** |
@@ -43,8 +41,8 @@
 | D003 根/子会话判定 | L3、L5 | SES-01…SES-05 |
 | D004 mid-turn 懒初始化 | L2、L5 | TRN-03、TRN-09 |
 | D005 显式工具错误 | L1、L3 | TOOL-01…TOOL-05 |
-| D006 usage 原始遥测 | L1 | USE-01…USE-04 |
-| D007 候选 schema v1 | L1、L5 | CAND-01…CAND-04 |
+| D006 usage 原始遥测 | L1 | USE-01…USE-06 |
+| D007 候选 DTO | L1、L5 | CAND-01…CAND-04 |
 | D008 去重 | L1、L2 | DED-01…DED-04 |
 | D009 有界队列 | L2 | QUE-01…QUE-06 |
 | D010 凭据每次解析 | L4 | SEC-01…SEC-04 |
@@ -52,7 +50,8 @@
 | D012 隐私默认 | L1、L5、L6 | PRIV-01…PRIV-08 |
 | D013 schemaVersion | L1 | CAND-01 |
 | D014 截断 | L1 | TRUNC-01…TRUNC-05 |
-| D015 时长门槛 | L1 | DUR-01…DUR-04 |
+| D015 时长门槛与时长语义 | L1、L5 | DUR-01…DUR-06 |
+| D017 Turn 级遥测聚合 | L1、L5 | USE-10…USE-25b、TEL-01…TEL-15 |
 
 ---
 
@@ -110,6 +109,8 @@ SES-02 与 SES-06 必须存在。它们对应 Phase 1 在运行时实际捕获�
 | DUR-02 | 时长低于门槛 | `durationMs: 1000` + 门槛 60000 | 抑制，`reason: below-min-duration` | L1 |
 | DUR-03 | 时长恰等于门槛 | `durationMs === minTurnDurationMs` | 不抑制（严格小于才抑制） | L1 |
 | DUR-04 | 门槛为 0 | 任意时长 | 不抑制 | L1 |
+| DUR-05 | 整 Turn 跨度（Phase 6 冻结 fixture） | `turn/start t=1000`；step1 `t=2000`；tool result `t=5000`；step2 `t=8000`；tool result `t=12000`；step3 `t=14000`；`turn/end t=16000` | `durationMs === 15000`；**不得**为 2000 / 8000 / 14000 / `16000−14000` | L1、L5 |
+| DUR-06 | mid-turn 且无 `turn/start` | `turn/end t=16000`，无起始事件 | `durationMs === null`（不得用首个事件、首条消息或插件装载时刻冒充起始） | L1、L5 |
 | TOOL-01 | 仅判据 A | `content[0].isError === true`，无 `error` 字段 | `explicitToolErrorCount: 1` | L1、L3 |
 | TOOL-02 | 仅判据 B | `error: {name,code}` 存在，`isError` 缺省 | 计数 1 | L1、L3 |
 | TOOL-03 | 两判据同时命中 | 两者均存在 | 计数 1，**不重复计** | L1 |
@@ -120,18 +121,54 @@ TOOL-05 是本项目最重要的一条语义测试：它把「DSH 未报告显�
 
 ---
 
-## 6. Usage（D006）
+## 6. Usage（D006、D017）
+
+### 6.1 原始 per-call 计数器（D006）
 
 | 编号 | 用例 | 输入 | 期望 | 层次 |
 | --- | --- | --- | --- | --- |
-| USE-01 | 完整 | 6 个计数器齐备 | 全部保留，候选可序列化 | L1 |
+| USE-01 | 完整 | 6 个计数器齐备 | `collectUsage` 全部保留，不做任何换算 | L1 |
 | USE-02 | 部分缺失 | 缺 `reasoningTokens` | 缺失键**不存在**（不是 `undefined`），整体可读 | L1 |
 | USE-03 | `undefined` 值 | 显式 `reasoningTokens: undefined` | 该键被省略，不使对象不可序列化 | L1 |
-| USE-04 | 完全缺失 | `usage` 不存在 | 候选中无 `usage` 键，其余字段不受影响 | L1 |
+| USE-04 | 完全缺失 | `usage` 不存在 | 无可折叠 sample，候选中无 `usage` 键，其余字段不受影响 | L1 |
 | USE-05 | 数值异常不干预 | `inputTokens: 255` 且 `totalTokens: 187638` | 原样保留，**不校正、不换算、不影响 status** | L1 |
 | USE-06 | 非法数值 | `NaN` / `Infinity` | 该键被省略，记录 dropped 路径 | L1 |
 
-USE-05 对应 Phase 1 记录的 `inputTokens` 与 `totalTokens` 数量级不自洽的真实观测；测试断言的是「不干预」而非某个具体解释（D006）。
+USE-05 对应 Phase 1 记录的 `inputTokens` 与 `totalTokens` 数量级不自洽的真实观测（该观测在 Phase 6 被解释为「per-call 的 `totalTokens` 被误读为累计量」，见 D017 的 Reason）。测试断言的是「不干预」而非某个具体解释（D006）。
+
+### 6.2 Turn 级折叠（D017）
+
+| 编号 | 用例 | 输入 | 期望 | 层次 |
+| --- | --- | --- | --- | --- |
+| USE-10 | 多 step 折叠 | call1 `100/10`、call2 `200/20`、call3 `300/30` | `input=600`、`output=60`、`usageSampleCount=3`、`usageComplete=true` | L1、L5 |
+| USE-11 | 最后一次调用不代表 Turn | 同上 | 聚合值 ≠ 最后一次调用值 | L1、L5 |
+| USE-12 | 可选 bucket 折叠 | 两个均报 `cacheReadTokens` 的 sample | 两值相加；未报告的 bucket 在聚合中**不存在** | L1、L5 |
+| USE-13 | cacheWrite / reasoning 独立折叠 | 两个 sample 各报两桶 | 两桶分别相加，互不影响 | L1 |
+| USE-14 | reasoning 不叠加到 output | `output=252, reasoning=180` | `outputTokens === 252`，**不等于** 432 | L1、L5 |
+| USE-15 | `totalTokens` 不参与聚合 | sample 报 `totalTokens` | 聚合中**不存在**该键 | L1、L5 |
+| USE-16 | 缺失 usage | 两个 step，其一无 usage | 观察到部分仍报出；`usageMissingCount=1`、`usageComplete=false` | L1、L5 |
+| USE-17 | 缺少必须 pair | sample 只有 `inputTokens` | 不补零、不产出聚合值；计为缺失 | L1 |
+| USE-18 | mid-turn 装载 | `sawTurnStart=false`，1 个 sample | `usageSampleCount=1`、`usageComplete=false` | L1、L5 |
+| USE-19 | 同一 settlement 重复投递 | 同 `seq` 折叠两次 | 第二次为 `duplicate`，不 double count | L1、L5 |
+| USE-20 | 重放（新 `seq`、同 step 的携带 usage message） | 同 step 两条 usage message | 第二条按重复处理 | L1 |
+| USE-21 | 重试（attempt + retry + message 的真实顺序） | `assistant/attempt` → `llm/retry` → `assistant/message(usage)` | `sampleCount=1`、`missingCount=1`、`unobservableRetries=1`、`usageComplete=false` | L1、L5 |
+| USE-21b | 重试（无 attempt 记录） | `llm/retry` → `assistant/message(usage)` | `unobservableRetries=1`、`usageComplete=false` | L1、L5 |
+| USE-21c | 重试记录重复投递 | 同 `seq` 的 `llm/retry` 两次 | 计 1 次 | L1 |
+| USE-22 | step 未结算 | `step/start` 无对应 settlement | 计为一次缺失，`usageComplete=false` | L1 |
+| USE-23 | 完全无 sample | 空 Turn | `usage` 不存在、`usageComplete=false` | L1 |
+| USE-24 | safe-integer 越界 | 两次求和的 input 越界 | 聚合整体撤回（不钳制、不截断），该次调用计为缺失 | L1 |
+| USE-25 | 聚合值是 lossless JSON | 混合形状 sample | 可通过 lossless-JSON 校验 | L1 |
+| USE-25b | 无缓存调用不抹掉他者的 bucket | 一个 `input+output`、一个含 `cacheReadTokens` | `cacheReadTokens` 保留为后者之值 | L1、L5 |
+
+### 6.3 渲染与日志（D017）
+
+| 编号 | 用例 | 期望 | 层次 |
+| --- | --- | --- | --- |
+| TEL-11 | 正文标签 | 出现 `Token usage (turn aggregate):`，不出现 `Token counters`／`as reported`／`totalTokens` | L1、L5 |
+| TEL-12 | 完整性行 | `usageComplete=true` → `Token telemetry complete: yes (N model calls observed, each reporting usage)`；`false` → `... no (...)` 并给出可数原因 | L1、L5 |
+| TEL-13 | 未报告 bucket 的措辞 | 未报告的 bucket 写作 `=not reported`，**不写** `=0` | L1、L5 |
+| TEL-14 | 两个完整性断言分离 | `telemetryComplete: true` 与 `usageComplete: false` 同时出现时，正文两行各自表述 | L1、L5 |
+| TEL-15 | 日志字段 | `candidate.produced` 含 `usageSampleCount` / `usageMissingCount` / `usageUnobservableRetries` / `usageComplete` / `steps`；不含任何计数器值 | L1、L5 |
 
 ---
 
@@ -139,8 +176,9 @@ USE-05 对应 Phase 1 记录的 `inputTokens` 与 `totalTokens` 数量级不自�
 
 | 编号 | 用例 | 期望 | 层次 |
 | --- | --- | --- | --- |
-| CAND-01 | `schemaVersion` | 恒为字面量 `1` | L1 |
-| CAND-02 | 必须字段齐备 | 所有必须字段存在且类型正确 | L1 |
+| CAND-01 | `schemaVersion` | 恒为字面量 `2`（Phase 6 由 `1` 递增，见 D013、D017） | L1 |
+| CAND-02 | 必须字段齐备 | 所有必须字段存在且类型正确（含四个 usage 覆盖字段） | L1 |
+| CAND-02b | 覆盖字段恒存在 | 无 sample 时 `usageSampleCount: 0`、`usageComplete: false` 仍存在，不省略 | L1 |
 | CAND-03 | 可选字段缺省 | 缺失的可选键**不存在**，不是 `undefined`、不是 `null` | L1 |
 | CAND-04 | lossless JSON | 完整候选可通过 lossless-JSON 校验（对象/数组/字符串/数字/布尔/null） | L1、L5 |
 | NORM-01 | 嵌套对象 | `{a:{b:undefined,c:1}}` | 结果 `{a:{c:1}}`，dropped 含 `a.b` | L1 |
@@ -276,6 +314,38 @@ PRIV-01…PRIV-04 必须采用**否定断言**（断言正文不含特定字符�
 
 E2E-07 直接对应 Phase 1 的核心结论（`listenerInvocations` 320+、`containedErrors` 0），把该结论从「原型未破坏 Agent Loop」升级为「打包实现不破坏 Agent Loop」的可回归断言。
 
+### 14.1 Turn 遥测链（Phase 6，D017）
+
+同一 L5 层，事件序列取真实运行时的顺序（`turn/start` → 每组 `step/start` + `assistant/message(usage)` + `tool/call` + `tool/result` + `step/end` → `turn/end`）：
+
+| 编号 | 场景 | 期望 |
+| --- | --- | --- |
+| TEL-01 | 整 Turn 时长（DUR-05 的链式版本） | 候选与正文的 `Duration` 均为 15000 ms，且不等于任何单步延迟 |
+| TEL-02 | 无 `turn/start` | `durationMs: null`、`sawTurnStart: false`、`telemetryComplete: false` |
+| TEL-03 | 三次模型调用 | `usage === {input:600, output:60}`、`usageSampleCount: 3`、`usageComplete: true` |
+| TEL-03b | 同上 | 聚合值 ≠ 最后一次调用值 |
+| TEL-04 | 混合 bucket 形状 | 三个 bucket 各自等于独立折叠值；存在性规则符合 §6.2 |
+| TEL-05 | reasoning 子集 | `outputTokens` 不含 reasoning；无 `totalTokens` |
+| TEL-06 | 一次 settlement 无 usage | 已观察部分仍报出；`usageComplete: false`；正文写明缺失计数 |
+| TEL-07 | mid-turn 装载 | `telemetryComplete: false` 与 `usageComplete: false` 同时成立且正文分行表述 |
+| TEL-08 | 同一事件投递两次 | 聚合不翻倍；`usageSampleCount` 等于不同 settlement 数 |
+| TEL-09 | 整条 Turn 链重放 | 仍只产生 1 个 job（去重生效），且首个候选的 sample 数正确 |
+| TEL-10 | 重试（attempt + retry + message） | 聚合为成功调用的值；`usageUnobservableRetries: 1`；正文含重试原因 |
+| TEL-10b | 重试（无 attempt 记录） | 同上 |
+| TEL-11 | 正文标签 | 出现 `Token usage (turn aggregate):`，不出现 `as reported`／`totalTokens` |
+| TEL-12 | 隐私 | reasoning 文本、tool 参数、tool 结果三枚 sentinel 均不出现在正文 |
+
+### 14.2 真实录制数据的回放（Phase 6）
+
+`scripts/turn-telemetry-probe.mjs` 把**真实 session log** 中的 Turn 事件链（经 Zstandard 多帧解码）重新喂给指定构建的 `createSessionHandlers`，因此「修复前／修复后」的对比建立在真实运行时数据而非 fixture 之上。它同时可以调用 DSH 自带的 `deriveTurnTokenUsage` 对同一批事件做独立折叠，用于交叉验证。
+
+```text
+node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
+     --replay <build-dir>... [--meter <dsh-install-root>] [--chain] [--mail] [--json]
+```
+
+该脚本是开发期证据工具，不进入 `files` 打包清单，也不被任何自动化测试调用。
+
 ---
 
 ## 15. 打包产物测试（L6）
@@ -288,6 +358,8 @@ E2E-07 直接对应 Phase 1 的核心结论（`listenerInvocations` 320+、`cont
 | PKG-04 | 启动 | 配置合法时插件加载且注册监听器；配置非法时加载失败并给出字段级错误 |
 | PKG-05 | `enabled: false` | 不注册监听器（可通过日志或探针确认） |
 | PKG-06 | 卸载 | 卸载后无残留监听器、无残留状态；DSH 正常运行 |
+| PKG-07 | 产物新鲜度（Phase 6） | tarball 内的 `lib/**` 与当前 `npm run build` 输出逐文件一致，且 `package.json` 版本与候选版本一致 |
+| PKG-08 | 双版本安装（Phase 6） | 同一份 tarball 在 `0.1.5-rc.1` 与 `0.1.5-rc.2` 下均安装、装载、投递成功 |
 
 ---
 
@@ -312,3 +384,5 @@ E2E-07 直接对应 Phase 1 的核心结论（`listenerInvocations` 320+、`cont
 | `session/disposed` 在真实 DSH 中的触发 | 运行时观察（Phase 1 已记录：进程存活期内会话通常不卸载） |
 | 跨进程去重语义 | 明确不保证（D008），因此不测试 |
 | DSH 升级后的字段路径变化 | L3 适配器测试的手工样本需随 DSH 版本更新；这是设计上预期的维护点 |
+| 失败模型调用的 usage | 现有事件面（`llm/retry`、`assistant/attempt`）均不携带，因此不可自动化取回；以 `usageComplete: false` 如实表达，并以 `llm/retry` 的计数作为「该 Turn 存在不可观察调用」的证据 |
+| provider 侧的 bucket 完备性 | 各 provider 对可选 bucket 的报告策略不同，插件按「报告过的 sample 求和」处理（D017 第 4 条）；这是披露策略而非可测试的运行时事实 |

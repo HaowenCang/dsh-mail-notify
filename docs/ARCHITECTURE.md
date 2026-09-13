@@ -51,13 +51,14 @@ DSH Session + SessionEvent（live 对象 + event.data 深路径）
             │  按 type 分派累积
             ▼
       turn-state.ts  ──────►  content.ts（text 白名单提取）
+            │                 telemetry.ts（Turn 级 usage 折叠，D017）
             │                 normalize.ts（lossless JSON）
             │  turn/end 到来
             ▼
       completion.ts
             │  reason.kind + explicitToolErrorCount → status
             ▼
-      NotificationCandidate（schemaVersion 1）
+      NotificationCandidate（schemaVersion 2）
             │
             ▼
       notifier.ts
@@ -82,7 +83,7 @@ DSH Session + SessionEvent（live 对象 + event.data 深路径）
 
 ## 3. 模块规格
 
-Phase 3 的目录布局固定为：
+Phase 3 的目录布局固定为（Phase 6 新增 `telemetry.ts`）：
 
 ```text
 src/
@@ -92,6 +93,7 @@ src/
 ├─ runtime-adapter.ts
 ├─ event-handler.ts
 ├─ turn-state.ts
+├─ telemetry.ts
 ├─ content.ts
 ├─ completion.ts
 ├─ normalize.ts
@@ -142,16 +144,19 @@ src/
 | --- | --- |
 | 职责 | 唯一的 DSH 边界。把 `(session, event)` 转为 `InternalEvent`；把 `session.header` 转为 `SessionFacts`；实现根/子会话三判据（D003）；处理字段可选性与未知形状 |
 | 输入 | live `Session` 对象、`SessionEvent`（其 `data` 是已 snapshot + deepFreeze 的普通 JSON） |
-| 输出 | `InternalEvent` 判别联合：`{ kind: 'turn-start', turn, timeMs }`、`{ kind: 'assistant-message', turn, step, blocks, messageId?, provider?, model?, usage?, timeMs }`、`{ kind: 'tool-result', turn, step, explicitError, errorName?, errorCode?, timeMs }`、`{ kind: 'turn-end', turn, turnEndKind, detail?, timeMs }`、`{ kind: 'other', type, turn?, timeMs }`；以及 `SessionFacts = { sessionId, isSubagent, decidedBy, cwd?, agentPreset? }` |
+| 输出 | `InternalEvent` 判别联合：`{ kind: 'turn-start', turn, timeMs }`、`{ kind: 'step-start', turn, step, timeMs }`、`{ kind: 'assistant-message', turn, step, seq?, blocks, messageId?, provider?, model?, usage?, timeMs }`、`{ kind: 'assistant-attempt', turn, step, seq?, usage?, timeMs }`、`{ kind: 'llm-retry', turn, step, seq?, timeMs }`、`{ kind: 'tool-call', turn, step, timeMs }`、`{ kind: 'tool-result', turn, step, explicitError, errorName?, errorCode?, timeMs }`、`{ kind: 'user-message', turn?, text, timeMs }`、`{ kind: 'turn-end', turn, turnEndKind, detail?, timeMs }`、`{ kind: 'other', type, turn?, timeMs }`；以及 `SessionFacts = { sessionId, isSubagent, decidedBy, cwd?, agentPreset? }` |
 | 不允许 | 不做业务判定、不构造候选、不累积状态、不写日志（返回值由 handler 记录）、不访问网络或文件、不抛异常（未知形状转 `{ kind: 'other' }`） |
 
 适配器的实现约束：
 
 - 所有字段访问都必须经过形状检查（`typeof`、`Array.isArray`、判别字段比对）。运行时数据没有编译期类型保证。
 - `event.data.turn` 缺失或非数字时，该事件降级为 `{ kind: 'other' }`，不得用 `0` 或 `NaN` 兜底。
-- `tool/result` 的双判据取或在适配器内完成，输出**已折叠为单一布尔** `explicitError`；只有判据命中时才附带 `errorName` / `errorCode`（D005）。
+- `tool/result` 的双判据取或在适配器内完成，输出**已折叠为单一布尔** `explicitError`；只有判据命时才附带 `errorName` / `errorCode`（D005）。
 - `session.header` 的读取必须容忍字段缺失（`cwd`、`agentPreset`、`parentSession`、`delegationDepth` 均可为 `undefined`）。
 - 返回的对象只含标量与自有数组，**不得**包含对 `session`、`event`、`event.data` 的任何引用。
+- `assistant/message` 的 usage 取值顺序是 `data.usage` 优先、`data.stream` 中最后一条 `{ type: 'chunk', chunk: { type: 'usage' } }` 记录次之（与 `dsh-token-meter` 一致）；`assistant/attempt` 只从 stream 取。两条路径都不合成、不补齐缺失计数器。
+- `seq` 是 settlement 身份：它是 durable 事件的单调序号（实测 `assistant/message`、`assistant/attempt`、`llm/retry`、`step/start`、`tool/call`、`tool/result`、`turn/start`、`turn/end` 全部携带），适配器原样透传，缺失时省略而不补默认值。
+- `llm/retry-started` 不翻译为可累积事件：它标记的失败调用已在 `llm/retry` 计入，替代它的调用通过自身的 `assistant/message` 或 `assistant/attempt` 结算。
 
 ### `event-handler.ts`
 
@@ -174,6 +179,21 @@ src/
 | 不允许 | 不做判定（不决定是否通知）、不做 I/O、不访问配置 |
 
 `TurnState` 的字段规格见第 4 节。
+
+### `telemetry.ts`
+
+| 项 | 内容 |
+| --- | --- |
+| 职责 | Turn 级 token 遥测折叠（D017）：把本 Turn 内每个已确认模型调用的 per-call usage 按 bucket 相加，维护 settlement 身份去重，并给出覆盖范围（`sampleCount` / `missingCount` / `unobservableRetries` / `complete`） |
+| 输入 | `SettlementInput`（kind、step、seq?、messageId?、timeMs、原始 usage）、`RetryInput`、step 开启通知 |
+| 输出 | `TurnUsageSnapshot`（`usage?`、`sampleCount`、`missingCount`、`unobservableRetries`、`complete`）、`collectUsage()`（原始 per-call 计数器集合） |
+| 不允许 | 不推算（不补零、不插值、不从 bucket 推导 bucket、不计算价格）、不参与 completion 判定、不做 I/O、不知道任何 DSH payload 形状（usage 以 `unknown` 进入，逐字段复制） |
+
+折叠的三条实现约束：
+
+- 求和只在同一 bucket 内进行，且使用 safe-integer 检查；越界时**整份聚合被撤回**（而非截断或钳制），并把该次调用计为缺失。
+- 可选 bucket 按「报告过的 sample 求和」处理：全部 sample 都未报告时该字段在聚合中省略，而不是写成 `0`。
+- 重复计数由两层身份控制：durable `seq`（或 `message.id`）为主，`assistant/message` 每 step 至多一条的实测边界为辅；辅判据只作用于携带可折叠 sample 的 message。单 Turn 的记账规模有上限（`MAX_ACCOUNTED_STEPS` / `MAX_ACCOUNTED_SETTLEMENTS`），越界即令 `complete = false`，不静默截断。
 
 ### `content.ts`
 
@@ -302,7 +322,7 @@ interface TurnState {
 
   provider?: string
   model?: string
-  usage?: RawUsage
+  usage: TurnUsageLedger        // Turn 级 token 折叠；类型见 telemetry.ts（D017）
 
   steps: number                 // 观察到的不同 step 编号数
   assistantEvents: number
@@ -326,7 +346,10 @@ interface TurnState {
 | 事件 | 更新 |
 | --- | --- |
 | `turn/start` | 见上表 |
-| `assistant/message` | `assistantEvents += 1`；取 `content.ts` 的白名单结果，**仅当结果非空时**覆盖 `lastVisibleAssistantText` 与 `lastAssistantMessageId`；覆盖 `provider` / `model`（当适配器给出时）；覆盖 `usage`（当适配器给出时） |
+| `step/start` | `steps` 记入该 step；向 `usage.noteStepStarted(step)` 报告「本 step 将发起一次模型调用」 |
+| `assistant/message` | `assistantEvents += 1`；取 `content.ts` 的白名单结果，**仅当结果非空时**覆盖 `lastVisibleAssistantText` 与 `lastAssistantMessageId`；覆盖 `provider` / `model`（当适配器给出时）；以 `(seq, messageId, step)` 为身份，把该次调用的 usage **折叠**进 `usage`（`addSettlement`），不再覆盖 |
+| `assistant/attempt` | 以 `seq` 为身份折叠该次调用的 usage；无 usage 时计为一次缺失的应计调用 |
+| `llm/retry` | `usage.noteRetry({ step, seq, timeMs })`：记录一次 usage 不可观察的失败调用 |
 | `tool/call` | `toolCallCount += 1` |
 | `tool/result` | `toolResultCount += 1`；`explicitError === true` 时 `explicitToolErrorCount += 1` |
 | 任何带 `step` 的事件 | `steps` 累计不同 step 编号的数量（以集合或「最大值 + 是否存在间隙」的等价方式实现；不得用「最大 step 编号」冒充数量） |
@@ -334,7 +357,23 @@ interface TurnState {
 
 「仅当结果非空时覆盖」是 Phase 1 已运行时验证的行为：`["reasoning","tool-call"]`（无 text）的消息产生 `visibleTextLength: 0` 且**不污染**既有的 `lastVisibleText`。
 
-`usage` 在 `TurnState` 中保存原始观测值，仅在候选构造时经 `normalize.ts` 归一化。`steps` 的统计不得依赖事件到达顺序。
+`usage` 的累积是 Turn 级的折叠而非赋值（D017）：每个 `assistant/message` 代表一次模型调用，追加而非覆盖。聚合值在候选构造时经 `normalize.ts` 归一化。`steps` 的统计不得依赖事件到达顺序。
+
+---
+
+## 4.1 `NotificationCandidate`（schema v2）
+
+`schemaVersion: 2`。与 v1 的差异全部集中在遥测字段，其余字段的语义与可选性不变（D007、D017）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `usage?` | `TurnUsage` | Turn 级聚合：`inputTokens`、`outputTokens` 必在，`cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens` 仅在至少一个 sample 报告过时出现。无任何可读 sample 时整个字段省略 |
+| `usageSampleCount` | `number` | 已折叠的、相互区分的模型调用 usage 报告数 |
+| `usageMissingCount` | `number` | 已观察但未给出可用 usage 的应计模型调用数（含未结算的 step） |
+| `usageUnobservableRetries` | `number` | 失败且 usage 不可观察的重试调用数 |
+| `usageComplete` | `boolean` | 每个应计模型调用都报告了 usage 时为 `true` |
+
+四个覆盖字段都是**必须**字段且恒存在：0 与 `false` 是有效观测（中途装载的 Turn 即 `usageSampleCount: 0` 且 `usageComplete: false`），省略它们会使「未统计」与「统计为零」不可区分。`telemetryComplete` 保持 v1 语义不变，与 `usageComplete` 分属两个断言（D017 第 8 条）。
 
 ---
 
@@ -447,9 +486,13 @@ Map<sessionId, Map<turn, TurnState>>
 
 | 出口 | 内容 | 约束 |
 | --- | --- | --- |
-| 结构化日志 | 事件生命周期、抑制原因、队列状态、重试次数、错误分类 | 字段白名单，见 `SECURITY.md` |
+| 结构化日志 | 事件生命周期、抑制原因、队列状态、重试次数、错误分类、遥测覆盖范围 | 字段白名单，见 `SECURITY.md` |
 | 计数器 | `candidatesProduced`、`notificationsSent`、`notificationsSuppressed`（按 reason 分组）、`queueDropped`、`sendFailures`（按 class 分组） | 只增不减的整数，随插件生命期存在 |
 | 调试出口（可选） | 归一化后的候选记录 | 仅在显式开启时输出；输出前必须经 `normalize.ts` |
+
+`candidate.produced` 一行的字段集（Phase 6 扩充，D017）：`schemaVersion`、`sessionId`、`turn`、`status`、`turnEndKind`、`visibleTextLength`、`explicitToolErrorCount`、`telemetryComplete`、`durationMs`、`provider`、`model`、`sawTurnStart`、`usageSampleCount`、`usageMissingCount`、`usageUnobservableRetries`、`usageComplete`、`steps`、`normalizeDropped`。
+
+新增的五项都是标量计数与布尔值：它们描述**统计的形状**，而计数器本身仍只进入邮件正文，不进入日志（`SECURITY.md` §4）。把「统计了 3 次调用、覆盖完整」写进日志，使「邮件里的数字为何偏小」可以在不读取邮件正文的前提下被诊断。
 
 调试出口的设计动机来自 Phase 1 的实际故障：当时唯一的证据通道（探针工具）因单个不可序列化字段而整体失效。因此调试输出必须逐条归一化、逐条输出，一条坏记录不得影响其余记录的读取。
 
@@ -472,6 +515,8 @@ Map<sessionId, Map<turn, TurnState>>
 | 日志接口 | 结构化日志输出 | Cordis 上下文 logger（等价物；`console` 仅作 `apply` 早期阶段的兜底） | Inspect（Builtin 目录） |
 
 明确**不**使用：`sessions` Service（根级监听器已全局接收事件，无需反查 live Session）、任何 DSH Slot / Client 侧接口（本插件为 Host-only，无 UI 需求）、任何修改 DSH 核心配置的路径。
+
+`session/event` 上被识别的 `event.type` 共十种：`turn/start`、`step/start`、`assistant/message`、`assistant/attempt`、`llm/retry`、`tool/call`、`tool/result`、`user/message`、`turn/end`，以及显式忽略但仍被适配器识别的 `llm/retry-started`。全部事件类型的实际支持矩阵与取证见 [`DSH_INTEGRATION.md`](DSH_INTEGRATION.md) 第 2 节。
 
 **本插件为 Host-only。** 不存在 Client half，不注册 Slot，不依赖浏览器环境。
 

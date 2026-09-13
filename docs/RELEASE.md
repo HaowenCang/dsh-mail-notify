@@ -38,7 +38,7 @@ linter configuration, so no lint claim is made.
 ## 3. Pack
 
 ```powershell
-npm pack                    # -> dsh-mail-notify-0.1.0.tgz
+npm pack                    # -> dsh-mail-notify-<version>.tgz, e.g. dsh-mail-notify-0.1.1.tgz
 npm run pack:check          # audits the archive
 ```
 
@@ -56,7 +56,7 @@ secret-bearing and development patterns. It prints the full entry list and ends 
 ## 4. Install
 
 ```powershell
-dsh plugin --profile <profile> add ./dsh-mail-notify-0.1.0.tgz
+dsh plugin --profile <profile> add ./dsh-mail-notify-<version>.tgz
 ```
 
 This forwards to pnpm inside the profile directory, installs the package, and — because
@@ -130,9 +130,22 @@ injector; a normal `dsh plugin add` install does not create one.
 - [ ] `npm run build` exits 0
 - [ ] `npm pack` produces the expected filename
 - [ ] `npm run pack:check` prints `PASS`
+- [ ] the archive's `lib/**` matches the current build byte for byte
 - [ ] the archive contains no secret-bearing or development entry
 - [ ] installing the archive into a fresh profile makes the row appear in `--dump-config`
 - [ ] `enabled: false` produces `plugin.disabled` and registers nothing
 - [ ] `enabled: true` produces `candidate.produced` for a real top-level turn
+- [ ] `candidate.produced` reports `usageSampleCount` equal to the turn's model-call count
 - [ ] uninstalling leaves no row and no residual state
 - [ ] `git status` shows no credential, no `.env`, and no archive
+
+## 9. Version history
+
+| Version | Status | Substance |
+| --- | --- | --- |
+| `0.1.0` | released | First release. `schemaVersion: 1`; `usage` carried the last observed per-call sample. |
+| `0.1.1` | release candidate | `usage` is the turn-level aggregate of observable per-call counters; `schemaVersion: 2`; `usageComplete` added; body labels the aggregate as such (D017). No configuration field changed, so an existing profile patch needs no edit. |
+
+A `0.1.0` candidate record and a `0.1.1` candidate record for the same turn usually carry
+**different** `usage` values and always carry different `schemaVersion` values. The version field is
+the discriminator; a reader that ignores it will read a v2 aggregate as a v1 last-call sample.

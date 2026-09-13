@@ -47,6 +47,7 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 4 — Real SMTP E2E + Release Candidate Audit | 真实 SMTP 合成 smoke 与真实 Agent → Email E2E、v0.1.0 RC 全量审计、三个缺陷修复 | **PASS — RC READY**（见 [`PHASE4_REPORT.md`](PHASE4_REPORT.md)） |
 | Phase 4.1 — Credential rotation + DSH rc.2 compatibility | 旧 SMTP 授权码轮换与凭据描述校验、DSH `0.1.5-rc.2` 静态与运行时兼容性验证、Git 全历史 secret 扫描 | **PASS — RELEASE READY**（见 [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)） |
 | Phase 5 — v0.1.0 Formal Release | 将已验证的 `02191a4` 作为不可变的 `v0.1.0` 正式发布：npm package、Git tag、GitHub Release，以及发布后逐项核验 | **PASS**（见 [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md)） |
+| Phase 6 — Turn-level telemetry correctness hotfix | 查明真实运行时语义、修复 Turn 级 Token／Duration 遥测（`BUG-TEL-001`）、schema v2 迁移、全量回归与 rc.1/rc.2 复验，产出 v0.1.1 RC | **PASS — v0.1.1 RC READY**（见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)） |
 
 重新编排的理由：
 
@@ -62,7 +63,9 @@ Phase 4.1 处理正式发布前剩余的两个前提：旧 SMTP 授权码的暴�
 
 Phase 5 只做发布，不新增功能、不重构，也不修改 SMTP、Credential、runtime adapter 或测试语义。发布对象被固定为已完整验证的 `02191a43894f7cf9323641a1d117ae838c4a0c88` / `0.1.0`：执行开始时先核对 HEAD 与该 commit 相等，之后全部变更均不发生在此之前。npm `dsh-mail-notify@0.1.0`、Git 注释 tag `v0.1.0`（指向 `02191a4`）与 GitHub Release `v0.1.0` 均已创建，且本地 tarball、npm registry 产物与 GitHub Release asset 的 SHA-256 三者一致。发布后的 README 与报告以 post-release documentation commit 形式位于 `main > v0.1.0`，tag 不随之移动。结论为 **PASS**，详见 [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md)。
 
-各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)。
+Phase 6 处理发布后由真实邮件暴露的遥测语义缺陷：`usage` 实际只承载最后一个携带 usage 的 `assistant/message`，被用户理解为整个 Turn 的用量。本阶段先以真实运行时取证确认该语义（858 份 session log、1 432 个已结束 Turn），再以新增的 `telemetry.ts` 实现 Turn 级按 bucket 折叠，并按 D013 将 `schemaVersion` 递增为 `2`；Duration 在同一批真实 Turn 上被独立复核，**未复现缺陷**，因此未改动算法。结论为 **PASS — v0.1.1 RC READY**，详见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)。本阶段不发布：`npm publish`、`git tag v0.1.1`、GitHub Release 均未执行。
+
+各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)、[`PHASE6_REPORT.md`](PHASE6_REPORT.md)。
 
 Phase 2 冻结的实现规格见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md)、[`docs/SECURITY.md`](docs/SECURITY.md)、[`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)、[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)、[`docs/DECISIONS.md`](docs/DECISIONS.md)。
 

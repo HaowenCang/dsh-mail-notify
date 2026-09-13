@@ -4,7 +4,7 @@ DeepSeek Harness (DSH) host plugin. When a **top-level** Agent turn finishes, it
 turn's final user-visible model output over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.1.0`
+- Version: `0.1.1` (release candidate; `0.1.0` is the released version)
 - Host-only: no browser half, no UI, no Client package
 - Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
 
@@ -14,10 +14,17 @@ not assert that later `0.1.5` releases work.
 
 | DSH version | Status | Evidence |
 | --- | --- | --- |
-| `0.1.5-rc.1` | Verified | Full suite and the runtime contract probe against that installation; real SMTP send; live top-level turn end to end |
-| `0.1.5-rc.2` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over a loopback SMTP peer |
+| `0.1.5-rc.1` | Verified | Full suite and the runtime contract probe against that installation; real SMTP send; live top-level turn end to end; multi-step turn telemetry |
+| `0.1.5-rc.2` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over a loopback SMTP peer; multi-step turn telemetry |
 
-Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md).
+Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) and
+[`PHASE6_REPORT.md`](PHASE6_REPORT.md).
+
+**v0.1.1 is a release candidate, not a release.** It has not been published to npm, tagged, or
+released on GitHub. It changes what the email's token line means, so a reader who compares a `0.1.0`
+message with a `0.1.1` message will see different numbers for the same turn: `0.1.0` reported the
+**last model call's** counters, `0.1.1` reports the **whole turn's** aggregate. See
+[`PHASE6_REPORT.md`](PHASE6_REPORT.md) and D017 in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 **v0.1.0 released.** The candidate was validated end to end against a real SMTP server: a synthetic
 smoke message and a real top-level Agent turn both reached `mail.sent` from the shipped package. See
@@ -46,6 +53,30 @@ limitations discovered later:
 | **Top-level turns only** | Subagent turns produce nothing by default (`includeSubagents: false`). |
 | **Completed-clean means "DSH reported no explicit tool failure"** | It does **not** mean every shell command succeeded. A `pwsh` non-zero exit is a successful tool result in DSH and is not counted. |
 | **Deduplication is in-process only** | At most one email per `(sessionId, turn)` per DSH process lifetime. Restarting DSH can produce a second email for a replayed turn. |
+| **Token usage is the whole turn, or it says it is not** | DSH reports token counters per model call. The plugin sums every call it observed in the turn and states whether that covers all of them (`Token telemetry complete:`). From `0.1.1` onward this is the turn aggregate; `0.1.0` reported only the last model call. |
+
+The metadata block of the body looks like this:
+
+```text
+Status:    Task completed (completed-clean)
+Session:   session-7abf8371-0583-4160-967d-df591b335d66
+Turn:      2
+Duration:  6 min 55 s
+Provider:  command-goat
+Model:     deepseek/deepseek-v4.1-flash
+Workspace: E:\Projects\DSHarness\dsh-mail-notify
+Tool errors reported by DSH: 0
+Telemetry complete: yes
+Token usage (turn aggregate): inputTokens=272069, outputTokens=18151, cacheReadTokens=2430720, cacheWriteTokens=not reported, reasoningTokens=not reported
+Token telemetry complete: yes (19 model calls observed, each reporting usage)
+```
+
+`Duration` is `turn/end` minus `turn/start` and therefore covers model time, tool time, and every
+wait in between. `Token usage` is a sum of per-call counters: `cacheWriteTokens=not reported` means
+no call in that turn reported the bucket, which is not the same as `0`. `Token telemetry complete:
+no` means at least one model call of the turn reported no usage — a retried call, for instance —
+and the numbers above cover only the rest. The plugin never derives a total, a cost, or a missing
+counter.
 
 ---
 
@@ -62,7 +93,7 @@ For development, or on a machine without registry access, install the packed arc
 
 ```powershell
 # From the directory holding the packed archive:
-dsh plugin --profile web add ./dsh-mail-notify-0.1.0.tgz
+dsh plugin --profile web add ./dsh-mail-notify-<version>.tgz
 ```
 
 Verify that the bundle was recognised — the package name must appear in `dsh.profile.bundles`:
@@ -257,6 +288,8 @@ remove that injection instead.
 | `mail.failed {"category":"unknown-error"}` | The SMTP failure was unrecognised, so it is treated as permanent and not retried. The line carries `code`/`responseCode`. |
 | `mail.failed {"category":"smtp-auth"}` | Authentication was rejected. The password is never printed; re-check the credential value. |
 | A turn finished but no candidate appears in the log | The plugin attached mid-turn: `durationMs` will be `null` and the counters only cover what it saw. That is expected and does not suppress the email. |
+| The token numbers look far too small | You are reading a `0.1.0` message. That version reported the last model call's counters, not the turn's. Check `schemaVersion` in the log line; `2` is the aggregate. |
+| `Token telemetry complete: no` | At least one model call of the turn reported no usable usage — a retried call is the usual cause. `candidate.produced` carries `usageMissingCount` and `usageUnobservableRetries` with the counts. |
 
 **To see the plugin's own structured log lines** you need an exporter: Cordis buffers logs in
 memory and prints nothing by itself. The `dsh` command line registers no exporter, which is why
@@ -299,9 +332,13 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
   table, but triggering them live depends on model and provider behaviour.
 - **`session/disposed` rarely fires.** DSH keeps sessions loaded for the life of the process, so the
   dominant release path is the per-turn cleanup, not that event.
-- **Token counters are reported, never interpreted.** `usage` is carried through exactly as the
-  runtime reported it. No cost, no unit conversion, and no reconciliation of the recorded
-  inconsistency between `inputTokens` and `totalTokens`.
+- **Token counters are reported and folded, never interpreted.** `usage` is the sum of the per-call
+  counters the runtime reported for the turn (D017). No cost, no unit conversion, no derived total,
+  no zero-filling of a counter no call reported, and no reconciliation of an individual call's
+  internal inconsistency.
+- **A retried model call makes the token line incomplete.** Its usage is not part of any payload DSH
+  writes, so the aggregate covers only the calls that reported counters and the email says so. The
+  missing amount is not estimated.
 - **A refused enqueue is not retried.** When the queue is full the newest turn is dropped and
   logged; the deduplication key is not spent, but nothing re-delivers that turn either.
 - **Logs are only visible with an exporter attached.** See the troubleshooting note above.
@@ -316,9 +353,10 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`PHASE3_REPORT.md`](PHASE3_REPORT.md) | Phase 3 report: implementation, verification results, packaging, runtime integration, git sync |
 | [`PHASE4_REPORT.md`](PHASE4_REPORT.md) | Phase 4 report: real SMTP end-to-end validation and the v0.1.0 release candidate audit, including the four defects found and fixed |
 | [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) | Phase 4.1 report: SMTP credential rotation, DSH `0.1.5-rc.2` compatibility verification, secret history scan, and the release-readiness decision |
+| [`PHASE6_REPORT.md`](PHASE6_REPORT.md) | Phase 6 report: the turn-level token telemetry defect (`BUG-TEL-001`), the runtime evidence behind it, the duration investigation, the schema v2 migration, and the v0.1.1 release-candidate verification |
 | [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
 | [`RELEASE_NOTES_V0.1.0.md`](RELEASE_NOTES_V0.1.0.md) | The release notes published on the GitHub Release |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D016 decision records with reasons, rejected alternatives, and consequences |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D017 decision records with reasons, rejected alternatives, and consequences |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module layout and per-module responsibility boundaries |
 | [`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md) | Configuration specification: fields, defaults, validation, failure behaviour |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, credential lifecycle, TLS constraint, log redaction, privacy defaults |

@@ -42,6 +42,7 @@ README.md 当前状态
 | D014 | 截断可解释性：footer 通知（可关闭） | Frozen |
 | D015 | 时长门槛在未知时长时不抑制 | Frozen |
 | D016 | 文档冲突裁决清单 | Frozen |
+| D017 | Turn 级遥测聚合语义（`usage` 语义变更，schema v2） | Frozen |
 
 ---
 
@@ -588,6 +589,7 @@ TLS 校验不可关闭的理由不是一般性的安全建议：邮件正文包�
 
 - 任何改变候选字段语义的提交都必须同时递增 `schemaVersion` 并更新 `docs/ARCHITECTURE.md` 的 DTO 表。
 - 测试须包含对 `schemaVersion === 1` 的显式断言，使意外的版本漂移在单元测试中被捕获。
+- **Phase 6 注解（不改写本条判决）**：`usage` 的语义已在 D017 中由「最后一次观察到的 per-call 原始计数器」改为「Turn 级聚合」，因此 `schemaVersion` 已按本条规则递增为 `2`，上述断言相应地针对 `2`。编号策略、字面量类型与兼容契约三项条款均未改变。
 
 ---
 
@@ -755,6 +757,70 @@ Phase 1 与 Phase 2 期间发现现有文档之间存在若干实质冲突。本
 | `steps` / `assistantEvents` / `toolCallCount` / `toolResultCount` | 保留为候选字段 | 它们已在运行时验证可读且对审计有用 |
 
 **理由**：Phase 1 的 DTO 是**证据采集工具**的形状，v1 的 DTO 是**产品契约**的形状。两者目标不同，因此形状差异是预期的，无需把 Phase 1 的选择解释为错误。唯一需要显式处理的是更名项与移除项，已在表中列明。
+
+---
+
+## D017 — Turn 级遥测聚合语义（Phase 6，2026-09）
+
+**背景**
+
+D006 冻结的是「不推算、不校正、不参与 completion」，而 Phase 2–4 的实现把该原则落实为「`usage` = 最后一个携带 usage 的 `assistant/message` 的原始计数器」。Phase 6 的用户反馈与运行时取证（`PHASE6_REPORT.md` 第 3–4 节）确认：该实现把一次模型调用的数据呈现为整个 Turn 的数据，属于**字段语义与用户理解不一致**的缺陷，记为 `BUG-TEL-001`。
+
+D006 的三条原则继续成立且未被削弱；D017 补充的是同一 Turn 内多个 provider-reported per-call usage 的折叠语义。
+
+**Decision**
+
+`usage` 的语义由「最后一次观察到的 per-call 原始计数器」改为「本 Turn 内可观察的、provider 逐次报告的 per-call 计数器按 bucket 折叠后的 Turn 级聚合」，并按 D013 递增 `NotificationCandidate.schemaVersion`：`1` → `2`。
+
+冻结以下条款：
+
+1. **聚合单位是模型调用，不是 Turn 结束时的状态。** 每个被确认为属于本 Turn 的模型调用贡献一个 sample；sample 逐 bucket 相加得到聚合值。最后一个 sample 在任何情况下都不代表 Turn。
+2. **只折叠，不推导。** 聚合只做同 bucket 相加。不从 bucket 之间推导任何未报告的数据，不换算单位，不做价格计算，不校正不自洽的数值，不参与 `status` 判定或抑制判定（这三条是 D006 原文，继续有效）。
+3. **bucket 语义固定。** `inputTokens` 是**未命中缓存的输入**，与 `cacheReadTokens`、`cacheWriteTokens` 互不重叠，三者相加才是计费输入；`reasoningTokens` 已包含在 `outputTokens` 内，**永不**与 `outputTokens` 相加。因此正文中不出现任何「total」行。
+4. **缺失即缺失。** provider 未报告的 bucket 不补零、不插值：该 sample 对该 bucket 不贡献，且当全部 sample 都未报告某 bucket 时，聚合值中该字段**省略**。实测依据：`opencode-go/hy3` 在无缓存命中时省略 `cacheReadTokens`（省略即该次调用没有缓存读入），而 `deepseek-official` 恒报该字段——两者在同一 Turn 内混合出现，因此「按报告过的 sample 求和」重建的是该 bucket 的真实 Turn 合计，而「要求所有 sample 都报告」会丢弃真实数据。
+5. **`totalTokens` 不参与聚合，且不在 schema v2 中出现。** 该字段在 DSH 中的定义是 per-call 的「整次调用 prompt + output 合计」，其值可能由 adapter 从权威计数器推导而来，而非 provider 原样给出；把逐次合计再求和，等于由插件产出一个语义混杂的 Turn total，与第 3 条及 §21 的约束冲突（实测 30 205 个 sample 中 3 283 个未报告该字段，按缺失即缺失处理会得到一个不完整却形似总数的数字）。per-call 的 `totalTokens` 仍可被适配器读取，但不再进入候选。
+6. **覆盖范围必须显式。** schema v2 新增四个必须字段：
+
+   | 字段 | 语义 |
+   | --- | --- |
+   | `usageSampleCount` | 已折叠的、相互区分的模型调用 usage 报告数 |
+   | `usageMissingCount` | 已观察到但未给出可用 usage 的应计模型调用数（含未结算的 step） |
+   | `usageUnobservableRetries` | 失败且 usage 不可观察的重试调用数（`llm/retry` 记录） |
+   | `usageComplete` | 当且仅当 Turn 自 `turn/start` 起被观察、无重试、无缺失、无未结算 step 且至少有一个 sample 时为 `true` |
+
+   `usageMissingCount` 与 `usageUnobservableRetries` 是两条**独立事实**，不是对 Turn 调用集合的划分：同一次失败调用可能同时留下 `assistant/attempt` 结算与 `llm/retry` 记录，因而在两个计数中各出现一次。正因为如此，二者都不得被表述为「调用总数」。
+7. **重复与重放不得重复计数。** settlement 身份取自已被证实稳定的运行时字段：durable `seq`（会话内单调唯一，实测 30 227 条 `assistant/message`、83 条 `assistant/attempt`、376 条 `llm/retry` 全部携带），其次是 `message.id`。在此之上再加一条实测边界：`assistant/message` 每个 step **至多一条**（实测 30 227 条消息中同 step 出现两条的次数为 0），因此「同一 step 的第二条携带 usage 的 message」按重复处理。该边界只作用于携带可折叠 sample 的 message，使同 step 中不携带 usage 的 message 仍被计为一次独立调用，而不是被静默吞并。
+8. **`usageComplete` 与 `telemetryComplete` 保持独立。** 前者断言「每个应计模型调用都报告了 usage」，后者只断言「插件从 `turn/start` 起观察该 Turn」。完整观察不等于 provider 逐次报告，二者不得合并为一个字段，正文中分行呈现。
+9. **Duration 不受本决策影响。** `durationMs = event.time(turn/end) − event.time(turn/start)` 的定义不变（D015 与 `ARCHITECTURE.md` 第 5 节）。Phase 6 在同一真实 Turn 上独立复核了该公式，未发现缺陷；见 `PHASE6_REPORT.md` 第 5 节。
+
+**Reason**
+
+真实运行时取证（858 份 session log、1 432 个已结束 Turn、503 208 个事件）给出四条决定性事实：
+
+其一，`assistant/message` 的 `usage` 是**逐次调用**的，一个 Turn 有多次调用。实测单个 Turn 最多 2 611 个 step；一个 63 步的真实 Turn 折叠出 `inputTokens=99960, outputTokens=84145, cacheReadTokens=9103616`，而 v0.1.0 的候选只有最后一次调用的 `inputTokens=299, outputTokens=1190, cacheReadTokens=199552`。丢失的部分不是舍入误差，而是 99% 以上的数据。
+
+其二，失败调用在两类记录中留下痕迹：`llm/retry`（实测 376 条，覆盖 261 个 step）与 `assistant/attempt`（实测 83 条）。两者都**不携带**失败调用的 usage，因此该次调用的用量在现有事件面下不可观察。把这种情况静默忽略，会把部分统计呈现为完整统计，正是本决策第 6 条要防止的。
+
+其三，逐 bucket 折叠的正确性可由 harness 自带的独立实现交叉验证。`@deepseek-ai/dsh-token-meter` 的 `deriveTurnTokenUsage` 与本插件在同一天的全部真实 Turn 上对比：在其给出数值的 967 个 Turn 上，`inputTokens`/`outputTokens` 与本插件聚合值 **967/967 完全一致**；其余 464 个 Turn 因其更严格的 bucket 完备规则返回 `undefined`（要求每个 attempt 都报告 `totalTokens`，或同时报告两个 cache bucket——而实测 503 208 个事件中 `cacheWriteTokens` 出现 0 次）。两者的差异只在「可选 bucket 是否要求全员报告」这一披露策略上，不在数值上。
+
+其四，D006 中记录的不自洽样本 `{inputTokens: 255, outputTokens: 759, totalTokens: 187638, cacheReadTokens: 186624}` 现已可解释：它是**单次调用**的原始记录（未缓存输入 255 + 缓存读入 186624 + 输出 759 = 187638 = `totalTokens`，逐字节自洽），Phase 1 之所以读成不自洽，是因为把 per-call 的 `totalTokens` 当成了累计量。该结论不改变 D006 的任何条款——本插件仍不作换算、不作校正——但它解释了 D006 的 Reason 中列出的那条观察。
+
+**Rejected alternatives**
+
+1. **保持 schemaVersion 1 并只改实现**：`usage` 的字段语义发生改变，而 v1 的消费方无法区分「最后一次调用」与「Turn 聚合」；D013 明确要求语义变化必须递增版本号。
+2. **聚合时把 `totalTokens` 一并求和并展示为 Total**：会产出与第 3 条冲突的、语义混杂的总数，且 10.9% 的 sample 不携带该字段，得到的是一个不完整却形似总数的值。
+3. **要求所有 sample 都报告某 bucket 才输出该 bucket（官方 meter 的严格规则）**：会丢弃真实数据（实测 111/1432 个 Turn 的 sample 形状不一致），并且与第 4 条的实测语义不符。
+4. **用 `usage += event.usage` 的单行累加代替带身份的折叠**：无法抵御重复投递、重放与重试，会把一次调用计成两次。
+5. **在无法观察重试用量时把 `usageComplete` 置为 true 并在正文中附免责说明**：免责说明不能消除误读，且与第 6 条的判据直接冲突。
+6. **把 `usageComplete` 合并进 `telemetryComplete`**：两者语义不同（见第 8 条），合并会使「完整观察但 provider 未逐次报告」与「中途装载」无法区分。
+
+**Consequences**
+
+- 消费端必须检查 `schemaVersion === 2` 后再按 Turn 聚合语义解释 `usage`；任何仍按「最后一次调用」解释 v2 记录的读取方都会得到错误的量级判断。
+- 测试须包含 `schemaVersion === 2` 的显式断言（替代 D013 中针对 `1` 的那条），并覆盖多 step 折叠、可选 bucket、reasoning 不重复计入、缺失 usage、中途装载、重复／重放、重试七类场景。
+- 正文标签由 `Token counters (as reported)` 改为 `Token usage (turn aggregate)`，并新增 `Token telemetry complete:` 一行；标签的措辞是契约的一部分，不是排版选择。
+- `candidate.produced` 日志新增 `usageSampleCount` / `usageMissingCount` / `usageUnobservableRetries` / `usageComplete` / `steps` 五个标量字段；计数器本身仍不进入日志（`SECURITY.md` §4）。
+- 若未来要展示计费总量或费用，必须另行设计并新增 ADR，不得在本决策之上顺手扩展。
 
 ---
 
