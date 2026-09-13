@@ -1,0 +1,42 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物
+/dist/
+/lib/
+/out/
+*.tsbuildinfo
+
+# 打包产物
+*.tgz
+
+# 凭据与本地环境
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.secrets/
+.credentials/
+
+# 测试与覆盖率
+/coverage/
+.nyc_output/
+*.lcov
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+/tmp/
+/.cache/
+
+# 编辑器与操作系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
