@@ -275,12 +275,16 @@ Phase 3 应当能够仅依赖仓库文档开始实现，无需重新 Inspect DSH
 | Repository | `https://github.com/HaowenCang/dsh-mail-notify` |
 | Branch | `main` |
 | Starting SHA | `f47912eb9af98f0d6cd171ffeda422d0270277d7` |
-| Phase 2 implementation commit | `pending` — `docs: complete phase 2 design freeze` |
-| Final documentation sync commit | `pending` — `docs: record phase 2 synchronization` |
-| Remote SHA | `pending` |
-| Sync status | `pending` |
+| Phase 2 implementation commit | `9663816` — `docs: complete phase 2 design freeze`（9 files changed, 2708 insertions(+), 19 deletions(-)） |
+| Final documentation sync commit | `记录于本提交` — `docs: record phase 2 synchronization`（仅回填上表与本节，不含设计内容变更） |
+| Remote SHA after implementation commit | `9663816f72d24dd08562e6813ca65291f4996b49`（与本地 HEAD 逐字符一致） |
+| Sync status | **VERIFIED**（`git ls-remote origin refs/heads/main` 与 `git rev-parse HEAD` 相等） |
 
-工作树在提交前状态：`docs/` 目录为新建（6 个文件），`README.md` 与 `00_MASTER.md` 为修改，`PHASE2_REPORT.md` 为新建。`PHASE1_RUNTIME_CONTRACT.md`、`PHASE1_REPORT.md`、`.gitignore`、`LICENSE` 未改动。
+**关于本报告自身的 SHA 记录方式。** 报告无法在自身提交之前写入自己的 SHA，因此最终 SHA 不写入本文件——写入任何值都必然不准确（写 `pending` 则在同步完成后即失真，写占位符则产生无法解析的引用）。可核验性改由以下两条保证：本文记录的两笔提交信息与 `git log --oneline` 的输出一致；最终同步状态以 `git rev-parse HEAD` 与 `git ls-remote origin refs/heads/main` 的比对为准，该比对在推送后执行并通过。
+
+工作树在提交前状态：`docs/` 目录为新建（6 个文件），`README.md` 与 `00_MASTER.md` 为修改，`PHASE2_REPORT.md` 为新建。`PHASE1_RUNTIME_CONTRACT.md`、`PHASE1_REPORT.md`、`.gitignore`、`LICENSE` 未改动（已核验：`git diff --quiet` 对这四者返回 0）。
+
+提交范围按任务书第 34 节要求逐文件显式 `git add`，未使用 `git add .`。已确认全部未跟踪文件均属于本阶段，无无关文件被纳入。
 
 未执行 `git reset --hard`、`git clean -fd`、`git push --force`、`git rebase --onto`、`git commit --amend`。未创建 GitHub Release，未执行 npm publish。
 
