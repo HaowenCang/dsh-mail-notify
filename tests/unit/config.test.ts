@@ -100,6 +100,48 @@ test('a malformed from address fails', () => {
   assert.ok(errors.some((entry) => entry.includes('from')))
 })
 
+test('ADDR-01 a multi-address list is never accepted as one entry (GHSA-2x7j-588g-ccc2)', () => {
+  // The advisory is a quadratic-time address parser reached with a crafted
+  // comma-separated list. Its path runs through Nodemailer's own parser, which
+  // this plugin reaches only with a single address per field. That the parser
+  // stays unreachable is a property of the configuration layer, so the proof
+  // belongs here: every list separator is refused as part of one `from` or one
+  // `to` entry, and only arrays carry more than one recipient.
+  const listShaped = [
+    'a@example.com,b@example.com',
+    'a@example.com;b@example.com',
+    'a@example.com b@example.com',
+    'a@example.com\tb@example.com',
+    'a@example.com\nb@example.com',
+    ',a@example.com',
+    'a@example.com,',
+    'a@example.com,,b@example.com',
+    'Group: a@example.com, b@example.com;',
+    '"a@example.com, b@example.com"',
+    '<a@example.com>, <b@example.com>',
+    'a@example.com, b@example.com',
+  ]
+  for (const entry of listShaped) {
+    const asFrom = resolveConfig({ ...VALID_RAW_CONFIG, from: entry })
+    assert.ok(asFrom.errors.length > 0, `from ${JSON.stringify(entry)} must be refused, not parsed as a list`)
+    assert.equal(asFrom.resolved.smtpConfigured, false, `from ${JSON.stringify(entry)} must not arm the plugin`)
+
+    const asTo = resolveConfig({ ...VALID_RAW_CONFIG, to: [entry] })
+    assert.ok(asTo.errors.length > 0, `to entry ${JSON.stringify(entry)} must be refused, not parsed as a list`)
+    assert.equal(asTo.resolved.smtpConfigured, false, `to entry ${JSON.stringify(entry)} must not arm the plugin`)
+  }
+})
+
+test('ADDR-02 separate array entries remain the supported way to reach several recipients', () => {
+  const { errors, resolved } = resolveConfig({
+    ...VALID_RAW_CONFIG,
+    to: ['a@example.com', 'b@example.com'],
+  })
+  assert.deepEqual(errors, [])
+  assert.equal(resolved.smtpConfigured, true)
+  assert.deepEqual([...resolved.smtp.to], ['a@example.com', 'b@example.com'])
+})
+
 test('the credential reference must be a name, not a value', () => {
   assert.equal(CREDENTIAL_REF_PATTERN.test('DSH_MAIL_SMTP_PASSWORD'), true)
   assert.equal(CREDENTIAL_REF_PATTERN.test('_private'), true)

@@ -116,6 +116,29 @@ test('the packed manifest still declares the DSH bundle and the export map', () 
   assert.ok(existsSync(join(extracted, manifest.dsh?.bundle?.patch ?? 'missing')), 'the declared patch file exists')
 })
 
+test('PKG-01b the packed manifest declares exactly one runtime dependency, on a supported Nodemailer', () => {
+  // The dependency graph is part of the shipping contract, not build trivia: the
+  // packaged manifest is what a profile installs, and Nodemailer's own security
+  // policy supports only the current major. A range that could resolve below it
+  // would let a fresh install land back on an unpatched line.
+  const manifest = JSON.parse(readFileSync(join(extracted, 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>
+    devDependencies?: Record<string, string>
+  }
+  const dependencies = manifest.dependencies ?? {}
+  assert.deepEqual(Object.keys(dependencies), ['nodemailer'], 'Nodemailer is the only runtime dependency')
+  const declared = dependencies['nodemailer'] ?? ''
+  assert.match(declared, /^\^10\./, `the declared range must stay on the supported major (got "${declared}")`)
+  // A caret range on 10 cannot reach 11, which is the property that matters: an
+  // unattended install must not cross a major, because a major is where Nodemailer
+  // makes its breaking changes.
+  assert.ok(!/[*x]|\|\||>=|>/.test(declared), `the range must not admit a different major (got "${declared}")`)
+  // Nodemailer 10 bundles its own declarations. Installing the DefinitelyTyped
+  // package alongside it produces two conflicting declarations of the same
+  // module, so its absence is asserted rather than assumed.
+  assert.equal(Object.hasOwn(manifest.devDependencies ?? {}, '@types/nodemailer'), false)
+})
+
 test('PKG-02 the archive carries no secret-bearing or development entry', () => {
   const rules: Array<{ pattern: RegExp; why: string }> = [
     { pattern: /(^|\/)\.env($|\.)/, why: 'environment file' },
