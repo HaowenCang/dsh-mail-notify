@@ -6,7 +6,9 @@
 
 > **Implementation note（Phase 3 补记，2026-09）。** 以下逐条为本文件各节在实现中的落实与补充事实。**没有条款被放宽。**
 >
-> **第 2 节（凭据生命周期）。** `resolveSmtpPassword()` 每次发送尝试调用一次 `resolve()`；服务句柄在装配期取得一次（属第 2 节允许的「缓存服务句柄」），解析结果只存在于该次尝试的局部作用域，随 `TransportOptions` 传入 transport 工厂后不再被引用。`resolve` 返回 `undefined` 或抛错时，诊断信息包含引用名与 `describe()` 的 `configured` / `source` / `writable`，从不包含值。
+> **第 2 节（凭据生命周期）。** `resolveSmtpPassword()` 每次发送尝试调用一次 `resolve()`，解析结果只存在于该次尝试的局部作用域，随 `TransportOptions` 传入 transport 工厂后不再被引用。`resolve` 返回 `undefined` 或抛错时，诊断信息包含引用名与 `describe()` 的 `configured` / `source` / `writable`，从不包含值。
+>
+> **服务句柄也不缓存（Phase 4.1 更正）。** 装配期曾以 `const provider = ctx.get('credentials')` 取得一次句柄并长期持有；该写法在真实 composition 中失败，因为 Cordis 在先前插件 `apply()` 运行时尚未发布 `credentials`，`ctx.get()` 返回 `undefined` 而不抛错，于是句柄被永久固定为 `undefined`，每次发送都报 `credential-missing`。现改为把查找本身表达为闭包 `credentialProviderResolver: () => getCredentialProvider(ctx)`，在每次发送尝试内求值。因此本节「不得缓存」的范围从已解析的值扩展到服务句柄；`tests/integration/mailer.test.ts` 的 SEC-09 以「早期发送失败、服务发布后同一次尝试成功」断言这一时机。
 >
 > **第 3 节（传输安全）。** 全仓库唯一构造 transport 的位置是 `src/transport.ts`，其参数对象恰为 `{host, port, secure, user, password}` 五个键，没有 `tls` 块、没有 `rejectUnauthorized`。`tests/integration/mailer.test.ts` 的 SEC-06 逐键断言这一形状，因此新增任何 TLS 关闭键都会使测试失败，而不是静默通过。
 >
@@ -60,6 +62,10 @@ npm tarball
 **解析时机**：每次发送操作开始时通过 `credentials.resolve(ref)` 解析，结果仅存在于该次操作的局部作用域。
 
 **禁止缓存**：不得写入模块级变量、不得写入配置对象、不得写入类字段、不得在多次发送之间复用同一个已解析值。依据是 Credential 服务的明确契约——解析是 per-call 的，调用方必须在每次操作时重新 resolve，这正是「密码轮换后无需重启即可生效」的实现机制。
+
+**服务句柄同样不缓存**：`ctx.get('credentials')` 必须在每次发送尝试内求值。Cordis 的服务发布顺序不保证本插件 `apply()` 运行时 `credentials` 已可用，且此时 `ctx.get()` 返回 `undefined` 而非抛错；在装配期读取一次会把「服务尚未发布」固化为「永久无服务」。
+
+**`.credentials.yaml` 的边界**：DSH file credential provider 的目标是让 secret 不进入普通配置文件与日志，而不是把 secret 保护起来使其对以同一 OS 用户身份运行的所有进程不可见。该文件是明文 YAML，权限取决于文件系统 ACL。**不得**把它描述为对 Agent 或对本机其他进程的密码学安全边界；需要更强隔离时应改用进程环境变量层或操作系统级隔离，而不是依赖该文件。
 
 **解析失败（`resolve` 返回 `undefined`）**：按永久错误处理——不重试、不发送、写结构化 warning。诊断信息可包含引用名与 `credentials.describe(ref)` 的结果（`configured` / `source` / `writable`），**不得**包含 secret 值。
 

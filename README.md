@@ -6,7 +6,18 @@ turn's final user-visible model output over SMTP.
 - Plugin name / patch row id: `dsh-mail-notify`
 - Version: `0.1.0`
 - Host-only: no browser half, no UI, no Client package
-- Requires DSH `0.1.5-rc.1` and Node `^22.19.0 || >=24.0.0`
+- Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
+
+**Verified DSH versions.** Both candidates below were tested, not inferred from the peer range. The
+`^0.1.5-rc.1` range in `package.json` is a SemVer range, not a compatibility statement, and it does
+not assert that later `0.1.5` releases work.
+
+| DSH version | Status | Evidence |
+| --- | --- | --- |
+| `0.1.5-rc.1` | Verified | Full suite and the runtime contract probe against that installation; real SMTP send; live top-level turn end to end |
+| `0.1.5-rc.2` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over a loopback SMTP peer |
+
+Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md).
 
 **v0.1.0 release candidate validated.** The candidate was validated end to end against a real SMTP
 server: a synthetic smoke message and a real top-level Agent turn both reached `mail.sent` from the
@@ -143,9 +154,16 @@ $DSH_HOME/.env                                (read-only fallback)
 `.env.example` in this repository shows the `.env` form. The name must match exactly; an empty
 stored value counts as absent, so a blank line configures nothing.
 
-The password is resolved **inside every send attempt** and never cached. Rotating it therefore
-takes effect for the next email with no DSH restart. The plugin also never logs the value — only
-the reference name and the `describe()` result (`configured`, `source`, `writable`).
+The password is resolved **inside every send attempt** and never cached; the Credential service
+handle is looked up per attempt for the same reason. Rotating the password therefore takes effect
+for the next email with no DSH restart. The plugin also never logs the value — only the reference
+name and the `describe()` result (`configured`, `source`, `writable`).
+
+What `$DSH_HOME/.credentials.yaml` does and does not give you: it keeps the secret out of ordinary
+configuration files, out of this package's tarball, and out of logs. It is not a cryptographic
+boundary. The file is plain YAML whose readability is decided by filesystem permissions, so any
+process running as the same OS user — including an agent working in a shell — can read it. Treat the
+file as a hygiene measure, not as protection against a compromised or curious local process.
 
 ## Start
 
@@ -288,6 +306,7 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`PHASE2_REPORT.md`](PHASE2_REPORT.md) | Phase 2 report: the design freeze |
 | [`PHASE3_REPORT.md`](PHASE3_REPORT.md) | Phase 3 report: implementation, verification results, packaging, runtime integration, git sync |
 | [`PHASE4_REPORT.md`](PHASE4_REPORT.md) | Phase 4 report: real SMTP end-to-end validation and the v0.1.0 release candidate audit, including the four defects found and fixed |
+| [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) | Phase 4.1 report: SMTP credential rotation, DSH `0.1.5-rc.2` compatibility verification, secret history scan, and the release-readiness decision |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D016 decision records with reasons, rejected alternatives, and consequences |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module layout and per-module responsibility boundaries |
 | [`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md) | Configuration specification: fields, defaults, validation, failure behaviour |
