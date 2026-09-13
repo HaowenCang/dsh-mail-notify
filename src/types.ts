@@ -9,11 +9,12 @@
  */
 
 /**
- * Raw token counters exactly as the runtime reported them.
+ * One provider-reported per-call token sample, exactly as the runtime reported it.
  *
- * Every field is optional because the runtime omits counters a provider did
- * not report. Values are never derived, corrected, or used to classify a turn
- * (D006).
+ * Every field is optional because the runtime omits counters a provider did not
+ * report. Values are never derived, corrected, or used to classify a turn
+ * (D006). This is the shape of a *single model call*, not of a turn: the
+ * turn-level aggregate has its own type, {@link TurnUsage} (D017).
  */
 export interface RawUsage {
   inputTokens?: number
@@ -22,6 +23,105 @@ export interface RawUsage {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   reasoningTokens?: number
+}
+
+/**
+ * Turn-level aggregate of observable per-call provider-reported counters (D017).
+ *
+ * Produced by folding the samples of every distinct model call observed inside
+ * one turn. `inputTokens` is uncached input only; cached input is reported
+ * separately, so the three input buckets are disjoint and are never added
+ * together. `reasoningTokens` is a subset of `outputTokens` and is therefore
+ * never added to it. No total and no price is derived from these buckets, and a
+ * counter no sample reported stays absent rather than becoming a known `0`.
+ */
+export interface TurnUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+}
+
+/**
+ * How completely one turn's token telemetry was observed.
+ *
+ * The four fields answer two different questions. `sampleCount` says how many
+ * distinct model-call usage reports were folded into the aggregate.
+ * `missingCount` and `unobservableRetries` say how many accountable model calls
+ * produced no usable report, and `complete` is true only when both of those are
+ * zero and the turn was observed from its start.
+ *
+ * `missingCount` and `unobservableRetries` are independent facts rather than a
+ * partition of the turn's calls: a single failed call that recorded an
+ * `assistant/attempt` settlement *and* a retry record is counted in both, which
+ * is why neither is presented as "the number of calls".
+ */
+export interface TurnUsageCoverage {
+  /** Distinct model-call usage reports folded into the aggregate. */
+  sampleCount: number
+  /** Accountable model calls observed without a usable usage report. */
+  missingCount: number
+  /** Retried model calls whose failed attempt reported no usage. */
+  unobservableRetries: number
+  /** True only when no accountable call was left without a usage report. */
+  complete: boolean
+}
+
+/** Which settlement produced a usage sample. */
+export type SettlementKind = 'message' | 'attempt'
+
+/** One observed model-call settlement, as the handler saw it. */
+export interface SettlementInput {
+  kind: SettlementKind
+  step: number
+  /** Durable session sequence number, when the envelope carried one. */
+  seq?: number
+  /** Assistant message id, when the payload carried one. */
+  messageId?: string
+  /** Event time, used only as a last-resort identity for deduplication. */
+  timeMs: number
+  /** The raw usage value; its shape is not trusted. */
+  usage: unknown
+}
+
+/**
+ * What one settlement contributed.
+ *
+ * `sampled` folded a usable usage report; `unusable` recorded an accountable
+ * call that reported none; `duplicate` changed nothing because the same
+ * settlement had already been observed.
+ */
+export type SettlementOutcome = 'sampled' | 'unusable' | 'duplicate'
+
+/** One retry record: a failed model call whose usage is not reported at all. */
+export interface RetryInput {
+  step: number
+  seq?: number
+  timeMs: number
+}
+
+/** The folded result handed to the candidate builder. */
+export interface TurnUsageSnapshot extends TurnUsageCoverage {
+  /** The aggregate, or `undefined` when no readable sample was folded. */
+  usage?: TurnUsage
+}
+
+/**
+ * The per-turn token-accounting seam.
+ *
+ * Stated structurally so this module stays free of runtime imports; the
+ * implementation is `TurnUsageAccounting` in `telemetry.ts`.
+ */
+export interface TurnUsageLedger {
+  /** Record that the runtime announced a model call for this step. */
+  noteStepStarted(step: number): void
+  /** Fold one model-call settlement. */
+  addSettlement(input: SettlementInput): SettlementOutcome
+  /** Record one retried model call, whose usage is not observable. */
+  noteRetry(input: RetryInput): boolean
+  /** The turn's aggregate and coverage. */
+  snapshot(sawTurnStart: boolean): TurnUsageSnapshot
 }
 
 /**
@@ -76,6 +176,8 @@ export type InternalEvent =
       kind: 'assistant-message'
       turn: number
       step: number
+      /** Durable session sequence number; the primary settlement identity. */
+      seq?: number
       /** Raw content blocks; only `content.ts` may interpret them. */
       blocks: readonly unknown[]
       messageId?: string
@@ -84,6 +186,17 @@ export type InternalEvent =
       usage?: RawUsage
       timeMs: number
     }
+  | {
+      kind: 'assistant-attempt'
+      turn: number
+      step: number
+      seq?: number
+      /** The attempt's own usage, when its stream carried one. */
+      usage?: RawUsage
+      timeMs: number
+    }
+  | { kind: 'step-start'; turn: number; step: number; timeMs: number }
+  | { kind: 'llm-retry'; turn: number; step: number; seq?: number; timeMs: number }
   | { kind: 'tool-call'; turn: number; step: number; timeMs: number }
   | {
       kind: 'user-message'
@@ -155,7 +268,8 @@ export interface TurnState {
 
   provider?: string
   model?: string
-  usage?: RawUsage
+  /** Per-turn usage fold; see `telemetry.ts` for the semantics. */
+  usage: TurnUsageLedger
 
   /** How many distinct step numbers were observed, not the highest number. */
   steps: number
@@ -166,15 +280,18 @@ export interface TurnState {
 }
 
 /**
- * The stable DTO produced at turn end, schema version 1 (D007).
+ * The stable DTO produced at turn end, schema version 2 (D007, D013, D017).
  *
  * Must fields are the ones without which no notification policy can decide
  * unambiguously. Optional fields are omitted entirely when absent; nothing is
  * written as `undefined` or as a `null` placeholder except `durationMs`, whose
  * `null` is a positive observation that the duration is unknown.
+ *
+ * Version 2 changed the meaning of `usage`: it is the turn-level aggregate of
+ * observable per-call provider counters, not the last observed per-call sample.
  */
 export interface NotificationCandidate {
-  schemaVersion: 1
+  schemaVersion: 2
   sessionId: string
   turn: number
   status: CandidateStatus
@@ -185,6 +302,14 @@ export interface NotificationCandidate {
   visibleTextLength: number
   explicitToolErrorCount: number
   telemetryComplete: boolean
+  /** Distinct model-call usage reports folded into `usage`. */
+  usageSampleCount: number
+  /** Accountable model calls observed without a usable usage report (D017). */
+  usageMissingCount: number
+  /** Retried model calls whose failed attempt reported no usage (D017). */
+  usageUnobservableRetries: number
+  /** Whether every accountable model call of this turn reported usage (D017). */
+  usageComplete: boolean
   /** Epoch ms at which the candidate was constructed. */
   createdAt: number
 
@@ -195,7 +320,8 @@ export interface NotificationCandidate {
   assistantMessageId?: string
   /** `null` means unknown, which is not the same claim as `0` (D015). */
   durationMs?: number | null
-  usage?: RawUsage
+  /** Turn-level aggregate; absent when no sample was readable (D017). */
+  usage?: TurnUsage
   cwd?: string
   /** Collected always, carried only when the candidate is built for rendering. */
   userText?: string

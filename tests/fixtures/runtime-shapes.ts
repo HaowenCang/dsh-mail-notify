@@ -99,6 +99,10 @@ export function assistantMessage(input: {
   provider?: string
   model?: string
   usage?: Record<string, unknown>
+  /** Durable sequence number; the settlement identity the fold dedupes on. */
+  seq?: number
+  /** Raw stream records, for the usage-in-stream compatibility path. */
+  stream?: readonly unknown[]
 }): SessionEventLike {
   const message: Record<string, unknown> = {
     role: 'assistant',
@@ -106,9 +110,85 @@ export function assistantMessage(input: {
     content: input.content,
     source: { kind: 'model', provider: input.provider ?? 'deepseek-official', model: input.model ?? 'deepseek-chat' },
   }
-  const data: Record<string, unknown> = { turn: input.turn, step: input.step, message, stream: [] }
+  const data: Record<string, unknown> = {
+    turn: input.turn,
+    step: input.step,
+    message,
+    // A copy when the caller passed an array — nothing downstream may hold a
+    // reference into the fixture — and the value itself otherwise, so a test can
+    // also present a malformed stream and assert the adapter survives it.
+    stream: Array.isArray(input.stream) ? [...input.stream] : (input.stream ?? []),
+  }
   if (input.usage !== undefined) data['usage'] = input.usage
-  return { type: 'assistant/message', seq: input.turn * 100 + input.step, time: input.time, data }
+  return { type: 'assistant/message', seq: input.seq ?? input.turn * 100 + input.step, time: input.time, data }
+}
+
+/**
+ * An `assistant/attempt` event: a model call that committed no surface message.
+ *
+ * Observed 83 times across 858 real session logs; none of them carried a usage
+ * record in its stream.
+ */
+export function assistantAttempt(input: {
+  turn: number
+  step: number
+  time: number
+  seq?: number
+  /** Raw stream records; the only place an attempt's usage could appear. */
+  stream?: unknown
+}): SessionEventLike {
+  return {
+    type: 'assistant/attempt',
+    seq: input.seq ?? input.turn * 1000 + input.step * 10 + 1,
+    time: input.time,
+    data: {
+      turn: input.turn,
+      step: input.step,
+      stream: Array.isArray(input.stream) ? [...input.stream] : (input.stream ?? []),
+    },
+  }
+}
+
+/**
+ * An `llm/retry` event: the durable record of one failed model call.
+ *
+ * The payload names the failure and the retry policy and never carries the
+ * failed call's usage, which is why a retry makes a turn's usage incomplete.
+ */
+export function llmRetry(turn: number, step: number, time: number, seq = turn * 1000 + step * 10 + 2): SessionEventLike {
+  return {
+    type: 'llm/retry',
+    seq,
+    time,
+    data: {
+      retryId: `retry-${turn}-${step}-${seq}`,
+      turn,
+      step,
+      provider: 'deepseek-official',
+      mode: 'normal',
+      policyKey: 'default',
+      retry: 1,
+      maxRetries: 3,
+      delayMs: 500,
+      failure: { kind: 'error', message: 'upstream unavailable', code: 'LLM_UNAVAILABLE' },
+    },
+  }
+}
+
+/**
+ * An `llm/retry-started` event: the transition written after the retry wait.
+ *
+ * It is deliberately not accumulated. The failed call it follows is already
+ * accounted at `llm/retry`, and the attempt that replaces it settles through
+ * its own `assistant/message` or `assistant/attempt`.
+ */
+export function llmRetryStarted(turn: number, step: number, time: number, seq = turn * 1000 + step * 10 + 3): SessionEventLike {
+  return { type: 'llm/retry-started', seq, time, data: { retryId: `retry-${turn}-${step}`, turn, step, retry: 1 } }
+}
+
+/** A usage record in a stream, as the compacted record an attempt would embed. */
+export function streamUsageRecord(usage: Record<string, unknown>): Record<string, unknown> {
+  return { type: 'chunk', time: 1_750_000_000_000, chunk: { type: 'usage', usage } }
 }
 
 /** A `tool/call` event. */
@@ -259,6 +339,105 @@ export const OBSERVED_USAGE: Readonly<Record<string, number>> = {
   outputTokens: 759,
   totalTokens: 187638,
   cacheReadTokens: 186624,
+}
+
+/**
+ * The two per-call usage shapes real providers emit inside one turn.
+ *
+ * Taken from the recorded tuple log of a real multi-step turn in this project
+ * (`session-4322f6f0`, turn 1):
+ *
+ * - `deepseek-official` always reports `cacheReadTokens` and `totalTokens`,
+ *   including when nothing was cached, and adds `reasoningTokens` only on calls
+ *   that reasoned;
+ * - a route with no cache in play reports the required pair only, so a bucket's
+ *   absence there means "this call had none", not "this call was not counted".
+ *
+ * Both are kept as recorded. Nothing in the plugin may reconcile them.
+ */
+export const DEEPSEEK_CALL_USAGE: Readonly<Record<string, number>> = {
+  inputTokens: 5954,
+  outputTokens: 489,
+  totalTokens: 36907,
+  cacheReadTokens: 30464,
+}
+
+/** A call whose provider reported no cache bucket at all. */
+export const UNCACHED_CALL_USAGE: Readonly<Record<string, number>> = {
+  inputTokens: 3661,
+  outputTokens: 60,
+}
+
+/** A call that reported a reasoning subset of its output. */
+export const REASONING_CALL_USAGE: Readonly<Record<string, number>> = {
+  inputTokens: 1425,
+  outputTokens: 252,
+  totalTokens: 57741,
+  cacheReadTokens: 56064,
+  reasoningTokens: 180,
+}
+
+/**
+ * A three-call turn's events, as the runtime orders them.
+ *
+ * The shape is the one every real turn observed so far uses: `step/start`,
+ * `assistant/message` with `usage`, its `tool/call`s and `tool/result`s, then
+ * `step/end`. It exists so the multi-step fold is tested against the runtime's
+ * order rather than against a single message.
+ *
+ * @param turn - the turn number.
+ * @param usages - one usage record per step; the chain length follows it.
+ * @param baseTime - the `turn/start` time; each step advances it by 3 000 ms.
+ * @returns the event sequence, in delivery order.
+ */
+export function multiStepTurnChain(
+  turn: number,
+  usages: readonly Record<string, unknown>[],
+  baseTime = 1_750_000_000_000,
+): SessionEventLike[] {
+  const events: SessionEventLike[] = [turnStart(turn, baseTime)]
+  let seq = turn * 1000
+  usages.forEach((usage, index) => {
+    const step = index + 1
+    const stepTime = baseTime + step * 3_000
+    const callId = `call-${turn}-${step}`
+    events.push({ type: 'step/start', seq: (seq += 1), time: stepTime - 20, data: { turn, step } })
+    events.push(
+      assistantMessage({
+        turn,
+        step,
+        time: stepTime,
+        seq: (seq += 1),
+        content: [{ type: 'text', text: index === usages.length - 1 ? 'the final answer' : `step ${step} text` }],
+        usage: { ...usage },
+      }),
+    )
+    // Built inline rather than through the single-event helpers so every
+    // sequence number in the chain is distinct, as the durable log's are.
+    events.push({
+      type: 'tool/call',
+      seq: (seq += 1),
+      time: stepTime + 5,
+      data: { turn, step, callId, name: 'pwsh', arguments: '{"command":"echo"}' },
+    })
+    events.push({
+      type: 'tool/result',
+      seq: (seq += 1),
+      time: stepTime + 900,
+      data: {
+        turn,
+        step,
+        message: {
+          role: 'user',
+          content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text: 'ok' }] }],
+          source: { kind: 'tool', callId },
+        },
+      },
+    })
+    events.push({ type: 'step/end', seq: (seq += 1), time: stepTime + 1_000, data: { turn, step } })
+  })
+  events.push(turnEnd(turn, baseTime + usages.length * 3_000 + 2_000))
+  return events
 }
 
 /**

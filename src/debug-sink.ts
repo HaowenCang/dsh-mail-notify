@@ -29,6 +29,10 @@ export interface DebugSinkRecord {
   bodyTextLength: number
   explicitToolErrorCount: number
   telemetryComplete: boolean
+  /** Distinct model-call usage reports folded into the candidate's aggregate. */
+  usageSampleCount: number
+  /** Whether every accountable model call of the turn reported usage. */
+  usageComplete: boolean
   /** `null` when the turn's start was never observed. */
   durationMs: number | null
   truncated: boolean
@@ -106,6 +110,8 @@ function summarize(job: MailJob): DebugSinkRecord {
     bodyTextLength: Array.from(candidate.visibleText).length,
     explicitToolErrorCount: candidate.explicitToolErrorCount,
     telemetryComplete: candidate.telemetryComplete,
+    usageSampleCount: candidate.usageSampleCount,
+    usageComplete: candidate.usageComplete,
     durationMs: candidate.durationMs ?? null,
     truncated: job.truncated,
     recipientCount: job.to.length,

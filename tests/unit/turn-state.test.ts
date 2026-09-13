@@ -1,12 +1,15 @@
 /**
  * L1 unit tests for `turn-state.ts` — matrix rows TRN-01…TRN-03, TRN-10,
- * TRN-11, DUR-01…DUR-04 (the duration facts), CAND-01…CAND-04, USE-01…USE-06,
- * and the state-releasing half of LIFE-01…LIFE-06.
+ * TRN-11, DUR-01…DUR-06 (the duration facts), CAND-01…CAND-04, and the
+ * state-releasing half of LIFE-01…LIFE-06.
  *
  * The mid-turn rows matter most. A plugin can attach halfway through a turn and
  * never see that turn's `turn/start`; the state must then still accumulate real
  * counters, while the duration must report `null` rather than the fabricated
  * `0` the Phase 1 prototype originally produced.
+ *
+ * The token fold itself is tested in `telemetry.test.ts`; here it is only the
+ * carrier of the candidate's usage fields.
  *
  * @module dsh-mail-notify/tests/unit/turn-state
  */
@@ -14,8 +17,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { isLosslessJson } from '../../src/normalize.ts'
-import { collectUsage, createCandidate, createTurnState, TurnStateStore } from '../../src/turn-state.ts'
-import { OBSERVED_USAGE } from '../fixtures/runtime-shapes.ts'
+import { createCandidate, createTurnState, TurnStateStore } from '../../src/turn-state.ts'
+import { DEEPSEEK_CALL_USAGE, OBSERVED_USAGE, UNCACHED_CALL_USAGE } from '../fixtures/runtime-shapes.ts'
+
+/** Fold one usage record into a turn state's ledger, as the handler would. */
+function fold(
+  state: ReturnType<typeof createTurnState>,
+  step: number,
+  usage: unknown,
+  kind: 'message' | 'attempt' = 'message',
+): void {
+  state.usage.noteStepStarted(step)
+  state.usage.addSettlement({ kind, step, seq: step, timeMs: 1_000 + step, usage })
+}
 
 test('TRN-01 a normally started turn records a real duration', () => {
   const state = createTurnState(1, true, 1_000_000)
@@ -63,6 +77,43 @@ test('DUR-01 an unknown duration is never the reason for suppression', () => {
   })
   assert.equal(candidate.durationMs, null)
   assert.ok('durationMs' in candidate)
+})
+
+test('DUR-05 the duration spans the whole turn, not the last message', () => {
+  // The frozen fixture: `turn/start` at 1 000 and `turn/end` at 16 000, with
+  // three model calls and two tool results spread across the interval.
+  const state = createTurnState(1, true, 1_000)
+  fold(state, 1, { inputTokens: 1, outputTokens: 1 })
+  fold(state, 2, { inputTokens: 1, outputTokens: 1 })
+  fold(state, 3, { inputTokens: 1, outputTokens: 1 })
+  state.lastVisibleAssistantText = 'answer'
+
+  const { value: candidate } = createCandidate(state, {
+    sessionId: 'session-a',
+    turnEndKind: 'completed',
+    createdAt: 16_000,
+    endTimeMs: 16_000,
+  })
+  assert.equal(candidate.durationMs, 15_000, 'turn/end minus turn/start')
+  for (const wrong of [2_000, 8_000, 14_000, 16_000 - 14_000]) {
+    assert.notEqual(candidate.durationMs, wrong, `${wrong} is a step or message latency, not the turn duration`)
+  }
+})
+
+test('DUR-06 a turn with no observed start reports an unknown duration', () => {
+  // Mid-turn attach: `turn/end` arrives with everything but the start.
+  const state = createTurnState(9)
+  fold(state, 3, { inputTokens: 1, outputTokens: 1 })
+  state.lastVisibleAssistantText = 'answer'
+  const { value: candidate } = createCandidate(state, {
+    sessionId: 'session-a',
+    turnEndKind: 'completed',
+    createdAt: 16_000,
+    endTimeMs: 16_000,
+  })
+  assert.equal(candidate.durationMs, null)
+  assert.notEqual(candidate.durationMs, 0)
+  assert.equal(candidate.sawTurnStart, false)
 })
 
 test('TURN-01 a lazily created entry is patched in place when turn/start finally arrives', () => {
@@ -172,20 +223,24 @@ test('clear empties every level', () => {
   assert.deepEqual(store.sizes(), { sessions: 0, turns: 0, stepSets: 0 })
 })
 
-test('CAND-01 schemaVersion is the literal 1', () => {
+test('CAND-01 schemaVersion is the literal 2', () => {
+  // The bump is not cosmetic. Version 1's `usage` was the last observed
+  // per-call sample; version 2's is the turn aggregate, and a consumer that
+  // cannot tell the two apart would read a partial number as a total (D013).
   const { value: candidate } = createCandidate(createTurnState(1), {
     sessionId: 'session-a',
     turnEndKind: 'completed',
     createdAt: 1,
     endTimeMs: 2,
   })
-  assert.equal(candidate.schemaVersion, 1)
+  assert.equal(candidate.schemaVersion, 2)
 })
 
 test('CAND-02 every required field is present with the right type', () => {
   const state = createTurnState(7, true, 100)
   state.lastVisibleAssistantText = 'text'
   state.explicitToolErrorCount = 2
+  fold(state, 1, { ...DEEPSEEK_CALL_USAGE })
   const { value: candidate } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
@@ -201,7 +256,24 @@ test('CAND-02 every required field is present with the right type', () => {
   assert.equal(typeof candidate.visibleTextLength, 'number')
   assert.equal(typeof candidate.explicitToolErrorCount, 'number')
   assert.equal(typeof candidate.telemetryComplete, 'boolean')
+  assert.equal(typeof candidate.usageSampleCount, 'number')
+  assert.equal(typeof candidate.usageMissingCount, 'number')
+  assert.equal(typeof candidate.usageUnobservableRetries, 'number')
+  assert.equal(typeof candidate.usageComplete, 'boolean')
   assert.equal(typeof candidate.createdAt, 'number')
+})
+
+test('CAND-02b the usage coverage fields are always present, even with no samples', () => {
+  const { value: candidate } = createCandidate(createTurnState(1), {
+    sessionId: 'session-a',
+    turnEndKind: 'completed',
+    createdAt: 1,
+    endTimeMs: 2,
+  })
+  assert.equal(candidate.usageSampleCount, 0)
+  assert.equal(candidate.usageMissingCount, 0)
+  assert.equal(candidate.usageUnobservableRetries, 0)
+  assert.equal(candidate.usageComplete, false, 'a turn with nothing observed is not a complete disclosure')
 })
 
 test('CAND-03 absent optional fields are absent, not undefined and not null', () => {
@@ -222,7 +294,7 @@ test('CAND-03b a present value is not silently dropped', () => {
   state.provider = 'deepseek-official'
   state.model = 'deepseek-chat'
   state.lastAssistantMessageId = 'message-1'
-  state.usage = { inputTokens: 1, outputTokens: 2 }
+  fold(state, 1, { inputTokens: 1, outputTokens: 2 })
   const { value: candidate } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
@@ -235,12 +307,14 @@ test('CAND-03b a present value is not silently dropped', () => {
   assert.equal(candidate.assistantMessageId, 'message-1')
   assert.deepEqual(candidate.usage, { inputTokens: 1, outputTokens: 2 })
   assert.equal(candidate.cwd, 'E:\\work')
+  assert.equal(candidate.usageSampleCount, 1)
+  assert.equal(candidate.usageComplete, true)
 })
 
 test('CAND-04 a complete candidate is lossless JSON', () => {
   const state = createTurnState(1, true, 10)
   state.lastVisibleAssistantText = 'answer'
-  state.usage = { ...OBSERVED_USAGE }
+  fold(state, 1, { ...OBSERVED_USAGE })
   const { value: candidate, dropped } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
@@ -252,28 +326,29 @@ test('CAND-04 a complete candidate is lossless JSON', () => {
   assert.doesNotThrow(() => JSON.stringify(candidate))
 })
 
-test('USE-01 all six counters survive', () => {
-  const usage = collectUsage({
-    inputTokens: 1,
-    outputTokens: 2,
-    totalTokens: 3,
-    cacheReadTokens: 4,
-    cacheWriteTokens: 5,
-    reasoningTokens: 6,
+test('USE-07 the candidate carries the turn aggregate, not one call', () => {
+  const state = createTurnState(1, true, 10)
+  fold(state, 1, { ...DEEPSEEK_CALL_USAGE })
+  fold(state, 2, { ...DEEPSEEK_CALL_USAGE })
+  fold(state, 3, { ...UNCACHED_CALL_USAGE })
+  state.lastVisibleAssistantText = 'answer'
+  const { value: candidate } = createCandidate(state, {
+    sessionId: 'session-a',
+    turnEndKind: 'completed',
+    createdAt: 1,
+    endTimeMs: 20,
   })
-  assert.deepEqual(usage, {
-    inputTokens: 1,
-    outputTokens: 2,
-    totalTokens: 3,
-    cacheReadTokens: 4,
-    cacheWriteTokens: 5,
-    reasoningTokens: 6,
-  })
+  assert.equal(candidate.usageSampleCount, 3)
+  assert.equal(candidate.usage?.inputTokens, 5_954 * 2 + 3_661)
+  assert.equal(candidate.usage?.outputTokens, 489 * 2 + 60)
+  assert.equal(candidate.usage?.cacheReadTokens, 30_464 * 2)
+  assert.equal(candidate.usageComplete, true)
+  assert.notEqual(candidate.usage?.inputTokens, DEEPSEEK_CALL_USAGE['inputTokens'], 'the last call is not the turn')
 })
 
-test('USE-02 a missing counter key is absent rather than undefined', () => {
+test('USE-08 a counter the runtime never reported is absent rather than zero', () => {
   const state = createTurnState(1, true, 10)
-  state.usage = { ...OBSERVED_USAGE }
+  fold(state, 1, { ...DEEPSEEK_CALL_USAGE })
   const { value: candidate } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
@@ -284,94 +359,53 @@ test('USE-02 a missing counter key is absent rather than undefined', () => {
   assert.ok(usage !== undefined)
   assert.ok(!Object.hasOwn(usage, 'reasoningTokens'))
   assert.ok(!Object.hasOwn(usage, 'cacheWriteTokens'))
+  assert.ok(!Object.hasOwn(usage, 'totalTokens'), 'no derived or adapter-level total is carried (D017)')
 })
 
-test('USE-03 an explicitly undefined counter is omitted and does not break serialization', () => {
-  const usage = collectUsage({ inputTokens: 255, outputTokens: 759, reasoningTokens: undefined })
-  assert.deepEqual(usage, { inputTokens: 255, outputTokens: 759 })
-  assert.ok(isLosslessJson({ usage }))
-})
-
-test('USE-04 a completely absent usage leaves no key behind', () => {
-  const { value: candidate } = createCandidate(createTurnState(1), {
-    sessionId: 'session-a',
-    turnEndKind: 'completed',
-    createdAt: 1,
-    endTimeMs: 2,
-  })
-  assert.ok(!Object.hasOwn(candidate, 'usage'))
-})
-
-test('USE-05 recorded counters are carried through unchanged and not reconciled', () => {
-  const usage = collectUsage({ ...OBSERVED_USAGE })
-  assert.equal(usage?.inputTokens, 255)
-  assert.equal(usage?.totalTokens, 187638)
-  // No derived counter is added, and no arithmetic is performed on the pair.
-  assert.deepEqual(Object.keys(usage ?? {}).sort(), ['cacheReadTokens', 'inputTokens', 'outputTokens', 'totalTokens'])
-})
-
-test('USE-06 non-finite counters never reach a candidate', () => {
-  // The first filter is `collectUsage`, which admits only finite numbers.
-  const collected = collectUsage({
-    inputTokens: Number.NaN,
-    outputTokens: Number.POSITIVE_INFINITY,
-    totalTokens: 10,
-  })
-  assert.deepEqual(collected, { totalTokens: 10 })
-  for (const key of ['inputTokens', 'outputTokens']) {
-    assert.ok(!Object.hasOwn(collected ?? {}, key), `${key} must be omitted, not written as a non-finite number`)
-  }
-
+test('USE-09 recorded counters are carried through unchanged and not reconciled', () => {
+  // The Phase 1 sample whose `totalTokens` does not equal the sum of its
+  // buckets is kept verbatim as a per-call sample; the aggregate folds only the
+  // buckets, so the inconsistency neither disappears nor propagates.
   const state = createTurnState(1, true, 10)
-  state.usage = { inputTokens: Number.NaN, outputTokens: Number.POSITIVE_INFINITY, totalTokens: 10 }
+  fold(state, 1, { ...OBSERVED_USAGE })
   const { value: candidate } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
     createdAt: 1,
     endTimeMs: 20,
   })
-  assert.deepEqual(candidate.usage, { totalTokens: 10 })
+  assert.deepEqual(candidate.usage, { inputTokens: 255, outputTokens: 759, cacheReadTokens: 186_624 })
   assert.ok(isLosslessJson(candidate))
 })
 
-test('USE-06b a non-numeric counter is pruned by the collector, not carried into the candidate', () => {
-  // `collectUsage` admits only finite numbers, so a hostile counter never
-  // reaches the candidate at all — the reason the candidate normalizer's
-  // dropped-path report reads empty here rather than naming the key.
+test('USE-09b non-finite or non-numeric counters never reach a candidate', () => {
   const state = createTurnState(1, true, 10)
-  state.usage = { totalTokens: 10, inputTokens: 'not a number' } as unknown as import('../../src/types.ts').RawUsage
+  fold(state, 1, { inputTokens: Number.NaN, outputTokens: Number.POSITIVE_INFINITY, totalTokens: 10 })
   const { value: candidate, dropped } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
     createdAt: 1,
     endTimeMs: 20,
   })
-  assert.deepEqual(candidate.usage, { totalTokens: 10 })
+  assert.equal(candidate.usage, undefined, 'nothing summable was reported, so nothing is emitted')
+  assert.equal(candidate.usageMissingCount, 1)
+  assert.equal(candidate.usageComplete, false)
   assert.equal(dropped.length, 0)
   assert.ok(isLosslessJson(candidate))
 })
 
-test('USE-06c the candidate normalizer reports a key it has to omit', () => {
-  // The normalizer is the second line of defence, and its dropped-path report is
-  // what makes the omission observable rather than silent. A value the runtime
-  // reports as something other than a number is the shape that reaches it.
+test('USE-09c a hostile counter shape is pruned by the collector', () => {
   const state = createTurnState(1, true, 10)
-  state.usage = { totalTokens: 10, reasoningTokens: 'absent' } as unknown as import('../../src/types.ts').RawUsage
+  fold(state, 1, { totalTokens: 10, inputTokens: 'not a number' })
+  fold(state, 2, { inputTokens: 3, outputTokens: 4, reasoningTokens: 'absent' })
   const { value: candidate } = createCandidate(state, {
     sessionId: 'session-a',
     turnEndKind: 'completed',
     createdAt: 1,
     endTimeMs: 20,
   })
-  assert.deepEqual(candidate.usage, { totalTokens: 10 })
+  assert.deepEqual(candidate.usage, { inputTokens: 3, outputTokens: 4 })
+  assert.equal(candidate.usageMissingCount, 1)
   assert.equal(Object.hasOwn(candidate.usage ?? {}, 'reasoningTokens'), false)
   assert.ok(isLosslessJson(candidate))
-})
-
-test('collectUsage ignores unknown and non-numeric keys', () => {
-  assert.equal(collectUsage({ somethingElse: 1 }), undefined)
-  assert.equal(collectUsage({ inputTokens: '255' }), undefined)
-  assert.equal(collectUsage(null), undefined)
-  assert.equal(collectUsage(undefined), undefined)
-  assert.equal(collectUsage(42), undefined)
 })

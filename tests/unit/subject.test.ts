@@ -142,17 +142,75 @@ test('PRIV-07 metadata minimisation removes cwd and session id', () => {
   assert.ok(mail.text.includes('the answer'), 'the visible text is the point and stays')
 })
 
-test('the metadata block reports the recorded token counters without arithmetic', () => {
+test('the metadata block labels the token aggregate as a turn aggregate', () => {
   const mail = renderMail({
-    candidate: testCandidate({ usage: { inputTokens: 255, outputTokens: 759, totalTokens: 187638, cacheReadTokens: 186624 } }),
+    candidate: testCandidate({
+      usage: { inputTokens: 600, outputTokens: 60, cacheReadTokens: 30_464 },
+      usageSampleCount: 3,
+      usageComplete: true,
+    }),
     render: testConfig().render,
     truncated: false,
   })
-  const line = mail.text.split('\n').find((entry) => entry.startsWith('Token counters'))
+  const line = mail.text.split('\n').find((entry) => entry.startsWith('Token usage (turn aggregate):'))
+  assert.ok(line !== undefined, 'the ambiguous "as reported" label must not come back')
+  assert.ok(line.includes('inputTokens=600'))
+  assert.ok(line.includes('outputTokens=60'))
+  assert.ok(line.includes('cacheReadTokens=30464'))
+  assert.ok(line.includes('cacheWriteTokens=not reported'), 'an unreported bucket is stated, not zero-filled')
+  assert.ok(line.includes('reasoningTokens=not reported'))
+  assert.ok(!line.includes('totalTokens'), 'no derived total is shown (D017)')
+  assert.ok(!mail.text.includes('Token counters'))
+})
+
+test('an incomplete token fold is stated as incomplete', () => {
+  const mail = renderMail({
+    candidate: testCandidate({
+      usage: { inputTokens: 600, outputTokens: 60 },
+      usageSampleCount: 3,
+      usageMissingCount: 2,
+      usageUnobservableRetries: 1,
+      usageComplete: false,
+    }),
+    render: testConfig().render,
+    truncated: false,
+  })
+  const line = mail.text.split('\n').find((entry) => entry.startsWith('Token telemetry complete:'))
   assert.ok(line !== undefined)
-  assert.ok(line.includes('inputTokens=255'))
-  assert.ok(line.includes('totalTokens=187638'))
-  assert.ok(!line.includes('reasoningTokens'), 'a counter the runtime never reported is not invented')
+  assert.ok(line.startsWith('Token telemetry complete: no'))
+  assert.ok(line.includes('2 model calls without a usable usage report'))
+  assert.ok(line.includes('1 retried model call whose usage was not reported'))
+})
+
+test('a complete token fold says so, with the sample count', () => {
+  const mail = renderMail({
+    candidate: testCandidate({ usage: { inputTokens: 1, outputTokens: 2 }, usageSampleCount: 4, usageComplete: true }),
+    render: testConfig().render,
+    truncated: false,
+  })
+  assert.ok(mail.text.includes('Token telemetry complete: yes (4 model calls observed, each reporting usage)'))
+})
+
+test('a turn with no observed usage says so rather than omitting the line', () => {
+  const mail = renderMail({
+    candidate: testCandidate({ telemetryComplete: false, sawTurnStart: false }),
+    render: testConfig().render,
+    truncated: false,
+  })
+  assert.ok(mail.text.includes('Token usage (turn aggregate): none observed'))
+  assert.ok(mail.text.includes('Token telemetry complete: no (the turn was not observed from its start)'))
+})
+
+test('the two completeness claims stay separate', () => {
+  // Seeing a turn from its start and every call reporting usage are different
+  // facts; a mail that merged them would overstate one of them (D017).
+  const mail = renderMail({
+    candidate: testCandidate({ telemetryComplete: true, usageComplete: false, usageMissingCount: 1 }),
+    render: testConfig().render,
+    truncated: false,
+  })
+  assert.ok(mail.text.includes('Telemetry complete: yes'))
+  assert.ok(mail.text.includes('Token telemetry complete: no'))
 })
 
 test('an unknown duration is stated as unknown, not as zero', () => {

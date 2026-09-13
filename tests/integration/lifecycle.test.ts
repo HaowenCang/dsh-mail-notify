@@ -3,22 +3,15 @@
  * LIFE-07, the pipeline-level halves of TRN-01/TRN-03 and TOOL-05, PRIV-01…PRIV-07
  * in a live pipeline, and E2E-01…E2E-08.
  *
- * The plugin is mounted through a real Cordis context and driven with real
- * `ctx.emit('session/event', …)` dispatches, so listener registration, service
- * lookup, configuration validation, and fiber disposal all take the production
- * path. Only the two environment services are replaced: a fake Credential
- * provider and a fake timer. No socket is opened and no credential exists.
+ * The mounted-plugin harness itself lives in `tests/support/plugin-harness.ts`
+ * so that a second integration suite exercises the same real registration and
+ * disposal path rather than a re-implementation of it.
  *
  * @module dsh-mail-notify/tests/integration/lifecycle
  */
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { Context, Service } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-session'
-import * as plugin from '../../src/index.ts'
-import type { CredentialInfo, CredentialProviderLike, CredentialRef, ResolvedCredential } from '../../src/credentials.ts'
-import type { ApplyInternals, MailNotifyHandle } from '../../src/index.ts'
 import type { SessionEventLike, SessionLike } from '../../src/runtime-adapter.ts'
 import type { MailJob, SendResult } from '../../src/types.ts'
 import {
@@ -38,171 +31,14 @@ import {
   SMTP_PASSWORD_SENTINEL,
   USER_PROMPT_SENTINEL,
 } from '../fixtures/runtime-shapes.ts'
-import { VALID_RAW_CONFIG, delay, waitFor } from '../support/harness.ts'
-
-/** The fake credential store, deliberately holding a synthetic value only. */
-class FakeCredentials implements CredentialProviderLike {
-  value: string | undefined = SMTP_PASSWORD_SENTINEL
-  readonly resolveCalls: string[] = []
-
-  resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
-    this.resolveCalls.push(String(ref))
-    if (this.value === undefined) return Promise.resolve(undefined)
-    return Promise.resolve({ value: this.value, source: 'fake' })
-  }
-
-  describe(ref: CredentialRef): Promise<CredentialInfo> {
-    void ref
-    return Promise.resolve({ configured: this.value !== undefined, writable: true } as CredentialInfo)
-  }
-}
-
-/** A fake Credential service published as `ctx.credentials`. */
-class CredentialsService extends Service {
-  static staged: FakeCredentials | undefined
-
-  readonly fake: FakeCredentials
-
-  constructor(ctx: Context) {
-    super(ctx, 'credentials')
-    const staged = CredentialsService.staged
-    if (staged === undefined) throw new Error('no FakeCredentials was staged before mounting')
-    this.fake = staged
-  }
-
-  /** Stage the fake the next mounted instance will publish. */
-  static stage(fake: FakeCredentials): void {
-    CredentialsService.staged = fake
-  }
-
-  resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
-    return this.fake.resolve(ref)
-  }
-
-  describe(ref: CredentialRef): Promise<CredentialInfo> {
-    return this.fake.describe(ref)
-  }
-}
-
-/** A fake timer service published as `ctx.timer`, so a backoff never really waits. */
-class TimerService extends Service {
-  static delays: number[] = []
-
-  constructor(ctx: Context) {
-    super(ctx, 'timer')
-  }
-
-  timeout(delayMs: number): Promise<void> {
-    TimerService.delays.push(delayMs)
-    return Promise.resolve()
-  }
-}
-
-/** The mounted harness returned by {@link mount}. */
-interface Harness {
-  ctx: Context
-  /** Absent when the plugin refused to mount. */
-  handle: MailNotifyHandle | undefined
-  credentials: FakeCredentials
-  dispose: () => Promise<void>
-  /**
-   * Every *public* event name with at least one registered listener.
-   *
-   * Cordis' own `internal/*` hooks are filtered out: they belong to the
-   * framework's service plumbing, not to this plugin, and asserting on them
-   * would make the test report on Cordis rather than on the plugin.
-   */
-  listenerNames: () => string[]
-  /** The plugin's registered listener callbacks for one event, in order. */
-  listenersFor: (name: string) => Array<(...args: never[]) => unknown>
-}
-
-/** A registered listener record as Cordis stores it. */
-interface HookRecord {
-  callback?: (...args: never[]) => unknown
-}
-
-/**
- * Mount the plugin on a real context with fake environment services.
- *
- * @param overrides - raw configuration fields merged over a valid base.
- * @param internals - sink, clock, and wait seams.
- * @param options - `credentials: false` mounts no credential service.
- * @returns the harness.
- */
-async function mount(
-  overrides: Record<string, unknown> = {},
-  internals: ApplyInternals = {},
-  options: { credentials?: boolean } = {},
-): Promise<Harness> {
-  const ctx = new Context()
-  const credentials = new FakeCredentials()
-  if (options.credentials !== false) {
-    CredentialsService.stage(credentials)
-    await ctx.plugin(CredentialsService)
-  }
-  TimerService.delays = []
-  await ctx.plugin(TimerService)
-
-  // `apply` runs on a child context that shares the parent's service scope, so
-  // the plugin resolves `credentials` and `timer` through the normal path while
-  // the test keeps a handle to what `apply` returned.
-  const child = ctx.extend()
-  const handle = plugin.apply(child as never, { ...VALID_RAW_CONFIG, ...overrides } as never, {
-    // A real backoff would make the suite slow; the queue gets the seam instead.
-    sleep: async (delayMs: number) => {
-      TimerService.delays.push(delayMs)
-    },
-    ...internals,
-  })
-
-  const hooks = (): Record<string, HookRecord[]> =>
-    (ctx as unknown as { events: { _hooks: Record<string, HookRecord[]> } }).events._hooks
-
-  return {
-    ctx,
-    handle,
-    credentials,
-    dispose: () => (child as unknown as { fiber: { dispose: () => Promise<void> } }).fiber.dispose(),
-    listenerNames: () => Object.keys(hooks()).filter((entry) => !entry.startsWith('internal/')),
-    listenersFor: (name: string) =>
-      (hooks()[name] ?? [])
-        .map((record) => record.callback)
-        .filter((callback): callback is (...args: never[]) => unknown => typeof callback === 'function'),
-  }
-}
-
-/** Build a sink that records the jobs it received and can be made to fail. */
-function controllableSink(failures: SendResult[] = []): {
-  sink: (job: MailJob) => Promise<SendResult>
-  jobs: MailJob[]
-} {
-  const jobs: MailJob[] = []
-  return {
-    jobs,
-    sink: async (job: MailJob): Promise<SendResult> => {
-      jobs.push(job)
-      return failures.shift() ?? { ok: true }
-    },
-  }
-}
-
-/**
- * Emit a chain of session events for one session.
- *
- * The fixtures are structural stand-ins rather than live `Session` instances —
- * building a real session needs the whole agent loop — so the carrier is cast
- * at this single boundary. The payloads the listener reads are unchanged and
- * still type-checked through `SessionEventLike`.
- */
-function emit(ctx: Context, session: SessionLike, events: readonly SessionEventLike[]): void {
-  for (const event of events) ctx.emit('session/event', session as never, event as never)
-}
-
-/** Dispatch `session/disposed` for a structural session stand-in. */
-function emitDisposed(ctx: Context, session: SessionLike): void {
-  ctx.emit('session/disposed', session as never)
-}
+import {
+  controllableSink,
+  emit,
+  emitDisposed,
+  mountPlugin as mount,
+  TimerService,
+} from '../support/plugin-harness.ts'
+import { delay, waitFor } from '../support/harness.ts'
 
 /* ── Registration and the master switch ───────────────────────────────── */
 
@@ -252,7 +88,7 @@ test('E2E-01 a complete turn produces exactly one job with real telemetry', asyn
   assert.equal(sink.jobs.length, 1)
   const job = sink.jobs[0]
   assert.ok(job !== undefined)
-  assert.equal(job.candidate.schemaVersion, 1)
+  assert.equal(job.candidate.schemaVersion, 2)
   assert.equal(job.candidate.turn, 1)
   assert.equal(job.candidate.status, 'completed-clean')
   assert.equal(job.candidate.visibleText, 'the final answer')

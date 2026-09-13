@@ -19,7 +19,7 @@
  */
 
 import { describeAbort, describeError, toTurnEndKind } from './completion.ts'
-import { collectUsage } from './turn-state.ts'
+import { collectUsage } from './telemetry.ts'
 import type { InternalEvent, RawUsage, SessionFacts, SubagentDecidedBy, TurnEndKind } from './types.ts'
 
 /**
@@ -153,6 +153,32 @@ function readModelSource(message: Record<string, unknown>): { provider?: string;
 }
 
 /**
+ * Read the usage carried inside a durable assistant stream.
+ *
+ * A stream is a compacted record list; a usage report appears as a raw
+ * `{ type: 'chunk', chunk: { type: 'usage', usage } }` record, and the last one
+ * wins because a stream may report usage more than once. Every real
+ * `assistant/message` observed so far carried its counters on `data.usage`
+ * instead, so this path is compatibility rather than the primary source; the
+ * DSH token meter reads both in the same order.
+ *
+ * @param stream - the raw stream value; its shape is not trusted.
+ * @returns the counters, or `undefined` when the stream carried none.
+ */
+function readStreamUsage(stream: unknown): RawUsage | undefined {
+  if (!Array.isArray(stream)) return undefined
+  for (let index = stream.length - 1; index >= 0; index -= 1) {
+    const record = asRecord(stream[index])
+    if (record?.['type'] !== 'chunk') continue
+    const chunk = asRecord(record['chunk'])
+    if (chunk?.['type'] !== 'usage') continue
+    const usage = collectUsage(chunk['usage'])
+    if (usage !== undefined) return usage
+  }
+  return undefined
+}
+
+/**
  * Read the user's own text out of a `user/message` payload.
  *
  * A `UserMessage` carries a content array or a bare string depending on the
@@ -181,11 +207,16 @@ function readUserText(data: Record<string, unknown>): string {
 /**
  * Translate one DSH session event into an internal event.
  *
- * Recognized kinds: `turn/start`, `assistant/message`, `tool/call`,
- * `tool/result`, `user/message`, and `turn/end`. Everything else — including any
- * turn-scoped kind whose `turn` is missing or non-numeric — becomes
- * `{ kind: 'other' }`. This function never throws and never returns a live
- * object.
+ * Recognized kinds: `turn/start`, `step/start`, `assistant/message`,
+ * `assistant/attempt`, `llm/retry`, `tool/call`, `tool/result`, `user/message`,
+ * and `turn/end`. Everything else — including any turn-scoped kind whose `turn`
+ * is missing or non-numeric — becomes `{ kind: 'other' }`. This function never
+ * throws and never returns a live object.
+ *
+ * `step/start`, `assistant/attempt`, and `llm/retry` are translated because
+ * turn-level token accounting has to know how many model calls a turn made and
+ * which of them reported no usage (D017); without them, a retried call would be
+ * invisible and the aggregate would be presented as if it covered the turn.
  *
  * @param event - the runtime event, viewed structurally.
  * @returns the internal event.
@@ -197,12 +228,13 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
   if (typeof event !== 'object' || event === null) return { kind: 'other', type: 'unknown', timeMs: 0 }
   const type = typeof event.type === 'string' ? event.type : 'unknown'
   const timeMs = asNumber(event.time) ?? 0
+  const seq = asNumber(event.seq)
   const data = asRecord(event.data)
 
   if (data === undefined) return { kind: 'other', type, timeMs }
 
-  const turn = asNumber(data.turn)
-  const step = asNumber(data.step)
+  const turn = asNumber(data['turn'])
+  const step = asNumber(data['step'])
 
   if (type === 'user/message') {
     // Handled before the turn guard: the runtime's own user-message payload has
@@ -220,26 +252,55 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
     case 'turn/start':
       return { kind: 'turn-start', turn, timeMs }
 
+    case 'step/start':
+      return { kind: 'step-start', turn, step: step ?? 0, timeMs }
+
     case 'assistant/message': {
-      const message = asRecord(data.message) ?? {}
+      const message = asRecord(data['message']) ?? {}
       // A copy, not the runtime's own array: nothing downstream may hold a
       // reference into `event.data`, which is frozen now but is the runtime's
       // object rather than ours.
-      const blocks: readonly unknown[] = Array.isArray(message.content) ? [...message.content] : []
+      const blocks: readonly unknown[] = Array.isArray(message['content']) ? [...(message['content'] as unknown[])] : []
       const modelSource = readModelSource(message)
-      const usage: RawUsage | undefined = collectUsage(data.usage)
+      const messageId = asString(message['id'])
+      // `data.usage` first, then the stream's own usage record: the same order
+      // the DSH token meter applies, so the two agree about which report is the
+      // call's.
+      const usage: RawUsage | undefined = collectUsage(data['usage']) ?? readStreamUsage(data['stream'])
       return {
         kind: 'assistant-message',
         turn,
         step: step ?? 0,
+        ...(seq !== undefined ? { seq } : {}),
         blocks,
-        ...(asString(message.id) !== undefined ? { messageId: asString(message.id) as string } : {}),
+        ...(messageId !== undefined ? { messageId } : {}),
         ...(modelSource.provider !== undefined ? { provider: modelSource.provider } : {}),
         ...(modelSource.model !== undefined ? { model: modelSource.model } : {}),
         ...(usage !== undefined ? { usage } : {}),
         timeMs,
       }
     }
+
+    case 'assistant/attempt': {
+      // A model call that committed no surface message. Its own usage is only
+      // ever present in the embedded stream; observed attempts carry none, and
+      // an attempt without usage is an accountable call that reported nothing.
+      const usage = readStreamUsage(data['stream'])
+      return {
+        kind: 'assistant-attempt',
+        turn,
+        step: step ?? 0,
+        ...(seq !== undefined ? { seq } : {}),
+        ...(usage !== undefined ? { usage } : {}),
+        timeMs,
+      }
+    }
+
+    case 'llm/retry':
+      // One failed model call. The payload carries the failure identity and the
+      // retry policy, never the failed call's usage, so this event is how the
+      // turn learns that a call exists whose usage it cannot report.
+      return { kind: 'llm-retry', turn, step: step ?? 0, ...(seq !== undefined ? { seq } : {}), timeMs }
 
     case 'tool/call':
       return { kind: 'tool-call', turn, step: step ?? 0, timeMs }
@@ -260,15 +321,15 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
     case 'tool/result': {
       // The two runtime criteria are folded here so nothing downstream has to
       // know either path (D005). Both are checked; a single result counts once.
-      const message = asRecord(data.message) ?? {}
-      const content = Array.isArray(message.content) ? message.content : []
+      const message = asRecord(data['message']) ?? {}
+      const content = Array.isArray(message['content']) ? (message['content'] as unknown[]) : []
       const firstBlock = asRecord(content[0])
-      const blockIsError = firstBlock?.isError === true
-      const errorRecord = asRecord(data.error)
-      const eventHasError = data.error !== undefined
+      const blockIsError = firstBlock?.['isError'] === true
+      const errorRecord = asRecord(data['error'])
+      const eventHasError = data['error'] !== undefined
       const explicitError = blockIsError || eventHasError
-      const errorName = explicitError ? asString(errorRecord?.name) : undefined
-      const errorCode = explicitError ? asString(errorRecord?.code) : undefined
+      const errorName = explicitError ? asString(errorRecord?.['name']) : undefined
+      const errorCode = explicitError ? asString(errorRecord?.['code']) : undefined
       return {
         kind: 'tool-result',
         turn,
@@ -281,9 +342,9 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
     }
 
     case 'turn/end': {
-      const reason = data.reason
+      const reason = data['reason']
       const reasonRecord = asRecord(reason)
-      const turnEndKind: TurnEndKind = toTurnEndKind(reasonRecord?.kind)
+      const turnEndKind: TurnEndKind = toTurnEndKind(reasonRecord?.['kind'])
       let detail: string | undefined
       let reasonDetail: string | undefined
       if (turnEndKind === 'aborted') {
@@ -314,12 +375,15 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
  * Whether an internal event carries a definite turn number worth accumulating.
  *
  * @param event - the internal event.
- * @returns true for the four kinds that always update turn state.
+ * @returns true for the kinds that always update turn state.
  */
 export function carriesTurn(event: InternalEvent): event is Extract<InternalEvent, { turn: number }> {
   return (
     event.kind === 'turn-start' ||
+    event.kind === 'step-start' ||
     event.kind === 'assistant-message' ||
+    event.kind === 'assistant-attempt' ||
+    event.kind === 'llm-retry' ||
     event.kind === 'tool-call' ||
     event.kind === 'tool-result' ||
     event.kind === 'turn-end'

@@ -13,7 +13,8 @@
 
 import { classifyCompletion, sanitizeDetail } from './completion.ts'
 import { normalize } from './normalize.ts'
-import type { NormalizeResult, NotificationCandidate, RawUsage, TurnEndKind, TurnState } from './types.ts'
+import { TurnUsageAccounting } from './telemetry.ts'
+import type { NormalizeResult, NotificationCandidate, TurnEndKind, TurnState } from './types.ts'
 
 /**
  * Mutable per-session state container.
@@ -150,44 +151,10 @@ export function createTurnState(turn: number, sawTurnStart = false, startAt?: nu
     toolCallCount: 0,
     toolResultCount: 0,
     explicitToolErrorCount: 0,
+    usage: new TurnUsageAccounting(),
   }
   if (startAt !== undefined) state.startAt = startAt
   return state
-}
-
-/** Whether a property name is one of the six `RawUsage` counters. */
-function isUsageKey(key: string): key is keyof RawUsage {
-  return (
-    key === 'inputTokens' ||
-    key === 'outputTokens' ||
-    key === 'totalTokens' ||
-    key === 'cacheReadTokens' ||
-    key === 'cacheWriteTokens' ||
-    key === 'reasoningTokens'
-  )
-}
-
-/**
- * Copy only the counters the runtime actually reported.
- *
- * Writing a key per known counter would emit `undefined` for every counter a
- * provider omitted, which is exactly what made the Phase 1 probe unreadable.
- * No counter is derived, zero-filled, corrected, or interpreted (D006).
- *
- * @param usage - the runtime usage value; its shape is not trusted.
- * @returns a counter set, or `undefined` when nothing numeric was reported.
- */
-export function collectUsage(usage: unknown): RawUsage | undefined {
-  if (typeof usage !== 'object' || usage === null) return undefined
-  const out: RawUsage = {}
-  let any = false
-  for (const [key, value] of Object.entries(usage as Record<string, unknown>)) {
-    if (!isUsageKey(key)) continue
-    if (typeof value !== 'number' || !Number.isFinite(value)) continue
-    out[key] = value
-    any = true
-  }
-  return any ? out : undefined
 }
 
 /** Settlement facts supplied by the event handler at `turn/end`. */
@@ -206,7 +173,7 @@ export interface CandidateInput {
 }
 
 /**
- * Build a schema-v1 candidate from one settled turn.
+ * Build a schema-v2 candidate from one settled turn.
  *
  * Optional keys are written only when a value exists, so `'key' in candidate`
  * is a truthful presence test and `durationMs: null` stays distinguishable from
@@ -214,15 +181,23 @@ export interface CandidateInput {
  * normalizer: the runtime data behind these fields is untyped, and a single
  * unreadable value must not escape the plugin.
  *
+ * `usage` is the turn-level aggregate of the per-call samples folded while the
+ * turn was open, and it is accompanied by the coverage counters that say how
+ * much of the turn those samples cover (D017). Version 1 reported the last
+ * observed per-call sample under the same key, which readers could not tell
+ * apart from a turn aggregate; the version bump is what makes the difference
+ * visible (D013).
+ *
  * @param state - the accumulated turn state.
  * @param input - settlement facts.
  * @returns the candidate and the paths normalization had to omit.
  */
 export function createCandidate(state: TurnState, input: CandidateInput): NormalizeResult<NotificationCandidate> {
   const status = classifyCompletion(input.turnEndKind, state.explicitToolErrorCount)
+  const telemetry = state.usage.snapshot(state.sawTurnStart)
 
   const draft: NotificationCandidate = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sessionId: input.sessionId,
     turn: state.turn,
     status,
@@ -231,6 +206,10 @@ export function createCandidate(state: TurnState, input: CandidateInput): Normal
     visibleTextLength: Array.from(state.lastVisibleAssistantText).length,
     explicitToolErrorCount: state.explicitToolErrorCount,
     telemetryComplete: state.telemetryComplete,
+    usageSampleCount: telemetry.sampleCount,
+    usageMissingCount: telemetry.missingCount,
+    usageUnobservableRetries: telemetry.unobservableRetries,
+    usageComplete: telemetry.complete,
     createdAt: input.createdAt,
   }
 
@@ -245,8 +224,7 @@ export function createCandidate(state: TurnState, input: CandidateInput): Normal
   // written. `turn/start` is the only proof of a start time; without it the
   // duration is unrecoverable and must not be fabricated as `0` (D004).
   draft.durationMs = state.sawTurnStart && state.startAt !== undefined ? input.endTimeMs - state.startAt : null
-  const usage = collectUsage(state.usage)
-  if (usage !== undefined) draft.usage = usage
+  if (telemetry.usage !== undefined) draft.usage = telemetry.usage
   if (input.cwd !== undefined) draft.cwd = input.cwd
   if (input.includeUserText === true && state.lastUserText !== undefined) draft.userText = state.lastUserText
   draft.sawTurnStart = state.sawTurnStart

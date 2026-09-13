@@ -67,7 +67,7 @@ export function testCandidate(overrides: Partial<NotificationCandidate> = {}): N
   const status: CandidateStatus = overrides.status ?? 'completed-clean'
   const turnEndKind: TurnEndKind = overrides.turnEndKind ?? 'completed'
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sessionId: 'session-test-0001',
     turn: 1,
     status,
@@ -76,6 +76,10 @@ export function testCandidate(overrides: Partial<NotificationCandidate> = {}): N
     visibleTextLength: 16,
     explicitToolErrorCount: 0,
     telemetryComplete: true,
+    usageSampleCount: 0,
+    usageMissingCount: 0,
+    usageUnobservableRetries: 0,
+    usageComplete: false,
     createdAt: 1_750_000_000_000,
     durationMs: 12_345,
     model: 'deepseek-chat',

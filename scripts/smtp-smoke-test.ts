@@ -166,7 +166,7 @@ const SMOKE_BODY =
 /** Build the candidate the shared renderer will turn into the message. */
 function smokeCandidate(now: number): NotificationCandidate {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sessionId: 'smtp-smoke-test',
     turn: 0,
     status: 'completed-clean',
@@ -175,6 +175,10 @@ function smokeCandidate(now: number): NotificationCandidate {
     visibleTextLength: Array.from(SMOKE_BODY).length,
     explicitToolErrorCount: 0,
     telemetryComplete: false,
+    usageSampleCount: 0,
+    usageMissingCount: 0,
+    usageUnobservableRetries: 0,
+    usageComplete: false,
     createdAt: now,
     durationMs: null,
     model: 'dsh-mail-notify smoke test',

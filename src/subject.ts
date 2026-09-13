@@ -79,16 +79,60 @@ function formatDuration(candidate: NotificationCandidate): string {
   return `${minutes} min ${Math.round(seconds - minutes * 60)} s`
 }
 
-/** Format the raw token counters exactly as reported, without arithmetic. */
-function formatUsage(candidate: NotificationCandidate): string | undefined {
+/** The five foldable counters, in the order the mail states them. */
+const USAGE_BUCKETS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'] as const
+
+/**
+ * Render the turn's token aggregate.
+ *
+ * The label says "turn aggregate" because that is what the value is; the
+ * previous "as reported" label described a single raw sample and invited the
+ * reader to take the last model call for the whole turn (D017). Every bucket is
+ * named, and a bucket no call reported is stated as unreported rather than
+ * printed as `0`, which would be a claim the runtime never made.
+ *
+ * @param candidate - the notification candidate.
+ * @returns one line, without a trailing newline.
+ */
+function formatUsage(candidate: NotificationCandidate): string {
   const usage = candidate.usage
-  if (usage === undefined) return undefined
-  const parts: string[] = []
-  for (const [key, value] of Object.entries(usage)) {
-    if (typeof value === 'number') parts.push(`${key}=${value}`)
+  const label = 'Token usage (turn aggregate):'
+  if (usage === undefined) return `${label} none observed`
+  const parts = USAGE_BUCKETS.map((bucket) => {
+    const value = usage[bucket]
+    return typeof value === 'number' ? `${bucket}=${value}` : `${bucket}=not reported`
+  })
+  return `${label} ${parts.join(', ')}`
+}
+
+/**
+ * State how much of the turn's token telemetry was actually observed.
+ *
+ * `usageComplete` and `telemetryComplete` are different claims and are rendered
+ * separately: the first is about every accountable model call reporting usage,
+ * the second only about the plugin having seen the turn from its start.
+ *
+ * @param candidate - the notification candidate.
+ * @returns one line, without a trailing newline.
+ */
+function formatUsageCompleteness(candidate: NotificationCandidate): string {
+  const label = 'Token telemetry complete:'
+  if (candidate.usageComplete) {
+    const calls = candidate.usageSampleCount === 1 ? '1 model call' : `${candidate.usageSampleCount} model calls`
+    return `${label} yes (${calls} observed, each reporting usage)`
   }
-  if (parts.length === 0) return undefined
-  return parts.join(', ')
+  const gaps: string[] = []
+  if (candidate.usageMissingCount > 0) {
+    const calls = candidate.usageMissingCount === 1 ? '1 model call' : `${candidate.usageMissingCount} model calls`
+    gaps.push(`${calls} without a usable usage report`)
+  }
+  if (candidate.usageUnobservableRetries > 0) {
+    const retries =
+      candidate.usageUnobservableRetries === 1 ? '1 retried model call' : `${candidate.usageUnobservableRetries} retried model calls`
+    gaps.push(`${retries} whose usage was not reported`)
+  }
+  if (gaps.length === 0) gaps.push('the turn was not observed from its start')
+  return `${label} no (${gaps.join('; ')})`
 }
 
 /**
@@ -107,8 +151,8 @@ export function renderMetadata(candidate: NotificationCandidate): string {
   if (candidate.cwd !== undefined) lines.push(`Workspace: ${sanitizeLine(candidate.cwd, 240)}`)
   lines.push(`Tool errors reported by DSH: ${candidate.explicitToolErrorCount}`)
   lines.push(`Telemetry complete: ${candidate.telemetryComplete ? 'yes' : 'no (plugin attached mid-turn)'}`)
-  const usage = formatUsage(candidate)
-  if (usage !== undefined) lines.push(`Token counters (as reported): ${usage}`)
+  lines.push(formatUsage(candidate))
+  lines.push(formatUsageCompleteness(candidate))
   if (candidate.turnEndDetail !== undefined) {
     lines.push(`Turn end detail: ${sanitizeLine(candidate.turnEndDetail, 120)}`)
   }

@@ -15,12 +15,17 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { toInternalEvent, toSessionFacts, toSessionId } from '../../src/runtime-adapter.ts'
 import {
+  assistantAttempt,
   assistantMessage,
   bareRootSession,
   depthOnlySubagent,
+  llmRetry,
+  llmRetryStarted,
   mixedAssistantMessage,
   parentOnlySubagent,
   rootSession,
+  stepStart,
+  streamUsageRecord,
   subagentSession,
   toolResultBlockError,
   toolResultEventError,
@@ -403,6 +408,120 @@ test('a malformed usage object yields no usage rather than a broken one', () => 
     assert.equal(internal.kind, 'assistant-message')
     if (internal.kind === 'assistant-message') assert.equal(internal.usage, undefined)
   }
+})
+
+/* ── Turn telemetry events (D017) ─────────────────────────────────────── */
+
+test('step/start adapts with its turn and step', () => {
+  const internal = toInternalEvent(stepStart(2, 5, 1_750_000_000_000))
+  assert.equal(internal.kind, 'step-start')
+  if (internal.kind !== 'step-start') return
+  assert.equal(internal.turn, 2)
+  assert.equal(internal.step, 5)
+  assert.equal(internal.timeMs, 1_750_000_000_000)
+})
+
+test('assistant/attempt adapts and reports no usage when its stream carries none', () => {
+  // The recorded shape: 83 real attempts, none with a usage record.
+  const internal = toInternalEvent(assistantAttempt({ turn: 1, step: 7, time: 500, seq: 65 }))
+  assert.equal(internal.kind, 'assistant-attempt')
+  if (internal.kind !== 'assistant-attempt') return
+  assert.equal(internal.turn, 1)
+  assert.equal(internal.step, 7)
+  assert.equal(internal.seq, 65)
+  assert.equal(internal.usage, undefined)
+})
+
+test('an attempt whose stream does carry usage adapts it', () => {
+  // Compatibility with the DSH token meter, which reads an attempt's usage from
+  // its stream. No real attempt has needed it yet; the path exists because the
+  // meter defines it, not because this plugin assumes it.
+  const internal = toInternalEvent(
+    assistantAttempt({ turn: 1, step: 7, time: 500, stream: [streamUsageRecord({ inputTokens: 10, outputTokens: 2 })] }),
+  )
+  assert.equal(internal.kind, 'assistant-attempt')
+  if (internal.kind !== 'assistant-attempt') return
+  assert.deepEqual(internal.usage, { inputTokens: 10, outputTokens: 2 })
+})
+
+test('an assistant message falls back to the usage in its stream', () => {
+  const internal = toInternalEvent(
+    assistantMessage({
+      turn: 1,
+      step: 1,
+      time: 100,
+      content: [{ type: 'text', text: 'answer' }],
+      stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [1], texts: ['a'] }, streamUsageRecord({ inputTokens: 7, outputTokens: 3 })],
+    }),
+  )
+  assert.equal(internal.kind, 'assistant-message')
+  if (internal.kind !== 'assistant-message') return
+  assert.deepEqual(internal.usage, { inputTokens: 7, outputTokens: 3 })
+})
+
+test('an explicit data.usage wins over the stream record', () => {
+  const internal = toInternalEvent(
+    assistantMessage({
+      turn: 1,
+      step: 1,
+      time: 100,
+      content: [],
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stream: [streamUsageRecord({ inputTokens: 999, outputTokens: 999 })],
+    }),
+  )
+  if (internal.kind !== 'assistant-message') return
+  assert.deepEqual(internal.usage, { inputTokens: 1, outputTokens: 1 })
+})
+
+test('a malformed stream yields no usage rather than throwing', () => {
+  for (const stream of [null, 'stream', 42, {}, [null], [{ type: 'chunk' }], [{ type: 'chunk', chunk: { type: 'usage' } }]]) {
+    const internal = toInternalEvent(assistantAttempt({ turn: 1, step: 1, time: 1, stream: stream as never }))
+    assert.equal(internal.kind, 'assistant-attempt')
+    if (internal.kind === 'assistant-attempt') assert.equal(internal.usage, undefined)
+  }
+})
+
+test('llm/retry adapts with the failed step identity and no usage', () => {
+  const internal = toInternalEvent(llmRetry(1, 11, 1_787_317_474_171, 1_745))
+  assert.equal(internal.kind, 'llm-retry')
+  if (internal.kind !== 'llm-retry') return
+  assert.equal(internal.turn, 1)
+  assert.equal(internal.step, 11)
+  assert.equal(internal.seq, 1_745)
+  assert.equal(internal.timeMs, 1_787_317_474_171)
+  assert.ok(!Object.hasOwn(internal, 'usage'), 'the retry payload carries no usage, and none may be invented')
+})
+
+test('llm/retry-started is not accumulated', () => {
+  // The failed call it follows is already accounted at llm/retry, and the
+  // replacement attempt settles through its own assistant event.
+  const internal = toInternalEvent(llmRetryStarted(1, 3, 100))
+  assert.equal(internal.kind, 'other')
+})
+
+test('a telemetry event without a usable turn degrades to other', () => {
+  for (const type of ['step/start', 'assistant/attempt', 'llm/retry']) {
+    for (const turn of [undefined, null, '1', Number.NaN]) {
+      const internal = toInternalEvent({ type, time: 1, data: { turn, step: 1 } })
+      assert.equal(internal.kind, 'other', `${type} with turn ${String(turn)} must not be filed under a turn`)
+    }
+  }
+})
+
+test('the settlement identity reaches the handler for every settlement kind', () => {
+  const message = toInternalEvent(assistantMessage({ turn: 1, step: 1, time: 1, seq: 42, content: [] }))
+  const attempt = toInternalEvent(assistantAttempt({ turn: 1, step: 1, time: 1, seq: 43 }))
+  const retry = toInternalEvent(llmRetry(1, 1, 1, 44))
+  assert.equal(message.kind === 'assistant-message' ? message.seq : undefined, 42)
+  assert.equal(attempt.kind === 'assistant-attempt' ? attempt.seq : undefined, 43)
+  assert.equal(retry.kind === 'llm-retry' ? retry.seq : undefined, 44)
+})
+
+test('an absent sequence number is omitted rather than defaulted', () => {
+  const internal = toInternalEvent({ type: 'assistant/message', time: 10, data: { turn: 1, step: 1, message: { content: [] } } })
+  assert.equal(internal.kind, 'assistant-message')
+  assert.ok(!Object.hasOwn(internal, 'seq'), 'inventing a sequence number would invent a settlement identity')
 })
 
 test('a missing event time becomes 0 rather than NaN', () => {

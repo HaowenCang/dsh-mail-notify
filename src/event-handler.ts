@@ -117,6 +117,15 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
         seedUserText(sessionId, state)
         return
       }
+      case 'step-start': {
+        const state = store.stateOf(sessionId, event.turn)
+        seedUserText(sessionId, state)
+        store.markStep(sessionId, event.turn, event.step)
+        // The runtime's announcement that this step will make a model call. The
+        // announcement is what makes a missing usage report detectable at all.
+        state.usage.noteStepStarted(event.step)
+        return
+      }
       case 'assistant-message': {
         const state = store.stateOf(sessionId, event.turn)
         seedUserText(sessionId, state)
@@ -131,7 +140,42 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
         }
         if (event.provider !== undefined) state.provider = event.provider
         if (event.model !== undefined) state.model = event.model
-        if (event.usage !== undefined) state.usage = event.usage
+        // Folded, not assigned: this message is one model call of the turn, and
+        // the last one was never the turn's total (D017).
+        state.usage.addSettlement({
+          kind: 'message',
+          step: event.step,
+          ...(event.seq !== undefined ? { seq: event.seq } : {}),
+          ...(event.messageId !== undefined ? { messageId: event.messageId } : {}),
+          timeMs: event.timeMs,
+          usage: event.usage,
+        })
+        return
+      }
+      case 'assistant-attempt': {
+        const state = store.stateOf(sessionId, event.turn)
+        seedUserText(sessionId, state)
+        store.markStep(sessionId, event.turn, event.step)
+        // A model call that produced no surface message. It is still an
+        // accountable call: with no usage in its stream it becomes a counted
+        // gap rather than an invisible one.
+        state.usage.addSettlement({
+          kind: 'attempt',
+          step: event.step,
+          ...(event.seq !== undefined ? { seq: event.seq } : {}),
+          timeMs: event.timeMs,
+          usage: event.usage,
+        })
+        return
+      }
+      case 'llm-retry': {
+        const state = store.stateOf(sessionId, event.turn)
+        seedUserText(sessionId, state)
+        state.usage.noteRetry({
+          step: event.step,
+          ...(event.seq !== undefined ? { seq: event.seq } : {}),
+          timeMs: event.timeMs,
+        })
         return
       }
       case 'tool-call': {
@@ -227,6 +271,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
 
     // Settlement. Every exit path below releases the turn entry: a suppressed
     // turn that stayed resident would be an unbounded leak.
+    const settled = store.stateOf(facts.sessionId, internal.turn)
     const { candidate, dropped } = buildCandidate(facts.sessionId, internal.turn, internal, facts.cwd)
     counters.candidatesProduced += 1
     logger.info('candidate.produced', {
@@ -242,6 +287,14 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       provider: candidate.provider ?? null,
       model: candidate.model ?? null,
       sawTurnStart: candidate.sawTurnStart ?? null,
+      // Telemetry shape only: sample counts and the completeness verdict are
+      // safe scalars, while the counters themselves stay in the mail body and
+      // out of the log (SECURITY.md §4).
+      usageSampleCount: candidate.usageSampleCount,
+      usageMissingCount: candidate.usageMissingCount,
+      usageUnobservableRetries: candidate.usageUnobservableRetries,
+      usageComplete: candidate.usageComplete,
+      steps: settled.steps,
       normalizeDropped: dropped.length,
     })
 
