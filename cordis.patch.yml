@@ -1,0 +1,20 @@
+# dsh-mail-notify bundle layer (default, inert).
+#
+# Installing this package as a profile bundle yields a loaded plugin that does
+# nothing: the row below carries no `smtpHost`, so configuration validation
+# refuses to mount a working mail path and the plugin reports the missing
+# fields instead of sending mail to an unknown recipient.
+#
+# A patch replaces the targeted row's whole `config` rather than merging into
+# it, so a working configuration must restate every key it relies on. Put the
+# real configuration in the profile's own `cordis.patch.yml`, targeting this
+# id (`dsh-mail-notify`); see README.md.
+#
+# No secret appears here. The password is referenced by name through
+# `smtpPasswordCredential` and resolved from the DSH Credential service at the
+# start of every send operation.
+- insert:
+    - id: dsh-mail-notify
+      name: dsh-mail-notify
+      config:
+        enabled: false
