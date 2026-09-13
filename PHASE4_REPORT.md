@@ -11,7 +11,7 @@ PASS — RC READY
 ```
 
 合成 SMTP smoke 与真实 Agent → Email E2E 均通过真实 SMTP 服务器，其余 RC 检查全部通过。审计中发现
-三个缺陷，均已在提交前修复并重新验证（见 §11）。
+四个缺陷，均已在提交前修复并重新验证（见 §11）。
 
 ---
 
@@ -132,8 +132,8 @@ Candidate + `mail.sent` 三项证据，未伪称打开过收件箱。
 | `npm pack` | 0 | `dsh-mail-notify-0.1.0.tgz` |
 | `npm run pack:check` | 0 | `PASS: required entries present, no forbidden entry found` |
 
-测试数量由 273 增至 276，原因是本轮为三个缺陷各补了一个回归测试（§11）。真实数量如实记录，未人为
-维持 273。
+测试数量由 273 增至 276：D-2、D-3、D-4 各补 1 个回归测试，D-1 属配置层修复（其代码侧约束原本已由
+「the credential reference must be a name, not a value」覆盖）。真实数量如实记录，未人为维持 273。
 
 ### Tarball audit
 
@@ -276,8 +276,8 @@ dsh-mail-notify@0.1.0 E:\Projects\DSHarness\dsh-mail-notify
 
 ## 11. Defects
 
-本阶段发现并修复三个缺陷。全部按 `reproduce → failing test → minimal fix → full verify → pack →
-runtime re-test` 执行。
+本阶段发现并修复四个缺陷（D-1…D-4），其中两个（D-2、D-3）出在装配层，一个（D-4）在修复 D-2 后才
+真正暴露。全部按 `reproduce → failing test → minimal fix → full verify → pack → runtime re-test` 执行。
 
 ### D-1（安全，配置层）SMTP 授权码被写入 Git 跟踪文件，且引用字段被填成密码本身
 
@@ -377,7 +377,7 @@ fiber 取证显示，`dsh-mail-notify`、`agent-instructions`、`SessionTitleSer
 RC READY
 ```
 
-判据：合成 SMTP smoke 与真实 Agent → Email E2E 均获 SMTP 服务器接受；三个缺陷修复后完整套件
+判据：合成 SMTP smoke 与真实 Agent → Email E2E 均获 SMTP 服务器接受；四个缺陷修复后完整套件
 276 pass / 0 fail；打包产物通过白名单审计且独立可安装；无可达的 high/critical runtime 漏洞；仓库、
 归档、日志与 Git 历史中无 Secret。
 
@@ -391,11 +391,17 @@ breaking change，留待后续评估）；Phase 3 记录的「去重不跨进程
 | 项 | 值 |
 | --- | --- |
 | starting SHA | `99bef3220eada157f67d588db0fc5b94c8bdbe2a` |
-| final local SHA | 见文末推送后记录 |
-| remote SHA | 见文末推送后记录 |
-| sync status | 见文末推送后记录 |
+| fix commit | `680e33b` — `fix: deliver mail from production and resolve the credential per attempt` |
+| docs commit | `6af19d5` — `docs: complete phase 4 release candidate audit` |
+| final local SHA | `6af19d51afb6d41530c4d43f5bda8c71dcf751d6` |
+| remote SHA | `6af19d51afb6d41530c4d43f5bda8c71dcf751d6`（`git ls-remote origin refs/heads/main`） |
+| sync status | 一致 — `git rev-list --left-right --count HEAD...origin/main` 为 `0  0` |
 
-提交内容：三个缺陷的修复与其回归测试、`PHASE4_REPORT.md`、`README.md` 状态与文档表更新、
-`00_MASTER.md` roadmap 更新。`cordis.patch.yml` 未纳入提交（已恢复为 HEAD 内容）。
+提交内容：四个缺陷的修复与其回归测试、`PHASE4_REPORT.md`、`README.md` 状态与文档表更新、
+`00_MASTER.md` roadmap 更新。`cordis.patch.yml` 未纳入提交（已恢复为 HEAD 内容），归档产物 `.tgz`
+按既有 `.gitignore` 规则不入库。
 
-本阶段未执行：`npm publish`、`git tag`、`git push --tags`、GitHub Release。
+推送后重新读取远端 `README.md` 与 `PHASE4_REPORT.md`：UTF-8 正常、无 Phase 3.1 编码回归、无 Secret、
+状态正确；`git diff origin/main HEAD` 为空，即远端树与本地产物逐一相同。
+
+本阶段未执行：`npm publish`、`git tag`、`git push --tags`、GitHub Release。正式发布留待后续独立阶段。

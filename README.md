@@ -287,7 +287,7 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`PHASE1_REPORT.md`](PHASE1_REPORT.md) | Phase 1 report: verification results, evidence levels, confirmed event flow, risks |
 | [`PHASE2_REPORT.md`](PHASE2_REPORT.md) | Phase 2 report: the design freeze |
 | [`PHASE3_REPORT.md`](PHASE3_REPORT.md) | Phase 3 report: implementation, verification results, packaging, runtime integration, git sync |
-| [`PHASE4_REPORT.md`](PHASE4_REPORT.md) | Phase 4 report: real SMTP end-to-end validation and the v0.1.0 release candidate audit, including the three defects found and fixed |
+| [`PHASE4_REPORT.md`](PHASE4_REPORT.md) | Phase 4 report: real SMTP end-to-end validation and the v0.1.0 release candidate audit, including the four defects found and fixed |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D016 decision records with reasons, rejected alternatives, and consequences |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module layout and per-module responsibility boundaries |
 | [`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md) | Configuration specification: fields, defaults, validation, failure behaviour |
