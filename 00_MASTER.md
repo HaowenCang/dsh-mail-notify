@@ -49,6 +49,7 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 5 — v0.1.0 Formal Release | 将已验证的 `02191a4` 作为不可变的 `v0.1.0` 正式发布：npm package、Git tag、GitHub Release，以及发布后逐项核验 | **PASS**（见 [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md)） |
 | Phase 6 — Turn-level telemetry correctness hotfix | 查明真实运行时语义、修复 Turn 级 Token／Duration 遥测（`BUG-TEL-001`）、schema v2 迁移、全量回归与 rc.1/rc.2 复验，产出 v0.1.1 RC | **PASS — v0.1.1 RC READY**（见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)） |
 | Phase 6.1 — Nodemailer 10 security uplift | 将已停止安全维护的 Nodemailer 7.x 升级到受支持的 10.x，删除 legacy `@types/nodemailer`，并在新依赖下重新完成 v0.1.1 的全量回归、打包、全新安装、rc.1/rc.2 与真实 SMTP 复验 | **PASS — v0.1.1 RELEASE READY**（见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)） |
+| Phase 7 — v0.1.1 Formal Release | 冻结发布对象 `340ef362`、复现归档 SHA、`npm publish` 精确 tarball、annotated tag `v0.1.1`、GitHub Release 与 asset，以及本地／npm／GitHub 三方 SHA-256 一致性与 registry 全新安装核验 | **PASS — v0.1.1 RELEASED**（见 [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)） |
 
 重新编排的理由：
 
@@ -66,9 +67,11 @@ Phase 5 只做发布，不新增功能、不重构，也不修改 SMTP、Credent
 
 Phase 6 处理发布后由真实邮件暴露的遥测语义缺陷：`usage` 实际只承载最后一个携带 usage 的 `assistant/message`，被用户理解为整个 Turn 的用量。本阶段先以真实运行时取证确认该语义（858 份 session log、1 432 个已结束 Turn），再以新增的 `telemetry.ts` 实现 Turn 级按 bucket 折叠，并按 D013 将 `schemaVersion` 递增为 `2`；Duration 在同一批真实 Turn 上被独立复核，**未复现缺陷**，因此未改动算法。结论为 **PASS — v0.1.1 RC READY**，详见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)。本阶段不发布：`npm publish`、`git tag v0.1.1`、GitHub Release 均未执行。
 
-Phase 6.1 处理 v0.1.1 正式发布前暴露的依赖安全缺陷：Phase 6 的遥测 RC 原先保留 Nodemailer 7.x，而 7.x 已不在 Nodemailer 的受支持范围内（只有 `10.x` 收到安全修复），且处于 `GHSA-2x7j-588g-ccc2` 等 10 条 advisory 的影响区间内。本阶段把运行时依赖升级到 `^10.0.9`，删除与内置声明冲突的 `@types/nodemailer`，并证明升级**未改动任何源码**：本包只在一个文件中以一条调用形态使用 Nodemailer。随后在同一 tarball 上重新完成全量回归（337 项）、打包、隔离全新安装、rc.1/rc.2 两个 DSH 版本的受控 Turn 与真实 163 投递，以及三个面的密钥扫描。「当前配置下该 advisory 不可达」被记录为降低实际风险的事实，而非推迟升级的理由。结论为 **PASS — v0.1.1 RELEASE READY**，详见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)。本阶段同样不发布。
+Phase 6.1 处理 v0.1.1 正式发布前暴露的依赖安全缺陷：Phase 6 的遥测 RC 原先保留 Nodemailer 7.x，而 7.x 已不在 Nodemailer 的受支持范围内（只有 `10.x` 收到安全修复），且处于 `GHSA-2x7j-588g-ccc2` 等 10 条 advisory 的影响区间内。本阶段把运行时依赖升级到 `^10.0.9`，删除与内置声明冲突的 `@types/nodemailer`，并证明升级**未改动任何源码**：本包只在一个文件中以一条调用形态使用 Nodemailer。随后在同一 tarball 上重新完成全量回归（336 项）、打包、隔离全新安装、rc.1/rc.2 两个 DSH 版本的受控 Turn 与真实 163 投递，以及三个面的密钥扫描。「当前配置下该 advisory 不可达」被记录为降低实际风险的事实，而非推迟升级的理由。结论为 **PASS — v0.1.1 RELEASE READY**，详见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)。本阶段同样不发布。
 
-各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)、[`PHASE6_REPORT.md`](PHASE6_REPORT.md)、[`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)。
+Phase 7 只做发布，不新增功能、不重构、不改动 telemetry 语义，也不升级依赖。发布对象被固定为已完整验证的 `340ef3624126bc4cf8bd0f2c26394371e4fa7b56` / `0.1.1`：执行开始时逐项核对 baseline（HEAD 与 `origin/main` 同为该 commit、工作树干净、`v0.1.1` 的 npm 版本／Git tag／GitHub Release 三者均不存在），之后全部变更均不发生在此之前。在第 7 节重新执行 `npm pack` 所得的归档 SHA-256 与 Phase 6.1 已验证归档**逐字节一致**，因此发布的确为既有验证对象。npm `dsh-mail-notify@0.1.1`、Git 注释 tag `v0.1.1`（tag object `819fde114357cb653d8ad902f74a8fd35d30a0af`，指向 `340ef362`）与 GitHub Release `v0.1.1` 均已创建，本地 tarball、npm registry 产物与 GitHub Release asset 的 SHA-256 三方一致。registry 全新隔离安装（`mnrel011h`，headless 模板 + 按 specifier 从 registry 安装）完成了加载、受控 Turn 与回环 SMTP 投递。发布后的 README 与报告以 post-release documentation commit 形式位于 `main > v0.1.1`，tag 不随之移动。结论为 **PASS — v0.1.1 RELEASED**，详见 [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)。
+
+各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)、[`PHASE6_REPORT.md`](PHASE6_REPORT.md)、[`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)、[`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)。
 
 Phase 2 冻结的实现规格见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、[`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md)、[`docs/SECURITY.md`](docs/SECURITY.md)、[`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)、[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)、[`docs/DECISIONS.md`](docs/DECISIONS.md)。
 

@@ -4,7 +4,7 @@ DeepSeek Harness (DSH) host plugin. When a **top-level** Agent turn finishes, it
 turn's final user-visible model output over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.1.1` (release candidate; `0.1.0` is the released version)
+- Version: `0.1.1` (released; `0.1.0` is the previous release)
 - Host-only: no browser half, no UI, no Client package
 - Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
@@ -32,11 +32,13 @@ changed no source line: the plugin reaches Nodemailer through one file and one c
 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md).
 
 
-**v0.1.1 is a release candidate, not a release.** It has not been published to npm, tagged, or
-released on GitHub. It changes what the email's token line means, so a reader who compares a `0.1.0`
-message with a `0.1.1` message will see different numbers for the same turn: `0.1.0` reported the
-**last model call's** counters, `0.1.1` reports the **whole turn's** aggregate. See
-[`PHASE6_REPORT.md`](PHASE6_REPORT.md) and D017 in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+**v0.1.1 released.** It is published as `dsh-mail-notify@0.1.1` on npm, tagged `v0.1.1` at commit
+`340ef362`, with the release archive attached to the GitHub Release. The local archive, the npm
+registry artifact, and the GitHub asset are byte-identical. It changes what the email's token line
+means, so a reader who compares a `0.1.0` message with a `0.1.1` message will see different numbers
+for the same turn: `0.1.0` reported the **last model call's** counters, `0.1.1` reports the **whole
+turn's** aggregate. See [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md), [`PHASE6_REPORT.md`](PHASE6_REPORT.md),
+and D017 in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 **v0.1.0 released.** The candidate was validated end to end against a real SMTP server: a synthetic
 smoke message and a real top-level Agent turn both reached `mail.sent` from the shipped package. See
@@ -98,7 +100,7 @@ The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so
 package also mounts it.
 
 ```powershell
-dsh plugin --profile web add dsh-mail-notify@0.1.0
+dsh plugin --profile web add dsh-mail-notify@0.1.1
 ```
 
 For development, or on a machine without registry access, install the packed archive instead:
@@ -256,7 +258,7 @@ npm install
 npm run typecheck     # tsc --noEmit, sources and tests
 npm test              # node --test, no network
 npm run build         # tsc -> lib/
-npm pack              # dsh-mail-notify-0.1.0.tgz
+npm pack              # dsh-mail-notify-0.1.1.tgz
 npm run pack:check    # audit the archive's contents
 ```
 
@@ -300,7 +302,7 @@ remove that injection instead.
 | `mail.failed {"category":"unknown-error"}` | The SMTP failure was unrecognised, so it is treated as permanent and not retried. The line carries `code`/`responseCode`. |
 | `mail.failed {"category":"smtp-auth"}` | Authentication was rejected. The password is never printed; re-check the credential value. |
 | A turn finished but no candidate appears in the log | The plugin attached mid-turn: `durationMs` will be `null` and the counters only cover what it saw. That is expected and does not suppress the email. |
-| The token numbers look far too small | You are reading a `0.1.0` message. That version reported the last model call's counters, not the turn's. Check `schemaVersion` in the log line; `2` is the aggregate. |
+| The token numbers look far too small | You are reading a `0.1.0` message. That version reported the last model call's counters, not the turn's. Check `schemaVersion` in the log line; `2` is the aggregate. Both versions are still distinguishable this way after the v0.1.1 release. |
 | `Token telemetry complete: no` | At least one model call of the turn reported no usable usage — a retried call is the usual cause. `candidate.produced` carries `usageMissingCount` and `usageUnobservableRetries` with the counts. |
 
 **To see the plugin's own structured log lines** you need an exporter: Cordis buffers logs in
@@ -366,6 +368,9 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`PHASE4_REPORT.md`](PHASE4_REPORT.md) | Phase 4 report: real SMTP end-to-end validation and the v0.1.0 release candidate audit, including the four defects found and fixed |
 | [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) | Phase 4.1 report: SMTP credential rotation, DSH `0.1.5-rc.2` compatibility verification, secret history scan, and the release-readiness decision |
 | [`PHASE6_REPORT.md`](PHASE6_REPORT.md) | Phase 6 report: the turn-level token telemetry defect (`BUG-TEL-001`), the runtime evidence behind it, the duration investigation, the schema v2 migration, and the v0.1.1 release-candidate verification |
+| [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md) | Phase 6.1 report: the Nodemailer 7 → 10 security uplift, removal of `@types/nodemailer`, and the re-verification performed on the upgraded dependency |
+| [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md) | v0.1.1 release report: source commit, tag object, verification results, npm and GitHub publication records, the three-way artifact hashes, and the registry fresh-install result |
+| [`RELEASE_NOTES_V0.1.1.md`](RELEASE_NOTES_V0.1.1.md) | The release notes published on the v0.1.1 GitHub Release |
 | [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
 | [`RELEASE_NOTES_V0.1.0.md`](RELEASE_NOTES_V0.1.0.md) | The release notes published on the GitHub Release |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D017 decision records with reasons, rejected alternatives, and consequences |

@@ -62,6 +62,14 @@ secret-bearing and development patterns. It prints the full entry list and ends 
 
 ## 4. Install
 
+From the registry:
+
+```powershell
+dsh plugin --profile <profile> add dsh-mail-notify@<version>
+```
+
+Or from a local archive:
+
 ```powershell
 dsh plugin --profile <profile> add ./dsh-mail-notify-<version>.tgz
 ```
@@ -145,13 +153,15 @@ injector; a normal `dsh plugin add` install does not create one.
 - [ ] `candidate.produced` reports `usageSampleCount` equal to the turn's model-call count
 - [ ] uninstalling leaves no row and no residual state
 - [ ] `git status` shows no credential, no `.env`, and no archive
+- [ ] the published tarball, the npm registry artifact, and the GitHub Release asset have the same SHA-256
+- [ ] `npm audit --omit=dev` reports 0 vulnerabilities
 
 ## 9. Version history
 
 | Version | Status | Substance |
 | --- | --- | --- |
-| `0.1.0` | released | First release. `schemaVersion: 1`; `usage` carried the last observed per-call sample. |
-| `0.1.1` | release candidate | `usage` is the turn-level aggregate of observable per-call counters; `schemaVersion: 2`; `usageComplete` added; body labels the aggregate as such (D017). No configuration field changed, so an existing profile patch needs no edit. |
+| `0.1.0` | released | First release. `schemaVersion: 1`; `usage` carried the last observed per-call sample. Nodemailer `^7.0.13`. |
+| `0.1.1` | released | `usage` is the turn-level aggregate of observable per-call counters; `schemaVersion: 2`; `usageComplete` added; body labels the aggregate as such (D017); Nodemailer raised to `^10.0.9` and `npm audit --omit=dev` reports 0 vulnerabilities. No configuration field changed, so an existing profile patch needs no edit. |
 
 A `0.1.0` candidate record and a `0.1.1` candidate record for the same turn usually carry
 **different** `usage` values and always carry different `schemaVersion` values. The version field is
