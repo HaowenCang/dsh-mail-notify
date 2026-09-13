@@ -19,6 +19,17 @@
 
 测试运行器采用 DSH 生态中通用的 Vitest；该选择在 Phase 3 P3.1 中确定，不影响本矩阵的内容。
 
+> **Implementation note（Phase 3 补记，2026-09）。** 测试运行器最终采用 **Node 内置 `node --test`**，未引入 Vitest。理由是本机与研究生态的既有约定（同机 `dsh-vibe-usage-sync` 使用 `node --test` 且已通过），以及 Node 24 原生支持直接执行 `.ts` 测试文件：这使整个测试栈不新增任何依赖，与「只引入完成设计所必需的依赖」一致。矩阵内容、层次划分与断言要求未因此改变，L1–L5 全部不触网。
+>
+> 运行命令：`npm test` → `node --test "tests/**/*.test.ts"`。
+>
+> 目录与层次对应关系：`tests/unit`（L1）、`tests/adapter`（L3）、`tests/integration`（L2、L4、L5）、`tests/package`（L6 中可自动化的部分）、`tests/fixtures`（真实 runtime shape 的脱敏样本）、`tests/support`（配置与候选构造辅助）。
+>
+> **L6 的实际执行结果。** PKG-01、PKG-02 由 `tests/package/tarball.test.ts` 对真实 `npm pack` 产物自动断言（并要求 `tar` 与 `npm` 在 PATH 上）。PKG-03…PKG-06 需要独立 DSH 安装，已实际执行但**不是自动化测试**，证据见 [`DSH_INTEGRATION.md`](DSH_INTEGRATION.md) 第 4 节与 [`../PHASE3_REPORT.md`](../PHASE3_REPORT.md)。
+>
+> **一条运行时观察需记录。** 重复 `turn/end` 在真实运行时会因「结算即释放」而重建空状态，从而先命中 `no-visible-text` 抑制，`duplicate` 分支在真实运行时因此是防御性的。DED-01/DED-04 由 L1/L2 覆盖（驱动真实事件总线），该观察已写入 `DSH_INTEGRATION.md` 第 4 节。
+
+
 **硬性要求**：L1–L5 全部不得产生真实网络连接。唯一的真实 SMTP 路径是显式运行的手工 smoke test（`scripts/smtp-smoke-test.ts`，`00_MASTER.md` §17），它不属于自动化测试矩阵。
 
 ---

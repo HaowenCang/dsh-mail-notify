@@ -1,0 +1,128 @@
+# DSH_INTEGRATION — the interfaces this plugin actually uses
+
+This file records the DSH interfaces `dsh-mail-notify` depends on, the version they were verified
+against, and where each fact came from. It is deliberately narrower than
+[`../PHASE1_RUNTIME_CONTRACT.md`](../PHASE1_RUNTIME_CONTRACT.md): that document is the full runtime
+contract gathered during Phase 1, while this one is the dependency surface of the shipped plugin.
+
+Verified against:
+
+| Item | Value |
+| --- | --- |
+| DSH | `0.1.5-rc.1` |
+| Cordis | `4.0.2` |
+| Schemastery | `3.18.2` |
+| Node | `v24.13.0` |
+| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition |
+
+## 1. Interfaces used
+
+| Interface | How it is reached | Used for | Required? |
+| --- | --- | --- | --- |
+| `session/event` (Cordis event) | `ctx.on('session/event', (session, event) => …)` | The only event observation entry point | Yes — the plugin is pointless without it |
+| `session/disposed` (Cordis event) | `ctx.on('session/disposed', (session) => …)` | Releasing a session's turn state | No, but registered unconditionally |
+| `credentials.resolve(ref)` | `ctx.get('credentials')`, then `undefined` check | Reading the SMTP password, once per send attempt | No |
+| `credentials.describe(ref)` | Same handle | Building a diagnostic that names the reference without its value | No |
+| `timer.timeout(delayMs)` | `ctx.get('timer')`, then `undefined` check | A retry backoff that a plugin unload cancels | No |
+| `ctx.logger(name)` | `ctx.logger('dsh-mail-notify')` | The single structured logging exit | Yes |
+| `ctx.on` | Registration | Listener ownership and disposal with the fiber | Yes |
+| `ctx.effect(fn, label)` | Disposal hook | Releasing the queue and state on unload | Yes |
+
+`inject` is deliberately empty. Declaring `credentials` or `timer` there would make them hard
+dependencies, and a profile mounting neither would never activate the plugin at all. Both are read
+optionally instead, so a missing service produces a named diagnostic at send time. A profile
+without `credentials` still loads, still observes turns, and reports
+`this profile mounts no Credential service` when a send is attempted.
+
+**Not used:** the `sessions` service (a root-level listener already receives every session's
+events, so reverse lookup would add coupling for no information), any Slot or Client-side
+interface, and any path that modifies harness configuration.
+
+## 2. Event payload paths
+
+`turn/start`, `assistant/message`, `tool/call`, `tool/result`, `user/message`, and `turn/end` are
+not top-level Cordis events. They are members of the `SessionEvent` union delivered through the
+single `session/event` event, so every field access descends through `event.data`.
+
+| Fact | Path |
+| --- | --- |
+| Event type, time, sequence | `event.type`, `event.time`, `event.seq` |
+| Payload root | `event.data` |
+| Session id | `session.id` |
+| Workspace, preset | `session.header.cwd`, `session.header.agentPreset` |
+| Subagent, primary criterion | `session.header.origin === 'subagent'` |
+| Subagent, redundant criteria | `session.header.parentSession`, `session.header.delegationDepth > 0` |
+| Turn, step | `event.data.turn`, `event.data.step` |
+| Content blocks | `event.data.message.content` |
+| User-visible text | `…content[i].text` **only when** `.type === 'text'` |
+| Message id | `event.data.message.id` |
+| Provider, model | `event.data.message.source.provider` / `.model`, when `.source.kind === 'model'` |
+| Token counters | `event.data.usage` |
+| Tool failure, criterion A | `event.data.message.content[0].isError === true` |
+| Tool failure, criterion B | `event.data.error !== undefined` |
+| Turn end reason | `event.data.reason.kind` |
+| Abort cause | `event.data.reason.reason.kind` |
+| Provider error | `event.data.reason.error.code` / `.message` |
+
+Every path in this table is read behind a runtime shape check, because the plugin may be loaded
+from a bundle whose dependency versions differ from the ones it was compiled against. A `turn`
+that is missing or not a number degrades the event to `other`; it is never defaulted to `0` or
+`NaN`.
+
+## 3. Wire-level facts that shape the code
+
+| Fact | Consequence |
+| --- | --- |
+| `session/event` is dispatched synchronously on the `Session.append()` path and its return value is never awaited | The listener is synchronous and returns `undefined`; all I/O lives behind the queue |
+| A listener throwing is contained per listener by the harness | The plugin must still not throw; the containment is not relied upon |
+| Root-level listeners receive every session's events (scope filtering lets untagged listeners through) | No `sessions` service lookup is needed for global observation |
+| `event.data` is snapshotted and deep-frozen before delivery, while `session` stays a live object | Payload fields are safe to read directly; the returned DTOs still copy rather than alias |
+| `TurnEndReasonMap` has exactly six kinds | `unknown` exists only as forward-compatibility cover for a seventh |
+| `tool/result` message content is a single-element tuple and `isError` is absent on success | The criterion is `=== true`, never a truthiness test |
+| A non-zero shell exit is a successful tool result | It is not an error, and no output text is parsed |
+| `delegationDepth: 0` is a legal value on top-level sessions | The only permitted comparison is `typeof === 'number' && Number.isFinite(d) && d > 0` |
+| `ContentBlockMap` is merge-extensible | Unknown block types are a normal event; the whitelist excludes them silently |
+| A `reasoning` block carries a `text` field exactly like a `text` block | Extraction keys on `type`, never on the field name |
+
+## 4. Verified runtime integration
+
+Performed against a freshly created profile seeded from the shipped `headless` template, into which
+the packed archive was installed with the documented command. The composition was then booted both
+by the `dsh` launcher and by `scripts/dev-boot-probe.mjs`, which attaches a Cordis log exporter so
+the plugin's own structured lines become observable.
+
+| Check | Result |
+| --- | --- |
+| `dsh plugin --profile <p> add ./dsh-mail-notify-0.1.0.tgz` recognises the bundle manifest | Passed — the package was appended to `dsh.profile.bundles` and its row appeared in `--dump-config` |
+| The compiled plugin loads in a real composition | Passed — `plugin.ready` was emitted with the resolved configuration |
+| `enabled: false` registers no listener | Passed — `plugin.disabled` was emitted and the run behaved identically to a composition without the plugin |
+| `enabled: true` observes a real top-level turn | Passed — `candidate.produced` for a live session, then `notification.enqueued` and an `ok` outcome |
+| Subagent turns produce no candidate | Passed — a real delegation produced exactly one candidate, for the parent session |
+| An invalid configuration refuses to mount | Passed — `plugin.config-invalid` named all five failing fields |
+| The Agent Loop is unaffected | Passed — every probed turn completed and printed its answer |
+
+A duplicate `turn/end` replayed into the live process produced a *fresh* candidate rather than a
+`duplicate` suppression, and that observation is recorded here because it is informative rather
+than a defect: the handler releases a turn's state as soon as the turn settles, so a later
+`turn/end` for the same turn number rebuilds empty state and is suppressed for having no visible
+text before the deduplication rule is reached. In the live runtime the duplicate rule is therefore
+defensive. Its behaviour is covered by the L1/L2 tests, which drive the real event bus.
+
+## 5. Maintenance points
+
+The DSH boundary is one file: `src/runtime-adapter.ts`. Its two entry points are
+`toSessionFacts(session)` and `toInternalEvent(event)`, and nothing outside that module reads
+`event.data`, a `Session`, or a `SessionHeader`.
+
+On a harness upgrade, review in this order:
+
+1. `SessionHeader` — did `origin`, `parentSession`, or `delegationDepth` change meaning?
+2. `SessionEventMap` — did a payload gain a wrapper or rename a field?
+3. `TurnEndReasonMap` — did a seventh reason appear, or a detail field move?
+4. `ContentBlockMap` — did a new block type land that should or should not be treated as visible?
+5. `CredentialProvider` — is `resolve` still per-call, and does `describe` still avoid the value?
+6. The `timer` service — is there still a fiber-scoped `timeout(delayMs)`?
+
+`tests/adapter/` is where those shapes are pinned. Its fixtures mirror the recorded runtime payload
+shapes deliberately; a fixture invented from a declaration file would let the adapter pass while
+the runtime delivered something else.

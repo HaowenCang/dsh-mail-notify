@@ -42,7 +42,7 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | --- | --- | --- |
 | Phase 1 — Runtime verification | 运行时 API Inspect、Host-only 动态原型验证、Runtime Contract 固化 | **PASS** |
 | Phase 2 — Design freeze | 设计冻结与正式实现规格：决策记录、架构、配置、安全、测试矩阵、实现计划 | **PASS** |
-| Phase 3 — Formal implementation | TypeScript 正式项目、测试矩阵、打包与安装验证 | pending |
+| Phase 3 — Formal implementation | TypeScript 正式项目、测试矩阵、打包与安装验证 | **PASS WITH SMTP SMOKE DEFERRED**（见 [`PHASE3_REPORT.md`](PHASE3_REPORT.md)） |
 
 重新编排的理由：
 

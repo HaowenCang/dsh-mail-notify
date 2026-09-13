@@ -4,6 +4,21 @@
 
 当前仓库尚无 `src/` 实现。本文件描述的是 Phase 3 必须满足的约束，其中「禁止」类条款不因实现便利而放宽。
 
+> **Implementation note（Phase 3 补记，2026-09）。** 以下逐条为本文件各节在实现中的落实与补充事实。**没有条款被放宽。**
+>
+> **第 2 节（凭据生命周期）。** `resolveSmtpPassword()` 每次发送尝试调用一次 `resolve()`；服务句柄在装配期取得一次（属第 2 节允许的「缓存服务句柄」），解析结果只存在于该次尝试的局部作用域，随 `TransportOptions` 传入 transport 工厂后不再被引用。`resolve` 返回 `undefined` 或抛错时，诊断信息包含引用名与 `describe()` 的 `configured` / `source` / `writable`，从不包含值。
+>
+> **第 3 节（传输安全）。** 全仓库唯一构造 transport 的位置是 `src/transport.ts`，其参数对象恰为 `{host, port, secure, user, password}` 五个键，没有 `tls` 块、没有 `rejectUnauthorized`。`tests/integration/mailer.test.ts` 的 SEC-06 逐键断言这一形状，因此新增任何 TLS 关闭键都会使测试失败，而不是静默通过。
+>
+> **第 4 节（日志脱敏）。** `PluginLogger` 不提供接受完整 `visibleText`、reasoning、tool 参数或结果的入口；所有 payload 经 `normalize()` 后才写出。认证失败专项按本节第 4 条实现：`EAUTH` / `535` / `534` / `530` / `454` 类错误的 `message` 被替换为固定分类文本，不保留原始消息，因为其中可能回显用户名。
+>
+> **第 5 节（隐私默认值与内容边界）。** 五个默认值逐项实现并与第 5 节一致。`includeUserPrompt` 的采集路径与第 6 节一致：采集始终进行，仅渲染受开关控制；采集的暂存以 120 s 为界并随 turn 结算清除。
+>
+> **第 6 节（仓库与产物卫生）。** `.gitignore` 未削弱。`package.json` 的 `files` 白名单为 `["lib", "cordis.patch.yml", "README.md", "LICENSE"]`，`tests/`、`scripts/` 与 `src/` 均不在其中；`tests/package/tarball.test.ts` 对真实 `.tgz` 逐条断言白名单命中与禁止项缺席，并额外扫描归档内每个编译文件，查找形如密码字面量的赋值。
+>
+> **第 7 节（运行时边界）与第 8 节（用户须知）。** `enabled: false` 在 `apply()` 内于任何资源创建之前短路返回，因此第 8 节第 4 条是事实而非近似：不注册监听器、不创建队列、不读取凭据。该行为在真实 DSH composition 中已观察为一条 `plugin.disabled` 日志与一次无副作用的运行。
+
+
 ---
 
 ## 1. 威胁模型

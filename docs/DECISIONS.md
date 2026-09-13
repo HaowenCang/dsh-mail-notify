@@ -758,6 +758,52 @@ Phase 1 与 Phase 2 期间发现现有文档之间存在若干实质冲突。本
 
 ---
 
+## 附：Implementation Addendum（Phase 3，2026-09）
+
+本节记录实现期间出现的、D001–D016 未覆盖或需补充说明的事实。**D001–D016 本身未被修改，也未新增或删除任何决策的语义。** 逐项标注它属于「补记」还是「需要裁决的实现偏离」。
+
+### A1（补记，非偏离）— 适配器输出联合的完整性
+
+D001 把「四个事件」收敛为单一入口，`ARCHITECTURE.md` 第 3 节列出了适配器的五个输出变体，但该清单遗漏了 `tool/call`。实现要求 `TurnState.toolCallCount` 计数（`ARCHITECTURE.md` 第 4 节字段表、D007 对 `toolCallCount` 的保留说明），因此适配器必须识别 `tool/call` 并输出 `{ kind: 'tool-call', turn, step, timeMs }`，路径为 `event.data.turn` / `.step`（`PHASE1_RUNTIME_CONTRACT.md` 已确认两者存在）。
+
+这是补齐冻结设计内部一致性所必需的推论，而非语义选择：若不输出该变体，`toolCallCount` 将恒为 0，与 `ARCHITECTURE.md` 第 4 节直接冲突。**不构成对 D001 的偏离。**
+
+### A2（补记，非偏离）— `user/message` 不携带 turn，需按会话暂存
+
+D012 的 Consequences 要求 `includeUserPrompt` 的采集在 Phase 3 即实现。实现时发现一个设计未预见的事实：`user/message` 的 payload 是 `UserMessage` 本身，**不含 `turn` 与 `step`**（`PHASE1_RUNTIME_CONTRACT.md` 的 `SessionEventMap` 明确如此），而运行时的投递顺序是 `user/message` 先于它所归属的 `turn/start`。
+
+因此该事件不能走「turn 缺失即降级为 `other`」的判别（那会丢弃全部用户文本），实现改按会话暂存：`Map<sessionId, {text, at}>`，在该会话下一个 turn 建立时写入其 `TurnState.lastUserText`，并以 `PENDING_USER_TEXT_TTL_MS = 120_000` 为界，避免把很久以前的 prompt 接到无关的新 turn 上。采集始终进行，仅渲染受开关控制——与 D012 及 `CONFIG_SPEC.md` 第 6 节一致。**这是补齐，不是偏离。**
+
+### A3（补记）— 结算即释放使 `duplicate` 在运行时成为防御性分支
+
+D008 的判定顺序把去重放在最后一步，并要求「只有确定入队成功时才写标记」。实现遵循该顺序，但在真实 DSH composition 中观察到：由于 `turn/end` 结算后立即释放 `TurnState`（`ARCHITECTURE.md` 第 7 节），同一 `(sessionId, turn)` 的**重复 `turn/end`** 会懒初始化出一个空状态，先命中 `no-visible-text` 抑制，因而永远走不到 `duplicate` 分支。
+
+这**不改变 D008 的任何条款**：去重的真实对象是「同一 turn 的重复投递」，其行为（第二次不入队、reason 为 `duplicate`）由 L1/L2 测试驱动真实事件总线验证；跨重启不保证的边界说明同样不变。此处记录的是该分支在正常运行时的可达性，避免日后被误读为「实现遗漏了去重」。完整观察见 [`DSH_INTEGRATION.md`](DSH_INTEGRATION.md) 第 4 节。
+
+### A4（补记）— `NotificationCandidate` 的两个新增可选字段
+
+D007 的候选在实现中增加两个**可选**字段：`sawTurnStart?: boolean` 与 `userText?: string`。
+
+- `sawTurnStart` 来自 D016 第 10 项对 Phase 1 字段的保留裁决（「sawTurnStart 保留」）。Phase 1 原型把它作为独立字段，而 D007 的必填/可选清单未列入。实现将其作为可选字段一并输出，供日志审计辨别「正常路径」与「中途装载路径」。它与 `telemetryComplete` 当前同值，语义不同（前者描述事件是否被观察到，后者描述计数是否覆盖整个 turn），这正是 D004 拒绝合并两者的理由。
+- `userText` 仅在 `includeUserPrompt: true` 时携带（D012），使渲染层不需要第二个数据来源。
+
+按 D013 的版本递增规则，**新增可选字段不递增 `schemaVersion`**，因此两者均属 `schemaVersion: 1` 内兼容，`schemaVersion` 保持字面量 `1`。此处记录是因为 D007 的字段清单未列出它们。
+
+### A5（补记）— 重试上限与错误分类的两处实现细节
+
+- `RetryPolicy` 增加 `retryMaxDelayMs`（固定 `30_000`），对应 `ARCHITECTURE.md` 第 6 节的「退避上限 30000 ms」。该值不是配置项：`CONFIG_SPEC.md` 第 2.8 节未提供对应字段，实现也不新增，符合「不自行新增配置」。
+- `ECONNREFUSED` 归入 `permanent`，与 `ARCHITECTURE.md` 第 6 节分类表中「`ENOTFOUND`（域名不存在）、`ECONNREFUSED` → 立即失败」一致；`ENOTFOUND` 与 `EAI_AGAIN` 分属两类（后者为临时 DNS，可重试），同样与该表一致。实现中 `TRANSIENT_CODES` 与 `PERMANENT_CODES` 两个集合逐项对照该表，未新增未列出的码。
+
+### A6（补记）— 开发期观测工具的存在
+
+`dsh` 命令行不注册 Cordis log exporter，日志仅存于进程内 1000 条环形缓冲，因此插件的结构化日志在进程外不可见。为使「在真实 composition 中运行」可被观测，仓库内含 `scripts/dev-boot-probe.mjs`：它调用 launcher 自身的 `runProfile`，并以包装 `LoggerService.prototype.exporter` 的方式附加一个输出到 stderr／文件的 sink。**它不修改 Harness 任何文件**，也不属于产品交付面；`package.json` 的 `files` 白名单不含 `scripts/`，因此它不进入 npm 归档。
+
+### A7（补记）— 未新增任何配置字段
+
+`CONFIG_SPEC.md` 第 2 节的字段集合与实现逐项一致，未新增字段。实现中唯一的判据性收紧是 `smtpHost` / `smtpUser` / `smtpPasswordCredential` / `from` / `to` 的「非空且格式合法」检查放在 `resolveConfig()` 而非 schema 内，以及 `to` 的「去重后 ≥ 1」规则无法用 schema 的 `.min()` 表达——两者行为与 `CONFIG_SPEC.md` 第 4 节一致，细节见该文件补记。
+
+---
+
 ## 附：本文件与其它文档的关系
 
 | 文档 | 关系 |
@@ -769,3 +815,7 @@ Phase 1 与 Phase 2 期间发现现有文档之间存在若干实质冲突。本
 | `docs/SECURITY.md` | 实现 D002、D010、D012 的边界声明 |
 | `docs/TEST_PLAN.md` | 对 D001–D015 中每项可验证断言的测试映射 |
 | `docs/IMPLEMENTATION_PLAN.md` | 实现上述决策的执行顺序 |
+| `docs/DSH_INTEGRATION.md` | 本插件**实际使用**的 DSH 接口及验证版本（Phase 3 新增） |
+| `docs/RELEASE.md` | 构建、打包、安装、更新与回滚（Phase 3 新增） |
+| `docs/PRODUCT_SPEC.md` | 功能范围与明确的非目标（Phase 3 新增） |
+| `PHASE3_REPORT.md` | 实现与验证的逐项结果（Phase 3 新增） |

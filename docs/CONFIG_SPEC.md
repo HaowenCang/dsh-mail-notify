@@ -6,6 +6,34 @@
 
 ---
 
+## 0. Implementation notes（Phase 3 补记，2026-09）
+
+以下为逐字段实现时的补充事实。**没有字段被改名、删除或改变语义**；`Config` schema 与 `resolveConfig()` 的实际取值与本文件第 3 节一致。
+
+**校验分两层实现，与第 4 节的两级划分对应但不是同一套机制。**
+
+- 类型与非空字段用 `@deepseek-ai/schemastery` 的 `Schema.object` 声明，默认值即第 3 节的默认值。schema 抛出的校验异常被 `resolveConfig()` 捕获并转为同形的诊断，因此坏配置表现为一条 `plugin.config-invalid` 日志，而不是未捕获异常。
+- 取值范围（`smtpPort` 1–65535、`maxBodyChars` 1000–1 000 000、`queueSize` 1–10000、`retryAttempts` 0–10、`retryBaseDelayMs` 100–60000、`maxDedupeEntries` 10–100000、`minTurnDurationMs` 0–3600000）以 `.min()` / `.max()` 声明在 schema 上，超范围即拒绝。
+- 「非空」与「含 `@`」这两类判断**不在 schema 内**，而在 `resolveConfig()` 中实现：`smtpHost`（非空、不含空白）、`smtpUser`（非空）、`smtpPasswordCredential`（非空且匹配 `CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/`）、`from`（非空且形如地址）、`to`（逐项校验、去重后仍需 ≥ 1 项）。
+
+**与第 4 节表逐条对照的结果：**
+
+| 第 4 节规则 | 实现 |
+| --- | --- |
+| `smtpSecure === true` 且端口 587 → 警告 | 实现，且**不修正**端口（`SECURITY.md` 第 3 节要求不静默修正） |
+| `smtpSecure === false` 且端口 465 → 警告 | 实现，同上 |
+| `to` 去重后为空 → 字段级失败 | 实现 |
+| 三个通知开关全关 → 警告 | 实现，仍可装载 |
+
+**`to` 为空数组时不会触发 schema 的 `.min(1)`。** 数组长度约束写在显式检查里而不是 schema 上，因为一条「去重后仍需 ≥ 1 项」的规则无法用 `.min()` 表达（`['a@b.com', 'A@B.COM']` 长度为 2 而去重后为 1）。`to` 在 schema 上的默认值是 `[]`，因此漏配 `to` 会走到同一条显式检查，得到 `to must contain at least one valid recipient address`，而不是一条 schema 类型错误。行为与第 4 节的「按字段级失败处理」一致。
+
+**第三条警告的判定条件**是 `!notifyCompleted && !notifyErrors && !notifyMaxTokens`，与第 4 节表中「`minTurnDurationMs > 0` 且三个开关全关」略有出入：实现只在三个开关全关时警告，不要求 `minTurnDurationMs > 0`。三个开关全关时，无论门槛取何值都不可能发出任何邮件，因此把门槛并入条件是更窄的判据而非不同的语义；此处记录以避免被读成静默偏离。
+
+**`enabled: false` 的短路位置**在 schema 校验之前：该分支直接返回一份字段全为默认值的 `ResolvedConfig`，不触碰任何必填字段，因此关闭插件不会被无关的必填字段错误阻塞（与第 4 节末段一致）。
+
+
+---
+
 ## 1. 配置载体与解析时机
 
 配置通过 DSH bundle 的 `cordis.patch.yml` 中的 mount 参数提供（`00_MASTER.md` §14）。插件在 `apply(ctx)` 时一次性读取并解析为 `ResolvedConfig`，插件的热重载或重新装载会重新解析。

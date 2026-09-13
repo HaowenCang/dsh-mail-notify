@@ -4,6 +4,15 @@
 
 **当前仓库尚无 `src/`、无 `package.json`、无 `tests/`。本文件描述 Phase 3 的工作，不描述已完成的实现。**
 
+> **Implementation note（Phase 3 补记，2026-09）。** P3.1–P3.7 已全部执行完毕，上文每一项「输出」均已产出。逐项结果、命令、退出码、测试数量与失败修复记录见 [`../PHASE3_REPORT.md`](../PHASE3_REPORT.md)。与此计划的偏离共三处，均为计划未预见的事实，逐项记录如下。
+>
+> 1. **测试运行器是 `node --test`，不是 Vitest。** 第 P3.6 节与本文件未指定运行器；实际采用 Node 内置测试运行器与 `node --test "tests/**/*.test.ts"`，不新增依赖。理由见 [`TEST_PLAN.md`](TEST_PLAN.md) 的补记。
+>
+> 2. **第 1 节「不引入除 Nodemailer 外的网络依赖」的检查方式**由「审查 `package.json` 的 `dependencies`」扩展为可执行断言：`tests/package/tarball.test.ts` 扫描归档内全部编译产物与相对导入，且 `dependencies` 中除 `nodemailer` 外没有其他条目。
+>
+> 3. **`src/runtime-adapter.ts` 的输出联合增加了 `tool-call` 与 `user-message` 两个变体。** 理由与取值路径见 [`ARCHITECTURE.md`](ARCHITECTURE.md) 的补记第 2、3 项。
+
+
 ---
 
 ## 0. 步骤间的依赖关系

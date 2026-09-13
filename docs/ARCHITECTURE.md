@@ -4,6 +4,21 @@
 
 本文件描述的是**待实现**的设计，不是已存在的代码。当前仓库没有任何 `src/` 目录。
 
+> **Implementation note（Phase 3 补记，2026-09）。** `src/` 现已存在，本文件描述的设计已按第 3 节逐模块落地。实现过程中出现的、本文件未预见的事实记录如下；这些是补记，不修改上文任何冻结条目。
+>
+> 1. **实际模块清单**在本文件第 3 节的 15 个模块之外增加两个：`src/credentials.ts`（凭据解析 seam，含 `getCredentialProvider` / `resolveSmtpPassword` / `describeCredential`）与 `src/transport.ts`（`MailTransport` 接口与 Nodemailer transport 工厂）。二者是第 3 节 `mailer.ts` 一行的职责拆分：`mailer.ts` 仍负责渲染与编排，凭据生命周期与运输构造各自独立成模块，以便在测试中替换而不触网。`src/debug-sink.ts` 是第 3 节 P3.4 所要求的 DebugSink，作为独立模块实现。
+>
+> 2. **`InternalEvent` 增加 `tool-call` 变体。** 第 3 节 `runtime-adapter.ts` 的输出清单只列了四个带 turn 的变体，但本文件第 4 节要求 `tool/call` 更新 `toolCallCount`，D007 的候选说明也保留了该计数。为满足该要求，适配器输出 `{ kind: 'tool-call', turn, step, timeMs }`，取值路径为 `event.data.turn` / `.step`（Phase 1 契约已确认两者存在）。这是补齐冻结设计内部一致性的推论，不是语义变更。
+>
+> 3. **`InternalEvent` 增加 `user-message` 变体，且它在 turn 守卫之前处理。** `user/message` 的 payload 是 `UserMessage` 本身，不含 `turn` 与 `step`（见 `PHASE1_RUNTIME_CONTRACT.md` 的 `SessionEventMap`）。因此它不能走「turn 缺失即降级为 `other`」的分支。运行时的实际顺序是 `user/message` 先于它所归属的 `turn/start` 到达，所以 handler 将文本暂存在 `Map<sessionId, {text, at}>` 中，待该会话的下一个 turn 建立时写入，并以 `PENDING_USER_TEXT_TTL_MS`（120 s）为界，避免把很久以前的 prompt 接到无关的新 turn 上。采集始终进行，仅渲染受 `includeUserPrompt` 控制（`CONFIG_SPEC.md` 第 6 节）。
+>
+> 4. **`turn-end` 的 `turnEndKind` 在适配器内完成窄化。** 第 3 节把它列为输出字段而非 detail；实现中 `detail` 与 `reasonDetail` 也在适配器内由 `completion.ts` 的纯函数提取（`aborted` 取 cause kind，`error` 取 code 与清洗后的 message）。`completion.ts` 仍是唯一实现分类与 detail 清洗的模块，适配器只负责取值路径。这一分工保持了不变量一：DSH 深路径知识不出 `runtime-adapter.ts`。
+>
+> 5. **`logger.ts` 的 `LoggerLike` 是结构化接口，不是 Cordis 导入。** `PluginLogger` 通过 `ctx.logger(name)` 得到的对象在结构上满足该接口，测试则传入记录器。这样日志 seam 不必为四个方法导入 DSH 包，同时保留本文件第 3 节为 `logger.ts` 规定的职责与禁止项。
+>
+> 6. **`apply()` 的返回值。** 生产路径返回 `undefined`（`index.ts` 不向外暴露服务）；当 `enabled: false` 或配置校验失败时同样返回 `undefined` 且不注册任何资源。集成测试通过第三个 `internals` 参数注入 sink、时钟与等待函数，该参数在生产调用中省略。
+
+
 ---
 
 ## 1. 架构目标与三条不变量
