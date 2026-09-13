@@ -393,9 +393,9 @@ breaking change，留待后续评估）；Phase 3 记录的「去重不跨进程
 | starting SHA | `99bef3220eada157f67d588db0fc5b94c8bdbe2a` |
 | fix commit | `680e33b` — `fix: deliver mail from production and resolve the credential per attempt` |
 | docs commit | `6af19d5` — `docs: complete phase 4 release candidate audit` |
-| final local SHA | `6af19d51afb6d41530c4d43f5bda8c71dcf751d6` |
-| remote SHA | `6af19d51afb6d41530c4d43f5bda8c71dcf751d6`（`git ls-remote origin refs/heads/main`） |
-| sync status | 一致 — `git rev-list --left-right --count HEAD...origin/main` 为 `0  0` |
+| docs 收尾 commit | `1b48cee` — 补齐本节 SHA 与缺陷计数一致性（随后本文件自身再做一次纯文档修订） |
+| final local SHA | `1b48cee1789fd0f092f441ff40ac0e88b8792267` + 本次报告文本修订 |
+| remote SHA | 与本地 HEAD 一致（`git ls-remote origin refs/heads/main`），`git rev-list --left-right --count HEAD...origin/main` 为 `0  0`，工作树 clean |
 
 提交内容：四个缺陷的修复与其回归测试、`PHASE4_REPORT.md`、`README.md` 状态与文档表更新、
 `00_MASTER.md` roadmap 更新。`cordis.patch.yml` 未纳入提交（已恢复为 HEAD 内容），归档产物 `.tgz`
