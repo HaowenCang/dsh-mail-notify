@@ -1,4 +1,4 @@
-# Phase 3 Report — dsh-mail-notify
+﻿# Phase 3 Report 鈥?dsh-mail-notify
 
 ## Status
 
@@ -8,7 +8,7 @@ Every Phase 3 objective is met and evidenced except one: a real SMTP delivery to
 server. No SMTP credential exists on this machine for this project, and the task expressly forbids
 asking the user for a password or writing one into a file, so that single item is deferred rather
 than failed. The conditions the task sets for accepting that deferral all hold, and are recorded in
-§8 below.
+搂8 below.
 
 ---
 
@@ -20,7 +20,7 @@ than failed. The conditions the task sets for accepting that deferral all hold, 
 | Starting branch | `main` |
 | Starting SHA | `123beb868b7ed173d3dfed4ea5bf2a428b0d815f` |
 | Working tree at start | clean; `main` equal to `origin/main` (`0 0` ahead/behind) |
-| Git history preserved | yes — no reset, no clean, no force push, no branch rewrite |
+| Git history preserved | yes 鈥?no reset, no clean, no force push, no branch rewrite |
 
 Baseline commands executed: `git status`, `git branch --show-current`, `git remote -v`,
 `git log --oneline -8`, `git rev-parse HEAD`, `git fetch origin`,
@@ -31,7 +31,7 @@ Baseline commands executed: `git status`, `git branch --show-current`, `git remo
 ## 2. Implementation
 
 The project was created from nothing (`src/`, `tests/`, `scripts/`, `package.json`,
-`tsconfig.json`, `cordis.patch.yml` did not exist) and built in the P3.1–P3.7 order the frozen plan
+`tsconfig.json`, `cordis.patch.yml` did not exist) and built in the P3.1鈥揚3.7 order the frozen plan
 prescribes, with verification run at each step.
 
 ### 2.1 Modules
@@ -57,10 +57,10 @@ prescribes, with verification run at each step.
 | `src/debug-sink.ts` | 113 | The network-free sink sharing the mailer's contract |
 | `src/logger.ts` | 145 | The single structured logging exit with its allow-list |
 
-Two modules were added beyond the frozen module list — `credentials.ts` and `transport.ts` — as a
+Two modules were added beyond the frozen module list 鈥?`credentials.ts` and `transport.ts` 鈥?as a
 split of the `mailer.ts` row's responsibility, so that the credential lifetime and the transport
 construction can each be replaced in tests without a socket. `debug-sink.ts` is the DebugSink the
-plan requires as a module. Recorded in `docs/ARCHITECTURE.md` and `docs/DECISIONS.md` (A1–A7).
+plan requires as a module. Recorded in `docs/ARCHITECTURE.md` and `docs/DECISIONS.md` (A1鈥揂7).
 
 ### 2.2 Supporting files
 
@@ -92,26 +92,26 @@ plan requires as a module. Recorded in `docs/ARCHITECTURE.md` and `docs/DECISION
 
 ---
 
-## 3. Design compliance — D001–D016
+## 3. Design compliance 鈥?D001鈥揇016
 
 | ID | Subject | Status | Evidence |
 | --- | --- | --- | --- |
 | D001 | Single `session/event` entry + runtime adapter | Implemented | `runtime-adapter.ts` is the only module reading `event.data`; ADP-06 asserts exactly two listeners are registered; ADP-05 asserts no DSH reference escapes |
-| D002 | `type === 'text'` whitelist | Implemented | `content.ts` `isTextBlock`; CNT-01…07 including reasoning-only and unknown-type cases |
-| D003 | Three-criterion subagent decision with strict comparison | Implemented | `toSessionFacts`; SES-01…07 including the `delegationDepth: 0` trap and id-format independence |
+| D002 | `type === 'text'` whitelist | Implemented | `content.ts` `isTextBlock`; CNT-01鈥?7 including reasoning-only and unknown-type cases |
+| D003 | Three-criterion subagent decision with strict comparison | Implemented | `toSessionFacts`; SES-01鈥?7 including the `delegationDepth: 0` trap and id-format independence |
 | D004 | Mid-turn lazy initialization, `null` duration | Implemented | One `stateOf` accessor; TRN-03, DUR-01, and E2E-02 assert `null` rather than `0` |
-| D005 | Explicit tool error double criterion, no shell exit codes | Implemented | Adapter folds both criteria; TOOL-01…05, including a body containing `[exit code: 1]` |
-| D006 | `usage` as raw telemetry only | Implemented | `collectUsage` copies finite counters; USE-01…06; no arithmetic anywhere in the module |
-| D007 | `NotificationCandidate` schema v1 | Implemented | `createCandidate`; CAND-01…04; `sawTurnStart` and `userText` added as optional fields, recorded in `DECISIONS.md` A4 |
-| D008 | Bounded in-process dedupe | Implemented | `DedupeCache`; DED-01…04 including the suppressed-turn case; mark placement asserted end to end |
-| D009 | Bounded queue, concurrency 1, reject newest | Implemented | `createMailQueue`; QUE-01…07, E2E-08, LIFE-06c |
-| D010 | Nodemailer + per-operation credential resolution | Implemented | SEC-01…07; `resolve` called once per send and twice across two sends |
-| D011 | No-visible-text suppression, no switch | Implemented | `decideNotification` step 4; SUP-01…04; E2E-06 |
-| D012 | Privacy defaults | Implemented | Schema defaults asserted by PRIV-08; negative sentinel assertions in PRIV-01…07 |
+| D005 | Explicit tool error double criterion, no shell exit codes | Implemented | Adapter folds both criteria; TOOL-01鈥?5, including a body containing `[exit code: 1]` |
+| D006 | `usage` as raw telemetry only | Implemented | `collectUsage` copies finite counters; USE-01鈥?6; no arithmetic anywhere in the module |
+| D007 | `NotificationCandidate` schema v1 | Implemented | `createCandidate`; CAND-01鈥?4; `sawTurnStart` and `userText` added as optional fields, recorded in `DECISIONS.md` A4 |
+| D008 | Bounded in-process dedupe | Implemented | `DedupeCache`; DED-01鈥?4 including the suppressed-turn case; mark placement asserted end to end |
+| D009 | Bounded queue, concurrency 1, reject newest | Implemented | `createMailQueue`; QUE-01鈥?7, E2E-08, LIFE-06c |
+| D010 | Nodemailer + per-operation credential resolution | Implemented | SEC-01鈥?7; `resolve` called once per send and twice across two sends |
+| D011 | No-visible-text suppression, no switch | Implemented | `decideNotification` step 4; SUP-01鈥?4; E2E-06 |
+| D012 | Privacy defaults | Implemented | Schema defaults asserted by PRIV-08; negative sentinel assertions in PRIV-01鈥?7 |
 | D013 | `schemaVersion` literal `1` | Implemented | Declared as the literal type; CAND-01 |
-| D014 | Truncation with a footer marker | Implemented | `truncateVisibleText` by code point; TRUNC-01…05; marker suppressed with `includeFooter: false` while `truncated` stays observable |
+| D014 | Truncation with a footer marker | Implemented | `truncateVisibleText` by code point; TRUNC-01鈥?5; marker suppressed with `includeFooter: false` while `truncated` stays observable |
 | D015 | Unknown duration never suppresses | Implemented | DUR-01, DUR-01b, and a runtime probe with `minTurnDurationMs: 60000` |
-| D016 | Document conflict adjudication | Implemented | All adjudications honoured; addendum A1–A7 records Phase 3 findings without rewriting Phase 1/2 evidence |
+| D016 | Document conflict adjudication | Implemented | All adjudications honoured; addendum A1鈥揂7 records Phase 3 findings without rewriting Phase 1/2 evidence |
 
 **Deviations: none.** Every item is implemented as frozen. The seven addendum entries are
 completions of the frozen design's own internal consistency or records of newly observed facts, not
@@ -131,24 +131,24 @@ skipped 0
 todo 0
 ```
 
-Command: `npm test` → `node --test "tests/**/*.test.ts"`. Runner: Node's built-in test runner with
-native TypeScript execution — no test dependency was added. Rationale recorded in
+Command: `npm test` 鈫?`node --test "tests/**/*.test.ts"`. Runner: Node's built-in test runner with
+native TypeScript execution 鈥?no test dependency was added. Rationale recorded in
 `docs/TEST_PLAN.md`.
 
 | Suite | File | Focus |
 | --- | --- | --- |
-| L1 unit | `tests/unit/content.test.ts` | CNT-01…07, TRUNC-01…05 |
-| L1 unit | `tests/unit/normalize.test.ts` | NORM-01…05, USE-03/06, dropped-path reporting |
-| L1 unit | `tests/unit/completion.test.ts` | TRN-04…09, detail cleaning and truncation |
-| L1 unit | `tests/unit/subject.test.ts` | PRIV-01…07, TRN-06, marker behaviour |
-| L1 unit | `tests/unit/turn-state.test.ts` | TRN-01…03/10/11, DUR, CAND-01…04, USE-01…06, LIFE-01…06 |
-| L1 unit | `tests/unit/retry.test.ts` | RET-01…10 classification and backoff |
+| L1 unit | `tests/unit/content.test.ts` | CNT-01鈥?7, TRUNC-01鈥?5 |
+| L1 unit | `tests/unit/normalize.test.ts` | NORM-01鈥?5, USE-03/06, dropped-path reporting |
+| L1 unit | `tests/unit/completion.test.ts` | TRN-04鈥?9, detail cleaning and truncation |
+| L1 unit | `tests/unit/subject.test.ts` | PRIV-01鈥?7, TRN-06, marker behaviour |
+| L1 unit | `tests/unit/turn-state.test.ts` | TRN-01鈥?3/10/11, DUR, CAND-01鈥?4, USE-01鈥?6, LIFE-01鈥?6 |
+| L1 unit | `tests/unit/retry.test.ts` | RET-01鈥?0 classification and backoff |
 | L1 unit | `tests/unit/config.test.ts` | PRIV-08, defaults, field and cross-field validation |
-| L1 unit | `tests/unit/notifier.test.ts` | DED-01…04, SUP-01…06 including the fixed decision order |
-| L3 adapter | `tests/adapter/runtime-adapter.test.ts` | SES-01…07, ADP-01…06, TOOL-01…05 |
-| L2/L4/L5 | `tests/integration/queue.test.ts` | QUE-01…07, RET-09/11 |
-| L4 | `tests/integration/mailer.test.ts` | SEC-01…07, RET-01…08 |
-| L5 | `tests/integration/lifecycle.test.ts` | E2E-01…08, LIFE-01…07, ADP-06, SUP-05, PRIV-01…07 |
+| L1 unit | `tests/unit/notifier.test.ts` | DED-01鈥?4, SUP-01鈥?6 including the fixed decision order |
+| L3 adapter | `tests/adapter/runtime-adapter.test.ts` | SES-01鈥?7, ADP-01鈥?6, TOOL-01鈥?5 |
+| L2/L4/L5 | `tests/integration/queue.test.ts` | QUE-01鈥?7, RET-09/11 |
+| L4 | `tests/integration/mailer.test.ts` | SEC-01鈥?7, RET-01鈥?8 |
+| L5 | `tests/integration/lifecycle.test.ts` | E2E-01鈥?8, LIFE-01鈥?7, ADP-06, SUP-05, PRIV-01鈥?7 |
 | L6 | `tests/package/tarball.test.ts` | PKG-01, PKG-02, archive integrity and loadability |
 
 No case is skipped. `tests/fixtures/runtime-shapes.ts` builds its payloads from the field paths and
@@ -226,15 +226,15 @@ phase, and `dsh plugin --profile web list` reports the same six packages.
 | 2 | The Cordis plugin loads | Pass | `plugin.ready` emitted with the resolved configuration, from the compiled `lib/` |
 | 3 | `enabled:false` registers no listener | Pass | `plugin.disabled {"reason":"enabled is false"}`; the run completed normally and registered nothing |
 | 4 | `enabled:true` registers and works | Pass | Same profile with a valid config produced `plugin.ready` |
-| 5 | A real top-level turn produces a candidate | Pass | `candidate.produced {"schemaVersion":1,"sessionId":"session-…","turn":1,"status":"completed-clean","turnEndKind":"completed","visibleTextLength":17,"explicitToolErrorCount":0,"telemetryComplete":true,"durationMs":2562,"provider":"command-goat","model":"deepseek/deepseek-v4.1-flash","sawTurnStart":true,"normalizeDropped":0}` followed by `notification.enqueued` and `notification.outcome {"attempts":1,"ok":true}` |
+| 5 | A real top-level turn produces a candidate | Pass | `candidate.produced {"schemaVersion":1,"sessionId":"session-鈥?,"turn":1,"status":"completed-clean","turnEndKind":"completed","visibleTextLength":17,"explicitToolErrorCount":0,"telemetryComplete":true,"durationMs":2562,"provider":"command-goat","model":"deepseek/deepseek-v4.1-flash","sawTurnStart":true,"normalizeDropped":0}` followed by `notification.enqueued` and `notification.outcome {"attempts":1,"ok":true}` |
 | 6 | Subagents produce no candidate | Pass | A real delegation through the `subagent` tool produced exactly one candidate, for the parent session; the subagent session produced none |
 | 7 | Reasoning stays out of the notification content | Pass | The candidates carry only lengths and metadata; reasoning is excluded at extraction. Asserted by CNT-02/03, PRIV-01, and the live candidate above carries no text field |
-| 8 | One turn does not enqueue twice | Pass with a recorded nuance | Unit and integration tests drive a real event bus and show the second settlement suppressed. In the live process a replayed duplicate `turn/end` rebuilds empty state and is suppressed for `no-visible-text` first, so the `duplicate` branch is defensive in practice. Recorded in `docs/DSH_INTEGRATION.md` §4 and `docs/DECISIONS.md` A3 |
+| 8 | One turn does not enqueue twice | Pass with a recorded nuance | Unit and integration tests drive a real event bus and show the second settlement suppressed. In the live process a replayed duplicate `turn/end` rebuilds empty state and is suppressed for `no-visible-text` first, so the `duplicate` branch is defensive in practice. Recorded in `docs/DSH_INTEGRATION.md` 搂4 and `docs/DECISIONS.md` A3 |
 | 9 | Unload does not break DSH | Pass | A development injection was loaded into the live `web` process and removed again: the loader entry was disposed, the profile junction deleted, the registry cleared, and this session kept running throughout |
 | 10 | An invalid configuration refuses to mount | Pass | `plugin.config-invalid` named all five failing fields: `smtpHost`, `smtpUser`, `smtpPasswordCredential`, `from`, and `to` |
 
-**Observability note.** The `dsh` command line registers no Cordis log exporter — logs live only in
-a 1000-record in-memory ring — so a plugin's own structured lines are invisible from outside the
+**Observability note.** The `dsh` command line registers no Cordis log exporter 鈥?logs live only in
+a 1000-record in-memory ring 鈥?so a plugin's own structured lines are invisible from outside the
 process. `scripts/dev-boot-probe.mjs` was written for this: it calls the launcher's own `runProfile`
 and attaches an exporter by wrapping `LoggerService.prototype.exporter`. No harness file was
 modified. This is why the runtime evidence above exists at all.
@@ -243,7 +243,7 @@ modified. This is why the runtime evidence above exists at all.
 
 ## 8. SMTP smoke
 
-`DEFERRED — no external credential`
+`DEFERRED 鈥?no external credential`
 
 No SMTP credential for this project exists on this machine: `$DSH_HOME/.credentials.yaml` holds
 `TAVILY_API_KEY`, `DEEPSEEK_API_KEY`, `COMMAND_GOAT_API_KEY`, and `COMMANDCODE_API_KEY`, and no
@@ -254,10 +254,10 @@ What was verified instead, all with real execution:
 
 | Condition | Result |
 | --- | --- |
-| Stub-SMTP tests pass | Yes — `tests/integration/mailer.test.ts`, 23 tests, no network. The stub transport is the real code path with only the socket replaced |
-| The credential path is really integrated | Yes — `scripts/smtp-smoke-test.ts` loaded the genuine `@deepseek-ai/dsh-credentials-local` provider, reported `credential is configured (source=file, writable=true)` for a reference that exists in the store, and exited 0 at the dry-run gate. With a reference that does not exist it reported `the credential reference "DSH_MAIL_SMTP_PASSWORD" is not configured` and exited 2 |
-| The smoke script runs | Yes — `npm run smoke` is the documented entry, it parses configuration from the same patch file the plugin reads, refuses to send without `--yes`, prints no secret, and exits cleanly |
-| Everything but real delivery passed | Yes — §3, §4, §5, §6 and §7 above |
+| Stub-SMTP tests pass | Yes 鈥?`tests/integration/mailer.test.ts`, 23 tests, no network. The stub transport is the real code path with only the socket replaced |
+| The credential path is really integrated | Yes 鈥?`scripts/smtp-smoke-test.ts` loaded the genuine `@deepseek-ai/dsh-credentials-local` provider, reported `credential is configured (source=file, writable=true)` for a reference that exists in the store, and exited 0 at the dry-run gate. With a reference that does not exist it reported `the credential reference "DSH_MAIL_SMTP_PASSWORD" is not configured` and exited 2 |
+| The smoke script runs | Yes 鈥?`npm run smoke` is the documented entry, it parses configuration from the same patch file the plugin reads, refuses to send without `--yes`, prints no secret, and exits cleanly |
+| Everything but real delivery passed | Yes 鈥?搂3, 搂4, 搂5, 搂6 and 搂7 above |
 
 The `--yes` send path was never executed, because executing it requires a host and a credential that
 do not exist here. No claim of a successful delivery is made.
@@ -295,7 +295,7 @@ artefact in the repository root. Neither affects a normal `dsh plugin` install.
    the frozen classification table. Triggering them live depends on model and provider behaviour.
 4. **`session/disposed` is rarely reached,** because the harness keeps sessions loaded for the life
    of the process. Per-turn cleanup is the dominant release path.
-5. **The `duplicate` suppression branch is defensive in practice,** for the reason recorded in §7
+5. **The `duplicate` suppression branch is defensive in practice,** for the reason recorded in 搂7
    row 8.
 6. **Real SMTP delivery is unverified** on this machine, for want of a credential.
 7. **Token counters are reported, never interpreted.** Their semantics remain unconfirmed, and the
@@ -310,28 +310,46 @@ artefact in the repository root. Neither affects a normal `dsh plugin` install.
 
 ## 11. Git synchronization
 
-Implementation HEAD before the final report commit, and the commit structure:
-
-| Commit | Subject |
-| --- | --- |
-| 1 | `feat: scaffold dsh-mail-notify plugin project` — `package.json`, `tsconfig.json`, `tsconfig.test.json`, `cordis.patch.yml`, `.env.example` |
-| 2 | `feat: implement notification candidate pipeline` — the pure core, the runtime adapter, the handler, the queue, the debug sink, the logger, the plugin entry |
-| 3 | `feat: add smtp notification delivery` — the credential seam, the transport, the mailer, the smoke script |
-| 4 | `test: add phase 3 verification suite` — fixtures, support helpers, and all four test levels |
-| 5 | `docs: complete phase 3 implementation` — README, the new specification documents, the implementation notes, this report, and the development probe |
+| Commit | SHA | Subject |
+| --- | --- | --- |
+| 1 | `da9f05f` | `feat: scaffold dsh-mail-notify plugin project` 鈥?`package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.test.json`, `cordis.patch.yml`, `.env.example` |
+| 2 | `058e186` | `feat: implement notification candidate pipeline` 鈥?the pure core, the runtime adapter, the handler, the queue, the notifier, the logger, the plugin entry |
+| 3 | `ef691ea` | `feat: add smtp notification delivery` 鈥?the credential seam, the transport, the mailer, the debug sink, the smoke script |
+| 4 | `95df5f1` | `test: add phase 3 verification suite` 鈥?fixtures, support helpers, and all four test levels |
+| 5 | `06068c8` | `docs: complete phase 3 implementation` 鈥?README, the three new specification documents, the implementation notes, this report, the development probe, and the archive audit |
 
 Each commit was preceded by `git status`, `git diff --check`, and a review of `git diff`, and staged
-by explicit path rather than `git add .`. Commit contents were checked for credentials, API keys,
-SMTP passwords, real `.env` files, and unrelated files.
+by explicit path rather than `git add .`. Before committing, the working tree was searched for
+credential-shaped literals (password and API-key assignments, `sk-` prefixes, bearer tokens): no
+match. No `.env` file exists in the tree, `lib/` and `*.tgz` are ignored, and the only
+credential-shaped strings anywhere are the synthetic sentinels in the test fixtures.
 
-Final local SHA, remote SHA, and the `local == remote` verification are recorded at the end of this
-section once the push has been performed; the values are taken from `git rev-parse HEAD` and
-`git ls-remote origin refs/heads/main` rather than asserted from memory.
+The Phase 3 implementation span and its push:
 
 ```text
-Implementation HEAD before final report:  see the table above (commit 4)
-Final remote synchronization:             verified via git ls-remote
+Starting SHA:                              123beb868b7ed173d3dfed4ea5bf2a428b0d815f
+Implementation HEAD before this report:    06068c80e4d7455dc53eba0e18dd6ee23aef6835
+Remote:                                    https://github.com/HaowenCang/dsh-mail-notify
+Branch:                                    main
+Push:                                      git push origin main -> 123beb8..06068c8, exit 0
 ```
 
-The final documentation commit does not record its own SHA — the reference would be self-referential
-and unverifiable at the time of writing.
+Verification after that push, from commands rather than from memory:
+
+```text
+git rev-parse HEAD
+  06068c80e4d7455dc53eba0e18dd6ee23aef6835
+git ls-remote origin refs/heads/main
+  06068c80e4d7455dc53eba0e18dd6ee23aef6835  refs/heads/main
+git rev-list --left-right --count origin/main...HEAD
+  0   0
+```
+
+`local HEAD == remote HEAD`, the branch is `main`, the working tree is clean, and no force push was
+used at any point. **GitHub sync: VERIFIED.**
+
+This report was revised once after that verification, to replace the placeholder commit table with
+the SHAs the commits actually received. That revision is a documentation-only follow-up commit; the
+remote files were re-checked against the local HEAD after it, with the same three commands, and the
+result is recorded in the final answer to the user rather than here. A report cannot contain its own
+commit's SHA, and the earlier `06068c8` remains the implementation HEAD it describes.
