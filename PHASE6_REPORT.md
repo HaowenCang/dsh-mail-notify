@@ -437,13 +437,29 @@ DSH uninstall     → 依赖与 dsh.profile.bundles 条目同时移除，compose
 
 ```text
 starting SHA    eebe8a9c4fee2f807727a7d092ad61f38a894ebf
-v0.1.0 tag      0d113e70406330c373eb0a1fef6cc8e78a837c30（未移动、未修改）
-final local     （见 §18 提交后回填）
-remote SHA      （见 §18 提交后回填）
-sync status     （见 §18）
+final local     555eef4cb9ffcb101b2b797f82efe63452039c56
+remote SHA      555eef4cb9ffcb101b2b797f82efe63452039c56
+sync status     git rev-list --left-right --count origin/main...HEAD = 0	0（已同步）
+v0.1.0 tag      0d113e70406330c373eb0a1fef6cc8e78a837c30（annotated tag 对象；指向的 commit 仍为 02191a43894f7cf9323641a1d117ae838c4a0c88）
+working tree    clean
 ```
 
-提交按代码修复、测试、文档三步分离；未执行 `reset --hard`、`clean`、`rebase`、force push，未移动或重建任何 tag，未执行 `npm publish`、`git tag v0.1.1`、`git push --tags`、GitHub Release。
+提交按代码修复、测试、文档三步分离：
+
+```text
+65834a5  fix: aggregate telemetry across an agent turn
+046b90d  test: cover multi-step turn telemetry
+555eef4  docs: document v0.1.1 telemetry semantics
+```
+
+release candidate 归档：
+
+```text
+dsh-mail-notify-0.1.1.tgz   89 996 bytes
+sha256                      f867733873f274c195fad66ccd3a656b7edb83a1a2362f5f8601af3bde58375f
+```
+
+未执行 `reset --hard`、`clean`、`rebase`、force push，未移动或重建任何 tag，未执行 `npm publish`、`git tag v0.1.1`、`git push --tags`、GitHub Release。`git status --porcelain` 在三次提交后为空。
 
 ---
 
