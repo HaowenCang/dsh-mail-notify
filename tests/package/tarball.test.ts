@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -190,21 +190,33 @@ test('every relative import in the compiled output resolves inside the archive',
 })
 
 test('the compiled entry point loads and exports the Cordis plugin shape', async () => {
-  // The archive is extracted to a temporary directory, but its peer dependencies
-  // resolve from this repository's own install — exactly the arrangement the real
-  // profile creates with its `link:` dependency. What this proves is that the
-  // emitted ESM is valid and exports what the loader reads.
-  const moduleUrl = pathToFileURL(join(extracted, 'lib', 'index.js')).href
-  const loaded = (await import(moduleUrl)) as {
-    name?: unknown
-    inject?: unknown
-    apply?: unknown
-    Config?: unknown
+  // The extracted archive is given a `node_modules` link to this repository's
+  // install, which is the arrangement a real profile creates. It is needed for
+  // the runtime dependency as well as the peers: the entry reaches the mailer
+  // and therefore `nodemailer`, so an install without it could not load at all.
+  // What this proves is that the emitted ESM is valid and exports what the
+  // loader reads.
+  const link = join(extracted, 'node_modules')
+  let created = false
+  if (!existsSync(link)) {
+    symlinkSync(join(root, 'node_modules'), link, 'junction')
+    created = true
   }
-  assert.equal(loaded.name, 'dsh-mail-notify')
-  assert.deepEqual(loaded.inject, [], 'no service is a hard dependency')
-  assert.equal(typeof loaded.apply, 'function')
-  assert.equal(typeof loaded.Config, 'function', 'the schema is exported for the loader to validate against')
+  try {
+    const moduleUrl = pathToFileURL(join(extracted, 'lib', 'index.js')).href
+    const loaded = (await import(moduleUrl)) as {
+      name?: unknown
+      inject?: unknown
+      apply?: unknown
+      Config?: unknown
+    }
+    assert.equal(loaded.name, 'dsh-mail-notify')
+    assert.deepEqual(loaded.inject, [], 'no service is a hard dependency')
+    assert.equal(typeof loaded.apply, 'function')
+    assert.equal(typeof loaded.Config, 'function', 'the schema is exported for the loader to validate against')
+  } finally {
+    if (created) rmSync(link, { recursive: true, force: true })
+  }
 })
 
 test('PKG-03 the packed archive can be added to a profile without touching core configuration', () => {

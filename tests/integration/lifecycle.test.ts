@@ -827,14 +827,14 @@ test('the switchless termination kinds produce nothing even with every switch on
 })
 
 test('the debug sink records safe summaries and never the visible text', async () => {
-  const harness = await mount({}, { logBufferSize: 2000 })
+  const harness = await mount({}, { logBufferSize: 2000, debugSink: true })
   const handle = harness.handle
   assert.ok(handle !== undefined)
   emit(harness.ctx, rootSession(), healthyTurnChain(1, 'a distinctive answer body'))
   await handle.queue.settle()
 
   const debugSink = handle.debugSink
-  assert.ok(debugSink !== undefined, 'the default sink in the absence of a seam is the debug sink')
+  assert.ok(debugSink !== undefined, 'requesting the debug sink is what selects it')
   const records = debugSink.records()
   assert.equal(records.length, 1)
   const record = records[0]
@@ -845,6 +845,36 @@ test('the debug sink records safe summaries and never the visible text', async (
   assert.equal(record.durationMs !== null, true)
   assert.ok(!JSON.stringify(record).includes('a distinctive answer body'), 'the sink records lengths, not text')
   assert.ok(!handle.logger.render().includes('a distinctive answer body'), 'and neither does the log')
+})
+
+test('the production sink is the mailer, so a delivered turn really resolves a credential and sends', async () => {
+  // Regression: the default sink was the debug sink, which answers `{ok: true}`
+  // without any I/O, so a mounted plugin reported success while never sending.
+  // With no `sink` seam the mailer must be what the queue drives.
+  const sent: { from: string; to: readonly string[]; subject: string; text: string }[] = []
+  const harness = await mount(
+    {},
+    {
+      transportFactory: () => ({
+        sendMail: (message) => {
+          sent.push(message)
+          return Promise.resolve({ accepted: [...message.to] })
+        },
+      }),
+    },
+  )
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+  assert.equal(handle.debugSink, undefined, 'the default sink is not the debug sink')
+
+  emit(harness.ctx, rootSession(), healthyTurnChain(1, 'a distinctive answer body'))
+  await handle.queue.settle()
+
+  assert.equal(sent.length, 1, 'exactly one message reached the transport')
+  assert.equal(harness.credentials.resolveCalls.length, 1, 'the credential was resolved for the delivery')
+  assert.deepEqual(sent[0]?.to, ['recipient@example.com'], 'the configured recipient reached the envelope')
+  assert.match(sent[0]?.subject ?? '', /^\[DSH\] Task completed/, 'the subject carries the rendered status')
+  assert.ok(sent[0]?.text.includes('a distinctive answer body'), 'the visible text is what the mail body carries')
 })
 
 test('a truncated body is marked as truncated on the job', async () => {

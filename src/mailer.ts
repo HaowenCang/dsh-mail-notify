@@ -17,6 +17,7 @@
 
 import { resolveSmtpPassword, type CredentialProviderLike, type ContextServices } from './credentials.ts'
 import { getCredentialProvider } from './credentials.ts'
+import { truncateVisibleText } from './content.ts'
 import type { PluginLogger } from './logger.ts'
 import { classifyError, permanentFailure } from './retry.ts'
 import { renderMail } from './subject.ts'
@@ -32,6 +33,15 @@ export interface MailerOptions {
   transportFactory?: TransportFactory
   /** Credential service override; tests inject a fake without a context. */
   credentialProvider?: CredentialProviderLike | undefined
+  /**
+   * Late credential lookup, used when no provider is bound.
+   *
+   * Reading the service once here — at `apply()` — is early: activation order
+   * gives a plugin no guarantee that a service mounted later in the same tree is
+   * published yet, and an early `undefined` would disarm every later send. The
+   * production assembly therefore passes the lookup itself.
+   */
+  credentialProviderResolver?: () => CredentialProviderLike | undefined
 }
 
 /** Maximum characters of a failure message that reach a log line. */
@@ -62,15 +72,25 @@ function oneLine(value: string): string {
 export function createMailer(options: MailerOptions): MailSink {
   const transportFactory = options.transportFactory ?? createSmtpTransport
   const { config, logger } = options
-  // The provider is resolved once because it is a service handle; the *value*
-  // it returns is resolved inside every attempt below and never retained.
-  const provider =
+  // A bound provider is what tests use. Otherwise the service is looked up on
+  // every attempt rather than captured now: it is a service *handle*, while the
+  // value behind the reference is resolved per attempt and never retained.
+  const resolveProvider =
     'credentialProvider' in options
-      ? options.credentialProvider
-      : getCredentialProvider(options.ctx)
+      ? () => options.credentialProvider
+      : (options.credentialProviderResolver ?? (() => getCredentialProvider(options.ctx)))
 
   return async function send(job: MailJob): Promise<SendResult> {
-    const rendered = renderMail({ candidate: job.candidate, render: config.render, truncated: job.truncated })
+    const provider = resolveProvider()
+    // The cap is applied here, once, and its own answer is what marks the job:
+    // rendering the full text while claiming truncation would let an unbounded
+    // model answer through under a marker that says it was bounded.
+    const bounded = truncateVisibleText(job.candidate.visibleText, config.render.maxBodyChars)
+    const rendered = renderMail({
+      candidate: { ...job.candidate, visibleText: bounded.text },
+      render: config.render,
+      truncated: bounded.truncated,
+    })
 
     logger.debug('mail.render', {
       sessionId: job.candidate.sessionId,
@@ -79,7 +99,7 @@ export function createMailer(options: MailerOptions): MailSink {
       subjectLength: Array.from(rendered.subject).length,
       bodyChars: rendered.bodyTextLength,
       recipientCount: job.to.length,
-      truncated: job.truncated,
+      truncated: bounded.truncated,
     })
 
     const credential = await resolveSmtpPassword(provider, config.smtp.smtpPasswordCredential)

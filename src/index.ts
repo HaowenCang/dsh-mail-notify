@@ -24,13 +24,16 @@ import type { Context } from '@deepseek-ai/cordis'
 // this plugin touches a DSH type outside `runtime-adapter.ts`.
 import type {} from '@deepseek-ai/dsh-session'
 import { Config, resolveConfig, type ConfigValue } from './config.ts'
+import { getCredentialProvider } from './credentials.ts'
 import { createDebugSink, type DebugSink } from './debug-sink.ts'
 import { createSessionHandlers, type SessionHandlers } from './event-handler.ts'
 import { createLogger, type PluginLogger } from './logger.ts'
+import { createMailer } from './mailer.ts'
 import { DedupeCache } from './notifier.ts'
 import { createMailQueue, defaultSleep, type MailQueue } from './queue.ts'
 import type { SessionEventLike, SessionLike } from './runtime-adapter.ts'
 import type { MailSink, ResolvedConfig } from './types.ts'
+import type { TransportFactory } from './transport.ts'
 
 /** Plugin display name; also the logger name and the patch row's `id`. */
 export const name = 'dsh-mail-notify'
@@ -48,8 +51,23 @@ export { Config }
 
 /** Test seams; production callers omit the argument entirely. */
 export interface ApplyInternals {
-  /** Replaces the transport factory; used by integration tests. */
+  /** Replaces the whole sink; used by integration tests. */
   sink?: MailSink
+  /**
+   * Replaces the SMTP transport below the mailer.
+   *
+   * The default sink is the mailer, so this is the seam that keeps the suite
+   * offline while still exercising the real render, credential, and classify
+   * path; `sink` replaces that path wholesale.
+   */
+  transportFactory?: TransportFactory
+  /**
+   * Forces the network-free debug sink as the default sink.
+   *
+   * Only the debug sink's own test uses this: production must deliver mail, so
+   * the fallback below is the mailer.
+   */
+  debugSink?: boolean
   /** Replaces the clock. */
   now?: () => number
   /** Replaces the backoff wait. */
@@ -108,8 +126,24 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
 
   for (const warning of warnings) logger.warn('plugin.config-warning', { warning })
 
-  const debugSink = internals?.sink === undefined ? createDebugSink(logger) : undefined
-  const sink: MailSink = internals?.sink ?? (debugSink as DebugSink).sink
+  // The production path is the mailer: an injected sink replaces it wholesale,
+  // and `debugSink` forces the network-free double for the suite. Anything else
+  // must really deliver, because a sink that only answers `{ok: true}` would
+  // make an unmounted mail path indistinguishable from a delivered message.
+  const debugSink = internals?.sink === undefined && internals?.debugSink === true ? createDebugSink(logger) : undefined
+  const sink: MailSink =
+    internals?.sink ??
+    (debugSink?.sink ??
+      createMailer({
+        ctx,
+        config,
+        logger,
+        // Passed as a lookup rather than a captured provider: at this point in
+        // activation the credential service may not be published yet, and an
+        // early `undefined` would disarm every later send.
+        credentialProviderResolver: () => getCredentialProvider(ctx),
+        ...(internals?.transportFactory !== undefined ? { transportFactory: internals.transportFactory } : {}),
+      }))
 
   const queue = createMailQueue({
     size: config.queueSize,

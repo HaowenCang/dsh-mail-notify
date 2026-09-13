@@ -109,6 +109,69 @@ test('SEC-01 a successful send reports ok', async () => {
   assert.ok(transport.sent[0]?.text.includes('the final answer'))
 })
 
+test('SEC-08 the rendered body honours maxBodyChars and says that it was cut', async () => {
+  // Regression: the cap was only measured, never applied, so the whole model
+  // answer travelled inside a message whose footer still claimed truncation.
+  const credentials = new FakeCredentials()
+  const transport = fakeTransport()
+  const sink = createMailer({
+    ctx: { get: () => undefined },
+    config: testConfig({ maxBodyChars: 1000 }),
+    logger: createLogger(),
+    credentialProvider: credentials,
+    transportFactory: transport.factory,
+  })
+
+  const oversized = 'x'.repeat(5000)
+  const result = await sink({
+    candidate: testCandidate({ visibleText: oversized, visibleTextLength: oversized.length }),
+    to: ['recipient@example.com'],
+    truncated: false,
+  })
+
+  assert.deepEqual(result, { ok: true })
+  const text = transport.sent[0]?.text ?? ''
+  assert.ok(text.includes('[Output truncated by dsh-mail-notify]'), 'the message states that it was cut')
+  assert.ok(text.includes('x'.repeat(1000)), 'the body keeps exactly the capped answer text')
+  assert.ok(!text.includes('x'.repeat(1001)), 'not one character beyond the cap survives')
+  assert.ok(!text.includes(oversized), 'the full answer never reaches the transport')
+})
+
+test('SEC-09 the credential service is looked up per attempt, not fixed at construction', async () => {
+  // Regression: the service was read once when the mailer was built, which is
+  // `apply()` time. A profile whose credentials service is published later in the
+  // same activation — the real order — handed the plugin `undefined`, and every
+  // later send then failed as "no Credential service" although one was mounted.
+  const credentials = new FakeCredentials()
+  const transport = fakeTransport()
+  let published: FakeCredentials | undefined
+  let lookups = 0
+  const sink = createMailer({
+    ctx: { get: () => undefined },
+    config: testConfig(),
+    logger: createLogger(),
+    transportFactory: transport.factory,
+    credentialProviderResolver: () => {
+      lookups += 1
+      return published
+    },
+  })
+
+  // Before the service exists, the failure is permanent and names the reference.
+  const early = await sink(sentinelJob())
+  assert.equal(early.ok, false)
+  assert.equal(early.ok === false ? early.category : undefined, 'credential-missing')
+  assert.equal(lookups, 1, 'the lookup happens on the attempt, not at construction')
+
+  // The service is published; the very next send must resolve through it.
+  published = credentials
+  const late = await sink(sentinelJob())
+  assert.deepEqual(late, { ok: true })
+  assert.equal(lookups, 2, 'each attempt looks the service up again')
+  assert.equal(credentials.resolveCalls.length, 1, 'the value itself is resolved through the service')
+  assert.equal(transport.sent.length, 1)
+})
+
 test('SEC-02 the credential is resolved once per operation, never cached', async () => {
   const credentials = new FakeCredentials()
   const transport = fakeTransport()
