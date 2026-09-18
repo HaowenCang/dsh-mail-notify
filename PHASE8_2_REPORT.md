@@ -140,7 +140,7 @@ origin/main...HEAD = 0 / 13
 
 ## Git
 
-单次提交 `docs: reconcile v0.2.0 rc decisions`，已推送至 `origin/feat/v0.2.0-human-attention`。未合并 `main`、未发布、未创建 `v0.2.0` tag。
+内容提交 `docs: reconcile v0.2.0 rc decisions` = `5af8d91d36d9b5ed3c18a1f0088204a73f7ef3e8`，已推送至 `origin/feat/v0.2.0-human-attention`。随后一次仅修改本报告（填入上列 SHA）的收尾提交将二者对齐。未合并 `main`、未发布、未创建 `v0.2.0` tag。
 
 ## RC status
 
