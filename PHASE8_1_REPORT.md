@@ -378,7 +378,7 @@ Phase 8 记录过一个理论性担忧：fork 出的会话也携带 `parentSessi
 | 生产依赖审计 | `npm audit --omit=dev` | **0 vulnerabilities** |
 | 全新安装 | 见 §10 | PASS |
 
-测试计数：v0.1.1 的 336 项全部保留；Phase 8 结束时的 `npm test` 记录为 405 项；本阶段新增 4 项，达到 **409** 项。可核验的增量是 `git diff fb3ca5d..HEAD -- tests` 的 `2 files changed, 52 insertions(+), 9 deletions(-)`：`tests/unit/config.test.ts` 的一项拆为两项（净 +1）、`tests/unit/human-attention.test.ts` 新增 `HAT-11e`（+1）、`tests/integration/credential-contract.test.ts` 新增三项（+3），合计 +5 项减去 `human-attention.test.ts` 中被改写而非新增的那一项（净 +4）。无跳过、无弱化断言、无被删除的既有断言。
+测试计数：v0.1.1 的 336 项全部保留；Phase 8 结束时的 `npm test` 记录为 405 项；本阶段结束时为 **409** 项（`tests 409 / pass 409 / fail 0 / cancelled 0 / skipped 0 / todo 0`）。可核验的增量是 `git diff fb3ca5d..HEAD -- tests` 的 `2 files changed, 52 insertions(+), 9 deletions(-)` 加上一个新增测试文件：`tests/unit/config.test.ts` 的一项拆为两项（+1）、`tests/unit/human-attention.test.ts` 新增 `HAT-11e`（+1）、`tests/integration/credential-contract.test.ts` 新增三项（+3），合计 +5。该值与 Phase 8 记录的 405 项之间存在 1 项的差额，本报告不对差额来源作断言：Phase 8 报告自身在第 339–348 行的分文件增量表（25+8+11+19 = 63）与其「新增 64 项」的表述也不一致，因此基线计数本身带有未解释的偏差，而 Phase 8.1 能逐项核对的是上列五项新增与一条全绿的运行记录。无跳过、无弱化断言、无被删除的既有断言。
 
 本阶段新增与调整：
 
