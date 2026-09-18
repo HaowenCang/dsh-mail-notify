@@ -18,9 +18,18 @@
  * @module dsh-mail-notify/runtime-adapter
  */
 
-import { describeAbort, describeError, toTurnEndKind } from './completion.ts'
+import { describeAbort, describeError, extractFailureFacts, toTurnEndKind } from './completion.ts'
+import { toApprovalNotification } from './human-attention.ts'
 import { collectUsage } from './telemetry.ts'
-import type { InternalEvent, RawUsage, SessionFacts, SubagentDecidedBy, TurnEndKind } from './types.ts'
+import type {
+  ApprovalNotification,
+  FailureFacts,
+  InternalEvent,
+  RawUsage,
+  SessionFacts,
+  SubagentDecidedBy,
+  TurnEndKind,
+} from './types.ts'
 
 /**
  * The DSH-facing view of a session.
@@ -302,8 +311,24 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
       // turn learns that a call exists whose usage it cannot report.
       return { kind: 'llm-retry', turn, step: step ?? 0, ...(seq !== undefined ? { seq } : {}), timeMs }
 
-    case 'tool/call':
-      return { kind: 'tool-call', turn, step: step ?? 0, timeMs }
+    case 'tool/call': {
+      // `name` is copied so the handler can exact-match it; `arguments` is
+      // copied as one opaque string so the dedicated parser — and nothing else
+      // — can decide whether it belongs to a question call. Neither field is
+      // logged, and neither may be rendered (§12, §13).
+      const name = asString(data['name'])
+      const rawArguments = typeof data['arguments'] === 'string' ? data['arguments'] : undefined
+      const callId = asString(data['callId'])
+      return {
+        kind: 'tool-call',
+        turn,
+        step: step ?? 0,
+        ...(callId !== undefined ? { callId } : {}),
+        ...(name !== undefined ? { name } : {}),
+        ...(rawArguments !== undefined ? { rawArguments } : {}),
+        timeMs,
+      }
+    }
 
     case 'user/message': {
       // `UserMessage` is the whole payload, so the turn may be present or
@@ -347,6 +372,7 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
       const turnEndKind: TurnEndKind = toTurnEndKind(reasonRecord?.['kind'])
       let detail: string | undefined
       let reasonDetail: string | undefined
+      let failure: FailureFacts | undefined
       if (turnEndKind === 'aborted') {
         const described = describeAbort(reason)
         detail = described.detail
@@ -355,6 +381,15 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
         const described = describeError(reason)
         detail = described.detail
         reasonDetail = described.reasonDetail
+        // Structural facts are read from the same `reason.error` object the
+        // readable strings above come from, and read once, here: no other module
+        // needs to know the DSH shape (architecture invariant one).
+        //
+        // This is the only place failure facts are produced. A recovered
+        // `llm/retry` must never reach this branch, because the turn it belongs
+        // to ends `completed` — a temporary request failure is not a terminal
+        // turn failure (§4).
+        failure = extractFailureFacts(reason)
       }
       return {
         kind: 'turn-end',
@@ -362,6 +397,7 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
         turnEndKind,
         ...(detail !== undefined ? { detail } : {}),
         ...(reasonDetail !== undefined ? { reasonDetail } : {}),
+        ...(failure !== undefined ? { failure } : {}),
         timeMs,
       }
     }
@@ -388,4 +424,40 @@ export function carriesTurn(event: InternalEvent): event is Extract<InternalEven
     event.kind === 'tool-result' ||
     event.kind === 'turn-end'
   )
+}
+
+/** One observed `approval/asked` audit event, reduced to safe scalars. */
+export interface ApprovalObservation {
+  sessionId: string
+  notification: ApprovalNotification
+}
+
+/**
+ * Adapt one `approval/asked` audit event.
+ *
+ * `approval/asked` is a durable, log-only audit record — the same class of event
+ * as `hook/*`, carrying no `surfaceOp` — so observing it cannot claim, reorder,
+ * or delay an answer. That is the whole reason it is the trigger here rather
+ * than the `approval/request` waterfall, which is an answer-ownership chain
+ * (§11, §20).
+ *
+ * The payload carries a request identity, a tool name, an optional exact call
+ * id, and an optional asker reason — and, by the service's own design, never the
+ * approved tool's arguments. This adapter copies those fields and nothing else,
+ * so the safety property is inherited rather than re-established.
+ *
+ * @param session - the live session, viewed structurally.
+ * @param data - the raw audit payload; its shape is not trusted.
+ * @param observedAt - epoch ms at which the plugin observed the event.
+ * @returns the observation, or `undefined` when no usable approval can be built.
+ */
+export function toApprovalObservation(
+  session: SessionLike,
+  data: unknown,
+  observedAt: number,
+): ApprovalObservation | undefined {
+  const facts = toSessionFacts(session)
+  const notification = toApprovalNotification(data, facts.sessionId, facts.cwd, observedAt)
+  if (notification === undefined) return undefined
+  return { sessionId: facts.sessionId, notification }
 }

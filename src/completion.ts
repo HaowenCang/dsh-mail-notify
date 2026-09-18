@@ -9,10 +9,13 @@
  * @module dsh-mail-notify/completion
  */
 
-import type { CandidateStatus, TurnEndKind } from './types.ts'
+import type { CandidateStatus, FailureFacts, TurnEndKind } from './types.ts'
 
 /** Longest `reasonDetail` retained; provider text is untrusted input. */
 export const REASON_DETAIL_LIMIT = 500
+
+/** Longest provider-neutral `code` retained; the field classifies, so it is bounded. */
+export const FAILURE_CODE_LIMIT = 120
 
 /** The six confirmed `turn/end` reason kinds. */
 const CONFIRMED_KINDS: readonly string[] = [
@@ -138,4 +141,55 @@ export function describeError(reason: unknown): { detail?: string; reasonDetail?
   if (code !== undefined) out.detail = code
   if (message !== undefined) out.reasonDetail = message
   return out
+}
+
+/**
+ * Fallback `code` for a terminal failure the runtime did not classify.
+ *
+ * This is the code DSH itself writes when it flattens a non-LLM throwable into
+ * `{ message: errorChain(error), code: 'UNKNOWN' }`, so the value is the
+ * runtime's own vocabulary rather than one this plugin invents.
+ */
+export const UNKNOWN_FAILURE_CODE = 'UNKNOWN'
+
+/**
+ * Extract the structured failure facts of a terminal `turn/end` (D018).
+ *
+ * Only four fields are read, and each one is read by its own key: `code` for
+ * routing, `status` and `providerRetryAfterMs` as provider-reported numbers,
+ * and `message` for a human reader. `requestId` is deliberately not copied —
+ * §8 excludes it from outbound mail in this phase, and an opaque provider
+ * identifier in a third-party mailbox is a diagnostic artefact the operator did
+ * not ask for.
+ *
+ * The message is never inspected. A failure whose message happens to contain
+ * `"429"`, `"quota"`, or `"timeout"` is classified by `code` alone, exactly as
+ * `HarnessError.code`'s own documentation requires: route on the code, never by
+ * parsing the message.
+ *
+ * @param reason - the raw `turn/end.reason` value.
+ * @returns the facts, or `undefined` when the reason carries no failure object.
+ */
+export function extractFailureFacts(reason: unknown): FailureFacts | undefined {
+  if (typeof reason !== 'object' || reason === null) return undefined
+  const failure = (reason as { error?: unknown }).error
+  const record = typeof failure === 'object' && failure !== null ? (failure as Record<string, unknown>) : undefined
+  if (record === undefined) return undefined
+
+  const code = sanitizeDetail(record['code'], FAILURE_CODE_LIMIT) ?? UNKNOWN_FAILURE_CODE
+  const facts: FailureFacts = { code }
+
+  const status = record['status']
+  if (typeof status === 'number' && Number.isFinite(status)) facts.status = status
+
+  const retryAfter = record['providerRetryAfterMs']
+  if (typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter >= 0) {
+    facts.providerRetryAfterMs = retryAfter
+  }
+
+  const message = sanitizeDetail(record['message'], REASON_DETAIL_LIMIT)
+  if (message !== undefined) facts.message = message
+  else facts.messageMissing = true
+
+  return facts
 }

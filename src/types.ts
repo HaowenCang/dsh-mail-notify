@@ -141,6 +141,36 @@ export type CandidateStatus =
   | 'unknown'
 
 /**
+ * Sanitized terminal-failure facts taken from `turn/end.reason.error` (D018).
+ *
+ * Every field is copied out of the `LlmFailure` by explicit key and then
+ * sanitized and bounded, exactly as §14 requires for question fields: the raw
+ * failure object is never retained, never passed onward, and never logged.
+ *
+ * `code` is the only field that classifies anything. `message` is carried for a
+ * human reader and is never tested — matching `"429"`, `"quota"`, or
+ * `"timeout"` against it is forbidden (§5). `status` and `providerRetryAfterMs`
+ * are read structurally; their absence is recorded as absence rather than as a
+ * default value.
+ *
+ * `requestId` is deliberately not part of this shape. The runtime supplies it
+ * as an opaque provider-issued identifier for diagnostics, and §8 excludes it
+ * from outbound mail in this phase.
+ */
+export interface FailureFacts {
+  /** Provider-neutral machine-routing code, e.g. `RATE_LIMIT`, `QUOTA`, `UNKNOWN`. */
+  code: string
+  /** Provider HTTP status, when the failure reported one. */
+  status?: number
+  /** Provider-requested retry delay in milliseconds, when it reported one. */
+  providerRetryAfterMs?: number
+  /** Human-readable failure message, control characters stripped and bounded. */
+  message?: string
+  /** The failure value carried no usable `message` for a human reader. */
+  messageMissing?: boolean
+}
+
+/**
  * The six confirmed `turn/end` reasons plus the defensive fallback.
  *
  * `unknown` is reachable only when the runtime reports a kind outside the
@@ -197,7 +227,25 @@ export type InternalEvent =
     }
   | { kind: 'step-start'; turn: number; step: number; timeMs: number }
   | { kind: 'llm-retry'; turn: number; step: number; seq?: number; timeMs: number }
-  | { kind: 'tool-call'; turn: number; step: number; timeMs: number }
+  | {
+      kind: 'tool-call'
+      turn: number
+      step: number
+      /** Stable provider-issued call id; the identity anchor for question dedupe. */
+      callId?: string
+      /** The invoked tool's name. Never rendered; only exact-matched (§12). */
+      name?: string
+      /**
+       * The model's raw `arguments` JSON string, uninterpreted.
+       *
+       * Only `human-attention.ts` may read this field, and only after an exact
+       * `name` match; `event-handler.ts` reads it for that one comparison and
+       * passes it straight to the parser. It is never logged, never stored, and
+       * never rendered (§13, §36).
+       */
+      rawArguments?: string
+      timeMs: number
+    }
   | {
       kind: 'user-message'
       /** Absent on the runtime's own `user/message` payload, which has no turn. */
@@ -222,6 +270,15 @@ export type InternalEvent =
       turnEndKind: TurnEndKind
       detail?: string
       reasonDetail?: string
+      /**
+       * Structured failure facts, present only for `turnEndKind: 'error'` with a
+       * readable `reason.error` (D018).
+       *
+       * Facts are read at the `turn/end` boundary and nowhere else: a recovered
+       * `llm/retry` must never produce them, because a temporary request failure
+       * is not a terminal turn failure (§4).
+       */
+      failure?: FailureFacts
       timeMs: number
     }
   | { kind: 'other'; type: string; turn?: number; timeMs: number }
@@ -326,11 +383,179 @@ export interface NotificationCandidate {
   /** Collected always, carried only when the candidate is built for rendering. */
   userText?: string
   sawTurnStart?: boolean
+  /**
+   * Terminal failure facts, present only when `status === 'error'` and the
+   * runtime reported a readable `reason.error` (D018).
+   *
+   * This key is deliberately *absent* from DSH-shaped normalization: its value
+   * is built by key-copying an untrusted provider object, so it is excluded
+   * from `normalize()` the same way the rest of the candidate's scalars are
+   * bounded individually upstream.
+   */
+  failure?: FailureFacts
 }
 
-/** A notification accepted for delivery: one candidate plus its routing facts. */
-export interface MailJob {
+/** One selectable option of a question notification. */
+export interface QuestionOption {
+  /** Short user-facing label, bounded and stripped of control characters. */
+  label: string
+  /** Optional one-sentence tradeoff note supplied with the option. */
+  description?: string
+}
+
+/**
+ * One question, reduced to the fields DSH itself defines as human-facing
+ * presentation (D018).
+ *
+ * The shape is built field by field from the runtime argument object. No spread
+ * of the source object, no `unknown`/additional property, and no raw JSON is
+ * retained: a field the allowlist below does not name cannot reach a mail body
+ * even if the model emitted it.
+ */
+export interface QuestionItem {
+  /** Stable caller-provided question id, echoed in the human's answer. */
+  id: string
+  /** The question text shown to the human. */
+  question: string
+  /** Optional short heading or group label. */
+  header?: string
+  /** Optional choices the human may select from. */
+  options?: readonly QuestionOption[]
+  /** Whether more than one option may be selected. */
+  multiSelect?: boolean
+}
+
+/**
+ * Why a question notification was not produced from an observed `tool/call`.
+ *
+ * `content-limit` is reported when every question in the call was refused by the
+ * running-total bound. A leading question can cost at most `MAX_QUESTION_CHARS`
+ * plus `MAX_QUESTION_ID_CHARS`, which is far below `MAX_TOTAL_QUESTION_CHARS`,
+ * so in practice this reason is reached only by a call whose first usable
+ * question is already larger than the whole budget — a state the current bounds
+ * make unreachable. It stays in the vocabulary because the parser's accounting
+ * can report it and a future bound change could make it reachable, and a union
+ * member that is merely rare is not the same as one that is wrong.
+ */
+export type QuestionDropReason =
+  | 'not-a-question-call'
+  | 'unreadable-arguments'
+  | 'no-questions'
+  | 'question-limit'
+  | 'content-limit'
+  | 'no-usable-question'
+
+/** Outcome of parsing one `ask_user_question` call. */
+export interface QuestionParseResult {
+  questions: readonly QuestionItem[]
+  /** Questions present in the call but not carried, counted rather than silent. */
+  droppedQuestions: number
+  /** Fields dropped from the questions that were carried, by dotted path. */
+  droppedFields: readonly string[]
+  /** Set only when no question could be carried at all. */
+  dropReason?: QuestionDropReason
+  /** Whether the call declared an options array on any carried question. */
+  sawOptions: boolean
+  /** Whether any carried question declares more than one selectable option. */
+  sawMultiSelect: boolean
+  /**
+   * Whether the call's own JSON was syntactically readable.
+   *
+   * `false` is a positive observation that the model emitted malformed
+   * arguments; it is distinct from "the call was not a question call".
+   */
+  argumentsReadable: boolean
+}
+
+/**
+ * A settled turn: the existing `NotificationCandidate` plus the envelope tag.
+ *
+ * The tag is what lets the renderer, the policy, and the dedupe cache tell a
+ * terminal lifecycle apart from a mid-turn one instead of inferring it from the
+ * presence of fields.
+ */
+export interface TurnNotification {
+  kind: 'turn'
   candidate: NotificationCandidate
+}
+
+/**
+ * The fields every mid-turn human-attention notification carries.
+ *
+ * Question and approval notifications are the same kind of thing — an agent
+ * that has stopped and is waiting for a person — so the address and context
+ * fields live here and are shared. Neither is a settled turn, and neither may be
+ * rendered as if it were the model's final output.
+ */
+export interface HumanAttentionPayload {
+  sessionId: string
+  /** Turn number, when the observation carried one. */
+  turn?: number
+  /** Step number, when the observation carried one. */
+  step?: number
+  /**
+   * Durable `callId` of the observed call or approval; the identity anchor.
+   *
+   * Used for deduplication, not for display: the body states the turn and step,
+   * which is what a reader can act on.
+   */
+  callId?: string
+  /** Workspace directory, when the session header carried one. */
+  cwd?: string
+  /** Epoch ms at which the plugin observed the request. */
+  observedAt: number
+}
+
+/**
+ * A question the agent is blocked on.
+ *
+ * Shares its payload fields with {@link ApprovalNotification} through
+ * {@link HumanAttentionPayload} but is a distinct member of the union: the two
+ * carry different content, need different subjects, and are gated by different
+ * switches.
+ */
+export interface QuestionNotification extends HumanAttentionPayload {
+  kind: 'question'
+  questions: readonly QuestionItem[]
+  /** Questions present but not carried, so the mail can say the list is partial. */
+  droppedQuestions: number
+  /** Malformed arguments were observed; carried as a fact, never as model text. */
+  argumentsUnreadable?: boolean
+}
+
+/** An approval the agent is blocked on. */
+export interface ApprovalNotification extends HumanAttentionPayload {
+  kind: 'approval'
+  /** Tool whose operation requires a decision, as the audit event names it. */
+  toolName: string
+  /** Human-readable reason supplied by the asker, sanitized and bounded. */
+  reason?: string
+}
+
+/**
+ * The discriminated notification envelope delivered through the queue
+ * (D018, §25).
+ *
+ * Three lifecycles are represented and never conflated: a settled turn, a
+ * question the agent is blocked on, and an approval the agent is blocked on.
+ * Every variant carries only plain scalars, arrays, and nested plain records —
+ * no live runtime object appears in this union — and `kind` is the single
+ * discriminant, so a `switch` on it narrows exhaustively.
+ */
+export type Notification = TurnNotification | QuestionNotification | ApprovalNotification
+
+/** The non-turn members of the union: both are mid-turn attention events. */
+export type AttentionNotification = QuestionNotification | ApprovalNotification
+
+/**
+ * A notification accepted for delivery: one envelope plus its routing facts.
+ *
+ * `truncated` describes only the turn variant's visible text; it is `false` for
+ * the human-attention variants, whose content is bounded by the parser rather
+ * than by `maxBodyChars`.
+ */
+export interface MailJob {
+  notification: Notification
   /** Recipients, already de-duplicated by configuration resolution. */
   to: readonly string[]
   /** Whether the visible text was truncated when this job was built. */
@@ -382,6 +607,21 @@ export interface PolicyConfig {
   notifyCompleted: boolean
   notifyErrors: boolean
   notifyMaxTokens: boolean
+  /**
+   * Whether an agent that blocked on `ask_user_question` is notified (D018).
+   *
+   * Off by default: turning it on sends the question's own text — which DSH
+   * defines as human-facing presentation and which may therefore quote the
+   * operator's task — to a third-party mail system.
+   */
+  notifyQuestions: boolean
+  /**
+   * Whether an agent that blocked on an approval decision is notified (D018).
+   *
+   * Off by default, for the same reason as `notifyQuestions`. The tool name and
+   * the asker's reason reach the mail; the approved tool's arguments never do.
+   */
+  notifyApprovals: boolean
   minTurnDurationMs: number
 }
 

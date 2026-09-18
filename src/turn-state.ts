@@ -14,7 +14,7 @@
 import { classifyCompletion, sanitizeDetail } from './completion.ts'
 import { normalize } from './normalize.ts'
 import { TurnUsageAccounting } from './telemetry.ts'
-import type { NormalizeResult, NotificationCandidate, TurnEndKind, TurnState } from './types.ts'
+import type { FailureFacts, NormalizeResult, NotificationCandidate, TurnEndKind, TurnState } from './types.ts'
 
 /**
  * Mutable per-session state container.
@@ -163,6 +163,14 @@ export interface CandidateInput {
   turnEndKind: TurnEndKind
   turnEndDetail?: string
   reasonDetail?: string
+  /**
+   * Structured terminal-failure facts, already sanitized by the adapter (D018).
+   *
+   * Passed as a value rather than re-read from the raw reason: the candidate
+   * builder must not know DSH shapes, and the adapter must remain the single
+   * module that does.
+   */
+  failure?: FailureFacts
   /** Epoch ms at which the candidate is constructed. */
   createdAt: number
   /** Epoch ms of the `turn/end` event, used to derive the duration. */
@@ -228,6 +236,12 @@ export function createCandidate(state: TurnState, input: CandidateInput): Normal
   if (input.cwd !== undefined) draft.cwd = input.cwd
   if (input.includeUserText === true && state.lastUserText !== undefined) draft.userText = state.lastUserText
   draft.sawTurnStart = state.sawTurnStart
+  // Attached after normalization, not before: `normalize()` walks the candidate
+  // with generic JSON rules, and the failure block is an explicitly key-copied,
+  // already-bounded structure whose fields must not be re-derived by a generic
+  // pass. It is present only for a terminal `error`, which is the sole status
+  // for which any failure section may render.
+  if (input.failure !== undefined) draft.failure = input.failure
 
   return normalize<NotificationCandidate>(draft)
 }

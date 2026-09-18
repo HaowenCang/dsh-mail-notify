@@ -18,11 +18,18 @@ import type { NotificationCandidate, ResolvedConfig, SuppressionReason } from '.
  * Bounded insertion-ordered key set implementing the dedupe cache.
  *
  * Insertion order is the recency order for this workload — one mark per settled
- * turn — so evicting the oldest key needs no access bookkeeping, and the cache
- * cannot grow without bound in a long-lived process. The guarantee it provides
- * is deliberately narrow: at most one enqueue per `(sessionId, turn)` within
- * one process lifetime. Nothing is persisted, so a restarted DSH may notify a
- * replayed turn a second time (D008).
+ * turn and, at most, one per observed interaction — so evicting the oldest key
+ * needs no access bookkeeping, and the cache cannot grow without bound in a
+ * long-lived process. The guarantee it provides is deliberately narrow: at most
+ * one enqueue per key within one process lifetime. Nothing is persisted, so a
+ * restarted DSH may notify a replayed turn or replayed call a second time
+ * (D008).
+ *
+ * Since D018 the cache carries three independent namespaces, and the namespaces
+ * are what keep the lifecycles apart. A `question:` key must not be able to
+ * collide with the `turn:` key of the same `(sessionId, turn)`: the question
+ * fires mid-turn while the turn is still open, and the turn's own completion or
+ * failure notification must remain eligible after the human has answered.
  */
 export class DedupeCache {
   private readonly keys = new Set<string>()
@@ -34,20 +41,51 @@ export class DedupeCache {
   }
 
   /**
-   * Build the key for one turn.
+   * Build the key for one settled turn.
    *
    * @param sessionId - the owning session.
    * @param turn - the turn number.
-   * @returns the dedupe key.
+   * @returns the `turn:`-namespaced dedupe key.
    */
   static keyFor(sessionId: string, turn: number): string {
-    return `${sessionId}:${turn}`
+    return `turn:${sessionId}:${turn}`
+  }
+
+  /**
+   * Build the key for one observed `ask_user_question` call.
+   *
+   * The DSH-issued `callId` is the primary identity, so two questions inside one
+   * turn produce two keys and two mails, while a re-observed append of the same
+   * call produces one. The `(turn, step)` pair is the fallback for the rare
+   * payload that carried no call id.
+   *
+   * @param sessionId - the owning session.
+   * @param callId - the durable tool-call id, when the event carried one.
+   * @param turn - the turn number.
+   * @param step - the step number.
+   * @returns the `question:`-namespaced dedupe key.
+   */
+  static questionKeyFor(sessionId: string, callId: string | undefined, turn: number, step: number): string {
+    return callId !== undefined
+      ? `question:${sessionId}:${callId}`
+      : `question:${sessionId}:t${turn}:s${step}`
+  }
+
+  /**
+   * Build the key for one observed `approval/asked` event.
+   *
+   * @param sessionId - the owning session.
+   * @param approvalId - the service-issued `ApprovalRequestId`.
+   * @returns the `approval:`-namespaced dedupe key.
+   */
+  static approvalKeyFor(sessionId: string, approvalId: string): string {
+    return `approval:${sessionId}:${approvalId}`
   }
 
   /**
    * Whether this key has already produced a queued job.
    *
-   * @param key - a key from {@link DedupeCache.keyFor}.
+   * @param key - a key from one of the `keyFor` builders.
    * @returns true when the key is marked.
    */
   has(key: string): boolean {
@@ -61,7 +99,7 @@ export class DedupeCache {
    * rejected enqueue leaves no mark behind and stays eligible for a later
    * attempt (D008).
    *
-   * @param key - a key from {@link DedupeCache.keyFor}.
+   * @param key - a key from one of the `keyFor` builders.
    */
   mark(key: string): void {
     if (this.keys.has(key)) return
@@ -96,6 +134,19 @@ export type NotifyDecision =
  * defensive `unknown` have no enabling switch at all, so they always land on
  * `disabled-by-policy`.
  *
+ * The empty-visible-text rule is conditional since D018. A *completed*
+ * notification still requires something for the reader to read: a mail whose
+ * body would be empty apart from metadata tells the operator less than the
+ * subject already did. A *failure* notification does not, because the fact that
+ * the task failed is itself the entire message, and a terminal provider failure
+ * is exactly the case in which the model produced no visible output at all.
+ * Suppressing on empty text there would silence the failures most worth
+ * knowing about. The rule still applies to `max-tokens`, which is a delivery
+ * question rather than an incident.
+ *
+ * The duration floor is likewise a turn-level rule only; the mid-turn
+ * notifications do not pass through this function at all (§28).
+ *
  * @param candidate - the settled turn, as a DTO.
  * @param config - the resolved configuration.
  * @param isDuplicate - whether this `(sessionId, turn)` already produced a job.
@@ -124,8 +175,8 @@ export function decideNotification(
 
   // Whitespace-only text is as unreadable in a mail client as empty text, so
   // the test is on the trimmed value while `visibleTextLength` keeps the raw
-  // length. This rule has no configuration switch (D011).
-  if (candidate.visibleText.trim() === '') {
+  // length. The failure status is exempt: see the docblock above (D018).
+  if (candidate.status !== 'error' && candidate.visibleText.trim() === '') {
     return { notify: false, reason: 'no-visible-text' }
   }
 
