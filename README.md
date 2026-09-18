@@ -39,8 +39,8 @@ GitHub Release were performed; `0.1.1` remains the released version. The candida
 release that already existed — a **terminal turn failure** and a **mid-turn human-attention
 request** — with two new switches, `notifyQuestions` and `notifyApprovals`, both off by default.
 `notifyErrors` keeps its `false` default and gains the meaning it always claimed: a failed turn is
-mailed even when it produced no visible assistant output. `smtpPasswordCredential` now accepts a
-bare credential name and the DSH store's `<scope>/<id>` addressing.
+mailed even when it produced no visible assistant output. `smtpPasswordCredential` now accepts an
+environment-style reference name and the DSH store's `<scope>/<id>` addressing.
 
 The end-to-end probe in this repository boots the shipped `headless` profile against a disposable
 DSH home, a loopback SMTP server, a scripted model provider, and a human stand-in. Two of its three
@@ -321,7 +321,9 @@ $DSH_HOME/.env                                (read-only fallback)
 ```
 
 `.env.example` in this repository shows the `.env` form. The name must match exactly; an empty
-stored value counts as absent, so a blank line configures nothing.
+stored value counts as absent, so a blank line configures nothing. A password kept in
+`$DSH_HOME/.credentials.yaml` is addressed as `<scope>/<id>` — the store's own key shape, such as
+`dsh/mail-smtp-password` — and `smtpPasswordCredential` accepts that form as well.
 
 The password is resolved **inside every send attempt** and never cached; the Credential service
 handle is looked up per attempt for the same reason. Rotating the password therefore takes effect
@@ -536,6 +538,7 @@ prints before booting, so what took effect and what was reported cannot diverge.
 | [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md) | Phase 4.1 report: SMTP credential rotation, DSH `0.1.5-rc.2` compatibility verification, secret history scan, and the release-readiness decision |
 | [`PHASE6_REPORT.md`](PHASE6_REPORT.md) | Phase 6 report: the turn-level token telemetry defect (`BUG-TEL-001`), the runtime evidence behind it, the duration investigation, the schema v2 migration, and the v0.1.1 release-candidate verification |
 | [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md) | Phase 6.1 report: the Nodemailer 7 → 10 security uplift, removal of `@types/nodemailer`, and the re-verification performed on the upgraded dependency |
+| [`PHASE8_REPORT.md`](PHASE8_REPORT.md) | Phase 8 report: the three notification lifecycles (`D018`), the runtime evidence behind each trigger, the two defects found and fixed during the work, the full gate results, and the one evidence path this phase did not close |
 | [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md) | v0.1.1 release report: source commit, tag object, verification results, npm and GitHub publication records, the three-way artifact hashes, and the registry fresh-install result |
 | [`RELEASE_NOTES_V0.1.1.md`](RELEASE_NOTES_V0.1.1.md) | The release notes published on the v0.1.1 GitHub Release |
 | [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
