@@ -146,10 +146,24 @@ test('the credential reference must be a name, not a value', () => {
   assert.equal(CREDENTIAL_REF_PATTERN.test('DSH_MAIL_SMTP_PASSWORD'), true)
   assert.equal(CREDENTIAL_REF_PATTERN.test('_private'), true)
   assert.equal(CREDENTIAL_REF_PATTERN.test('lower_case_ok'), true)
-  assert.equal(CREDENTIAL_REF_PATTERN.test('has-dash'), false)
+  assert.equal(CREDENTIAL_REF_PATTERN.test('has-dash'), true)
   assert.equal(CREDENTIAL_REF_PATTERN.test('has space'), false)
   assert.equal(CREDENTIAL_REF_PATTERN.test('1leading_digit'), false)
   assert.equal(CREDENTIAL_REF_PATTERN.test(''), false)
+})
+
+test('a scoped <scope>/<id> reference is accepted, because that is the store addressing', () => {
+  // The DSH Credential store addresses a record as `<scope>/<id>` with each
+  // segment matching `^[a-z][a-z0-9-]*$`. Rejecting that shape would make a
+  // password the store really holds unusable, so the pattern admits both it and
+  // the bare environment-variable name this project has always shipped.
+  assert.equal(CREDENTIAL_REF_PATTERN.test('dsh/mail-smtp-password'), true)
+  assert.equal(CREDENTIAL_REF_PATTERN.test('credentials/smtp-password'), true)
+  // The store's own grammar still constrains the identifier segment.
+  assert.equal(CREDENTIAL_REF_PATTERN.test('scope/UPPER'), false)
+  assert.equal(CREDENTIAL_REF_PATTERN.test('bad/'), false)
+  assert.equal(CREDENTIAL_REF_PATTERN.test('/bad'), false)
+  assert.equal(CREDENTIAL_REF_PATTERN.test('a//b'), false)
 })
 
 test('a malformed credential reference is refused with an explanation', () => {

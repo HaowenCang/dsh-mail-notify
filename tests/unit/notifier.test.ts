@@ -118,16 +118,28 @@ test('DED-01 a duplicate is suppressed with the duplicate reason', () => {
 
 test('SUP-06 the decision order is master switch, scope, policy, text, duration, duplicate', () => {
   const config = testConfig({ minTurnDurationMs: 60_000 })
-  const emptyAndShort = testCandidate({ visibleText: '   ', durationMs: 10, status: 'error', turnEndKind: 'error' })
+  const emptyAndShort = testCandidate({ visibleText: '   ', durationMs: 10 })
+  const failedAndShort = testCandidate({
+    visibleText: '   ',
+    durationMs: 10,
+    status: 'error',
+    turnEndKind: 'error',
+  })
 
   // 1 beats everything.
   assert.equal(
     (decideNotification(emptyAndShort, { ...config, enabled: false }, true) as { reason: string }).reason,
     'disabled',
   )
-  // 3 (policy) beats 4 and 5.
-  assert.equal((decideNotification(emptyAndShort, config, true) as { reason: string }).reason, 'disabled-by-policy')
-  // With the policy open, 4 (text) beats 5 (duration).
+  // 3 (policy) beats 4 and 5. A completed turn is enabled by default; the error
+  // status is not, because the default configuration leaves `notifyErrors` off.
+  assert.equal(
+    (decideNotification(emptyAndShort, config, true) as { reason: string }).reason,
+    'no-visible-text',
+  )
+  assert.equal((decideNotification(failedAndShort, config, true) as { reason: string }).reason, 'disabled-by-policy')
+  // With the policy open, 4 (text) beats 5 (duration) — for a turn the reader
+  // would otherwise receive an empty body from.
   const openPolicy = testConfig({ minTurnDurationMs: 60_000, notifyErrors: true })
   assert.equal(
     (decideNotification(emptyAndShort, openPolicy, true) as { reason: string }).reason,
@@ -145,16 +157,82 @@ test('SUP-06 the decision order is master switch, scope, policy, text, duration,
   assert.deepEqual(decideNotification(duplicateCandidate, openPolicy, false), { notify: true })
 })
 
+test('D011b the empty-text rule does not apply to a terminal failure (D018)', () => {
+  // A failed turn is exempt from the visible-text requirement: the failure is
+  // the message, and a terminal provider failure is exactly the case in which
+  // no visible output exists. The duration floor still applies, so this
+  // candidate is suppressed for its duration rather than for its missing text.
+  const openPolicy = testConfig({ minTurnDurationMs: 60_000, notifyErrors: true })
+  const failed = testCandidate({ visibleText: '', status: 'error', turnEndKind: 'error', durationMs: 10 })
+  assert.deepEqual(decideNotification(failed, openPolicy, false), {
+    notify: false,
+    reason: 'below-min-duration',
+    detail: '10 < 60000',
+  })
+
+  // With the floor satisfied, the same empty-text failure is notified.
+  const longFailure = testCandidate({
+    visibleText: '',
+    status: 'error',
+    turnEndKind: 'error',
+    durationMs: 90_000,
+  })
+  assert.deepEqual(decideNotification(longFailure, openPolicy, false), { notify: true })
+
+  // A completed turn with no visible text is still suppressed, so the exemption
+  // is scoped to the failure status rather than to the empty-text rule.
+  const emptyCompletion = testCandidate({ visibleText: '', durationMs: 90_000 })
+  assert.deepEqual(decideNotification(emptyCompletion, testConfig(), false), {
+    notify: false,
+    reason: 'no-visible-text',
+  })
+})
+
 test('DED-02 two different turns of one session both notify', () => {
   const config = testConfig()
   assert.deepEqual(decideNotification(testCandidate({ turn: 1 }), config, false), { notify: true })
   assert.deepEqual(decideNotification(testCandidate({ turn: 2 }), config, false), { notify: true })
 })
 
-test('the dedupe key is session-scoped and turn-numbered', () => {
-  assert.equal(DedupeCache.keyFor('session-a', 3), 'session-a:3')
+test('the dedupe key is namespaced, session-scoped, and turn-numbered', () => {
+  assert.equal(DedupeCache.keyFor('session-a', 3), 'turn:session-a:3')
   assert.notEqual(DedupeCache.keyFor('session-a', 3), DedupeCache.keyFor('session-b', 3))
   assert.notEqual(DedupeCache.keyFor('session-a', 3), DedupeCache.keyFor('session-a', 4))
+})
+
+test('the three dedupe namespaces cannot collide (D018)', () => {
+  const sessionId = 'session-a'
+  const turnKey = DedupeCache.keyFor(sessionId, 3)
+  const questionKey = DedupeCache.questionKeyFor(sessionId, 'call-1', 3, 1)
+  const questionFallback = DedupeCache.questionKeyFor(sessionId, undefined, 3, 1)
+  const approvalKey = DedupeCache.approvalKeyFor(sessionId, 'approval-1')
+
+  const keys = [turnKey, questionKey, questionFallback, approvalKey]
+  assert.equal(new Set(keys).size, keys.length, 'every namespace produces a distinct key')
+
+  // A question mid-turn must not consume the turn's own key: the turn's
+  // completion or failure notification stays eligible after the human answers.
+  const cache = new DedupeCache(10)
+  cache.mark(questionKey)
+  assert.equal(cache.has(turnKey), false)
+  assert.equal(cache.has(approvalKey), false)
+
+  // Two questions in one turn are two keys, so each may notify.
+  const second = DedupeCache.questionKeyFor(sessionId, 'call-2', 3, 2)
+  assert.notEqual(second, questionKey)
+  assert.equal(cache.has(second), false)
+
+  // A repeated approval id is the same key, so a re-observed append is one mail.
+  assert.equal(DedupeCache.approvalKeyFor(sessionId, 'approval-1'), approvalKey)
+})
+
+test('the question key falls back to turn and step without a call id', () => {
+  assert.equal(DedupeCache.questionKeyFor('s', undefined, 2, 5), 'question:s:t2:s5')
+  assert.notEqual(
+    DedupeCache.questionKeyFor('s', undefined, 2, 5),
+    DedupeCache.questionKeyFor('s', undefined, 2, 6),
+    'a second question in a later step is a different question',
+  )
 })
 
 test('the dedupe cache reports only marked keys', () => {

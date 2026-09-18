@@ -10,7 +10,15 @@
  */
 
 import { resolveConfig } from '../../src/config.ts'
-import type { CandidateStatus, NotificationCandidate, ResolvedConfig, TurnEndKind } from '../../src/types.ts'
+import type {
+  CandidateStatus,
+  FailureFacts,
+  MailJob,
+  NotificationCandidate,
+  ResolvedConfig,
+  TurnEndKind,
+  TurnNotification,
+} from '../../src/types.ts'
 
 /** Raw configuration overrides accepted by {@link testConfig}. */
 export interface TestConfigOverrides extends Record<string, unknown> {
@@ -26,6 +34,8 @@ export interface TestConfigOverrides extends Record<string, unknown> {
   notifyCompleted?: boolean
   notifyErrors?: boolean
   notifyMaxTokens?: boolean
+  notifyQuestions?: boolean
+  notifyApprovals?: boolean
   minTurnDurationMs?: number
   maxBodyChars?: number
   includeMetadata?: boolean
@@ -92,6 +102,54 @@ export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+/**
+ * Wrap a candidate in the turn branch of the notification union.
+ *
+ * Since D018 a `MailJob` carries a discriminated notification rather than a bare
+ * candidate, because a queued job may now be a terminal turn settlement or a
+ * mid-turn human-attention event. This helper names the turn case explicitly, so
+ * a test that means "a settled turn" says so rather than relying on a default.
+ *
+ * @param candidate - the settled turn.
+ * @returns the turn notification envelope.
+ */
+export function testTurnNotification(candidate: NotificationCandidate): TurnNotification {
+  return { kind: 'turn', candidate }
+}
+
+/**
+ * Build a terminal failure's structured facts with the runtime's own vocabulary.
+ *
+ * @param overrides - fields to override, e.g. `code: 'QUOTA'`, `status: 429`.
+ * @returns the failure facts.
+ */
+export function testFailure(overrides: Partial<FailureFacts> = {}): FailureFacts {
+  return { code: 'RATE_LIMIT', message: 'the provider rate-limited the request', ...overrides }
+}
+
+/**
+ * Narrow a queued job to its turn branch.
+ *
+ * Every job a test receives from a turn lifecycle is a turn notification, and
+ * this helper says so once. It throws rather than returning `undefined` when the
+ * job is a human-attention notification, so a suite that accidentally asserts on
+ * the wrong family fails at the assertion instead of reading nothing. An absent
+ * job yields `undefined`, so the existing `sink.jobs[0]?.candidate` idiom keeps
+ * working unchanged.
+ *
+ * @param job - the queued job, or `undefined` when the queue produced none.
+ * @returns the settled turn's candidate, or `undefined` when there is no job.
+ */
+export function turn(job: MailJob): NotificationCandidate
+export function turn(job: MailJob | undefined): NotificationCandidate | undefined
+export function turn(job: MailJob | undefined): NotificationCandidate | undefined {
+  if (job === undefined) return undefined
+  if (job.notification.kind !== 'turn') {
+    throw new Error(`expected a turn notification but received a ${job.notification.kind} notification`)
+  }
+  return job.notification.candidate
 }
 
 /**

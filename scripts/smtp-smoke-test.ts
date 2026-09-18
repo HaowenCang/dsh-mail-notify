@@ -357,7 +357,7 @@ async function runSmoke(
   }
 
   const rendered = renderMail({
-    candidate: smokeCandidate(Date.now()),
+    notification: { kind: 'turn', candidate: smokeCandidate(Date.now()) },
     render: { ...config.render, includeMetadata: false, includeFooter: true },
     truncated: false,
   })

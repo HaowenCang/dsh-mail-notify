@@ -22,7 +22,7 @@ import {
   TOOL_RESULT_SECRET_SENTINEL,
   USER_PROMPT_SENTINEL,
 } from '../fixtures/runtime-shapes.ts'
-import { testCandidate, testConfig } from '../support/harness.ts'
+import { testCandidate, testConfig, testTurnNotification } from '../support/harness.ts'
 
 test('TRN-06 the subject marks max-tokens instead of claiming success', () => {
   const subject = renderSubject(testCandidate({ status: 'max-tokens', turnEndKind: 'max-tokens', model: 'deepseek-chat' }))
@@ -84,7 +84,7 @@ test('sanitizeLine flattens every line separator the platform knows', () => {
 
 test('PRIV-01 reasoning text appears nowhere in the rendered mail', () => {
   const mail = renderMail({
-    candidate: testCandidate({ visibleText: 'the answer', visibleTextLength: 10 }),
+    notification: testTurnNotification(testCandidate({ visibleText: 'the answer', visibleTextLength: 10 })),
     render: testConfig().render,
     truncated: false,
   })
@@ -94,12 +94,12 @@ test('PRIV-01 reasoning text appears nowhere in the rendered mail', () => {
 
 test('PRIV-02/03/04 tool arguments, tool results, and the user prompt stay out by default', () => {
   const mail = renderMail({
-    candidate: testCandidate({
+    notification: testTurnNotification(testCandidate({
       visibleText: 'the answer',
       // Even if a caller wrongly attached a user prompt, the default switch
       // keeps it out of the body.
       userText: `${USER_PROMPT_SENTINEL} please do the thing`,
-    }),
+    })),
     render: testConfig().render,
     truncated: false,
   })
@@ -112,13 +112,13 @@ test('PRIV-02/03/04 tool arguments, tool results, and the user prompt stay out b
 test('PRIV-05 the user prompt appears only when explicitly enabled', () => {
   const config = testConfig({ includeUserPrompt: true })
   const mail = renderMail({
-    candidate: testCandidate({ userText: `${USER_PROMPT_SENTINEL} please do the thing` }),
+    notification: testTurnNotification(testCandidate({ userText: `${USER_PROMPT_SENTINEL} please do the thing` })),
     render: config.render,
     truncated: false,
   })
   assert.ok(mail.text.includes(USER_PROMPT_SENTINEL), 'the opt-in switch must actually work')
   const withoutSwitch = renderMail({
-    candidate: testCandidate({ userText: `${USER_PROMPT_SENTINEL} please do the thing` }),
+    notification: testTurnNotification(testCandidate({ userText: `${USER_PROMPT_SENTINEL} please do the thing` })),
     render: testConfig().render,
     truncated: false,
   })
@@ -128,11 +128,11 @@ test('PRIV-05 the user prompt appears only when explicitly enabled', () => {
 test('PRIV-07 metadata minimisation removes cwd and session id', () => {
   const minimal = testConfig({ includeMetadata: false })
   const mail = renderMail({
-    candidate: testCandidate({
+    notification: testTurnNotification(testCandidate({
       cwd: 'E:\\Projects\\Secret-Client-Name',
       sessionId: 'session-abcdef-should-not-appear',
       visibleText: 'the answer',
-    }),
+    })),
     render: minimal.render,
     truncated: false,
   })
@@ -144,11 +144,11 @@ test('PRIV-07 metadata minimisation removes cwd and session id', () => {
 
 test('the metadata block labels the token aggregate as a turn aggregate', () => {
   const mail = renderMail({
-    candidate: testCandidate({
+    notification: testTurnNotification(testCandidate({
       usage: { inputTokens: 600, outputTokens: 60, cacheReadTokens: 30_464 },
       usageSampleCount: 3,
       usageComplete: true,
-    }),
+    })),
     render: testConfig().render,
     truncated: false,
   })
@@ -165,13 +165,13 @@ test('the metadata block labels the token aggregate as a turn aggregate', () => 
 
 test('an incomplete token fold is stated as incomplete', () => {
   const mail = renderMail({
-    candidate: testCandidate({
+    notification: testTurnNotification(testCandidate({
       usage: { inputTokens: 600, outputTokens: 60 },
       usageSampleCount: 3,
       usageMissingCount: 2,
       usageUnobservableRetries: 1,
       usageComplete: false,
-    }),
+    })),
     render: testConfig().render,
     truncated: false,
   })
@@ -184,7 +184,7 @@ test('an incomplete token fold is stated as incomplete', () => {
 
 test('a complete token fold says so, with the sample count', () => {
   const mail = renderMail({
-    candidate: testCandidate({ usage: { inputTokens: 1, outputTokens: 2 }, usageSampleCount: 4, usageComplete: true }),
+    notification: testTurnNotification(testCandidate({ usage: { inputTokens: 1, outputTokens: 2 }, usageSampleCount: 4, usageComplete: true })),
     render: testConfig().render,
     truncated: false,
   })
@@ -193,7 +193,7 @@ test('a complete token fold says so, with the sample count', () => {
 
 test('a turn with no observed usage says so rather than omitting the line', () => {
   const mail = renderMail({
-    candidate: testCandidate({ telemetryComplete: false, sawTurnStart: false }),
+    notification: testTurnNotification(testCandidate({ telemetryComplete: false, sawTurnStart: false })),
     render: testConfig().render,
     truncated: false,
   })
@@ -205,7 +205,7 @@ test('the two completeness claims stay separate', () => {
   // Seeing a turn from its start and every call reporting usage are different
   // facts; a mail that merged them would overstate one of them (D017).
   const mail = renderMail({
-    candidate: testCandidate({ telemetryComplete: true, usageComplete: false, usageMissingCount: 1 }),
+    notification: testTurnNotification(testCandidate({ telemetryComplete: true, usageComplete: false, usageMissingCount: 1 })),
     render: testConfig().render,
     truncated: false,
   })
@@ -215,7 +215,7 @@ test('the two completeness claims stay separate', () => {
 
 test('an unknown duration is stated as unknown, not as zero', () => {
   const mail = renderMail({
-    candidate: testCandidate({ durationMs: null, telemetryComplete: false, sawTurnStart: false }),
+    notification: testTurnNotification(testCandidate({ durationMs: null, telemetryComplete: false, sawTurnStart: false })),
     render: testConfig().render,
     truncated: false,
   })
@@ -233,11 +233,11 @@ test('the status line distinguishes the two completed statuses and never over-cl
 })
 
 test('TRUNC-02/TRUNC-04 the truncation marker follows the footer switch', () => {
-  const withFooter = renderMail({ candidate: testCandidate(), render: testConfig().render, truncated: true })
+  const withFooter = renderMail({ notification: testTurnNotification(testCandidate()), render: testConfig().render, truncated: true })
   assert.ok(withFooter.text.includes(TRUNCATION_MARKER))
 
   const withoutFooter = renderMail({
-    candidate: testCandidate(),
+    notification: testTurnNotification(testCandidate()),
     render: testConfig({ includeFooter: false }).render,
     truncated: true,
   })
@@ -247,19 +247,23 @@ test('TRUNC-02/TRUNC-04 the truncation marker follows the footer switch', () => 
 })
 
 test('an untruncated body carries no marker', () => {
-  const mail = renderMail({ candidate: testCandidate(), render: testConfig().render, truncated: false })
+  const mail = renderMail({ notification: testTurnNotification(testCandidate()), render: testConfig().render, truncated: false })
   assert.ok(!mail.text.includes(TRUNCATION_MARKER))
 })
 
 test('rendering never mutates the candidate', () => {
   const candidate = testCandidate({ visibleText: 'x'.repeat(500) })
   const before = JSON.stringify(candidate)
-  renderMail({ candidate, render: testConfig({ maxBodyChars: 1000 }).render, truncated: true })
+  renderMail({
+    notification: testTurnNotification(candidate),
+    render: testConfig({ maxBodyChars: 1000 }).render,
+    truncated: true,
+  })
   assert.equal(JSON.stringify(candidate), before)
 })
 
 test('renderFooter states what the message is and what it omits', () => {
-  const footer = renderFooter(false, [])
+  const footer = renderFooter('turn', false, [])
   assert.ok(footer.includes('dsh-mail-notify'))
   assert.ok(footer.includes('never included'))
 })

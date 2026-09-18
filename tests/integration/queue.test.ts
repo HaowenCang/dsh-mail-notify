@@ -13,14 +13,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createMailQueue, defaultSleep, type QueueOutcome } from '../../src/queue.ts'
 import type { MailJob, MailSink, RetryPolicy, SendResult } from '../../src/types.ts'
-import { testCandidate, waitFor } from '../support/harness.ts'
+import { testCandidate, testTurnNotification, turn, waitFor } from '../support/harness.ts'
 
 const POLICY: RetryPolicy = { retryAttempts: 0, retryBaseDelayMs: 100, retryMaxDelayMs: 30_000 }
 const RETRYING_POLICY: RetryPolicy = { retryAttempts: 3, retryBaseDelayMs: 100, retryMaxDelayMs: 30_000 }
 
 /** A job labelled by turn so ordering can be observed. */
 function job(turn: number): MailJob {
-  return { candidate: testCandidate({ turn }), to: ['r@example.com'], truncated: false }
+  return { notification: testTurnNotification(testCandidate({ turn })), to: ['r@example.com'], truncated: false }
 }
 
 /** A sink that records what it received and resolves on demand. */
@@ -36,7 +36,7 @@ function recordingSink(): { sink: MailSink; seen: number[]; concurrent: () => nu
       inFlight += 1
       peak = Math.max(peak, inFlight)
       await defaultSleep(1)
-      seen.push(mailJob.candidate.turn)
+      seen.push(turn(mailJob).turn)
       inFlight -= 1
       return { ok: true }
     },
@@ -70,7 +70,7 @@ test('QUE-03 a full queue refuses the newest job and counts it', async () => {
     release = resolve
   })
   const sink: MailSink = async (mailJob: MailJob): Promise<SendResult> => {
-    if (mailJob.candidate.turn === 1) await gate
+    if (turn(mailJob).turn === 1) await gate
     return { ok: true }
   }
 
@@ -79,7 +79,7 @@ test('QUE-03 a full queue refuses the newest job and counts it', async () => {
     sink,
     policy: POLICY,
     onOutcome: (outcome) => outcomes.push(outcome),
-    onDropped: (mailJob) => dropped.push(mailJob.candidate.turn),
+    onDropped: (mailJob) => dropped.push(turn(mailJob).turn),
   })
 
   // Turn 1 occupies the worker; turns 2 and 3 fill the two waiting slots.
@@ -99,7 +99,7 @@ test('QUE-03 a full queue refuses the newest job and counts it', async () => {
   release?.()
   await queue.settle()
   assert.deepEqual(
-    outcomes.map((outcome) => outcome.job.candidate.turn),
+    outcomes.map((outcome) => turn(outcome.job).turn),
     [1, 2, 3],
   )
   assert.equal(queue.stats().processed, 3)
@@ -116,8 +116,8 @@ test('QUE-04 a rejecting sink neither crashes the worker nor leaks a rejection',
   const outcomes: QueueOutcome[] = []
   const seen: number[] = []
   const sink: MailSink = async (mailJob: MailJob): Promise<SendResult> => {
-    seen.push(mailJob.candidate.turn)
-    if (mailJob.candidate.turn === 2) throw Object.assign(new Error('sink exploded'), { code: 'EAUTH' })
+    seen.push(turn(mailJob).turn)
+    if (turn(mailJob).turn === 2) throw Object.assign(new Error('sink exploded'), { code: 'EAUTH' })
     return { ok: true }
   }
 
@@ -129,7 +129,7 @@ test('QUE-04 a rejecting sink neither crashes the worker nor leaks a rejection',
     await queue.settle()
 
     assert.deepEqual(seen, [1, 2, 3], 'the worker continued past the throwing job')
-    const failed = outcomes.find((outcome) => outcome.job.candidate.turn === 2)
+    const failed = outcomes.find((outcome) => turn(outcome.job).turn === 2)
     assert.ok(failed !== undefined)
     assert.equal(failed.result.ok, false)
     assert.equal(failed.failure?.category, 'smtp-auth')
@@ -150,7 +150,7 @@ test('QUE-05 dispose stops intake, settles the in-flight job, and leaves nothing
   const seen: number[] = []
   const sink: MailSink = async (mailJob: MailJob): Promise<SendResult> => {
     await defaultSleep(5)
-    seen.push(mailJob.candidate.turn)
+    seen.push(turn(mailJob).turn)
     return { ok: true }
   }
   const queue = createMailQueue({ size: 10, sink, policy: POLICY, onOutcome: (outcome) => outcomes.push(outcome) })
@@ -315,7 +315,7 @@ test('an observer that throws cannot kill the worker', async () => {
     size: 5,
     policy: POLICY,
     sink: async (mailJob: MailJob) => {
-      seen.push(mailJob.candidate.turn)
+      seen.push(turn(mailJob).turn)
       return { ok: true }
     },
     onOutcome: () => {

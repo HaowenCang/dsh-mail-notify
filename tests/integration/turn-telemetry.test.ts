@@ -38,6 +38,7 @@ import {
   TOOL_ARGUMENT_SECRET_SENTINEL,
   TOOL_RESULT_SECRET_SENTINEL,
 } from '../fixtures/runtime-shapes.ts'
+import { testTurnNotification, turn } from '../support/harness.ts'
 import { controllableSink, emit, mountPlugin as mount } from '../support/plugin-harness.ts'
 
 /** Mount the plugin over a recording sink and settle one emitted chain. */
@@ -53,12 +54,18 @@ async function runChain(
   await handle.queue.settle()
   const job = sink.jobs[0]
   assert.ok(job !== undefined, 'the chain must produce a job')
-  return job.candidate
+  const candidate = turn(job)
+  assert.ok(candidate !== undefined)
+  return candidate
 }
 
 /** Render the mail a candidate would produce under the default render switches. */
 function mailFor(candidate: NotificationCandidate): string {
-  return renderMail({ candidate, render: { maxBodyChars: 100_000, includeMetadata: true, includeUserPrompt: false, includeFooter: true }, truncated: false }).text
+  return renderMail({
+    notification: testTurnNotification(candidate),
+    render: { maxBodyChars: 100_000, includeMetadata: true, includeUserPrompt: false, includeFooter: true },
+    truncated: false,
+  }).text
 }
 
 /* ── Duration (D015, §18 of the phase brief) ──────────────────────────── */
@@ -228,7 +235,9 @@ test('TEL-09 a whole turn replayed through the listener produces one job', async
   emit(harness.ctx, rootSession(), chain)
   await handle.queue.settle()
   assert.equal(sink.jobs.length, 1, 'the dedupe key is (sessionId, turn) and the replay is the same turn')
-  assert.equal(sink.jobs[0]?.candidate.usageSampleCount, 1)
+  const replayed = sink.jobs[0]
+  assert.ok(replayed !== undefined, 'the replayed turn must produce exactly one job')
+  assert.equal(turn(replayed).usageSampleCount, 1)
 })
 
 test('TEL-10 a retried call keeps the aggregate but marks it incomplete', async () => {

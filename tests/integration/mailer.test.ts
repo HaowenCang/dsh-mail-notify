@@ -25,7 +25,7 @@ import {
   TOOL_RESULT_SECRET_SENTINEL,
   USER_PROMPT_SENTINEL,
 } from '../fixtures/runtime-shapes.ts'
-import { testCandidate, testConfig } from '../support/harness.ts'
+import { testCandidate, testConfig, testTurnNotification } from '../support/harness.ts'
 
 /** A credential service whose stored value the test can change between calls. */
 class FakeCredentials implements CredentialProviderLike {
@@ -80,11 +80,11 @@ function fakeTransport(behaviour: () => unknown = () => undefined): {
 /** A job carrying sentinels in every field that must never be sent. */
 function sentinelJob(): MailJob {
   return {
-    candidate: testCandidate({
+    notification: testTurnNotification(testCandidate({
       visibleText: 'the final answer',
       cwd: 'E:\\Projects\\DSHarness\\dsh-mail-notify',
       userText: `${USER_PROMPT_SENTINEL} do the thing`,
-    }),
+    })),
     to: ['recipient@example.com'],
     truncated: false,
   }
@@ -124,7 +124,7 @@ test('SEC-08 the rendered body honours maxBodyChars and says that it was cut', a
 
   const oversized = 'x'.repeat(5000)
   const result = await sink({
-    candidate: testCandidate({ visibleText: oversized, visibleTextLength: oversized.length }),
+    notification: testTurnNotification(testCandidate({ visibleText: oversized, visibleTextLength: oversized.length })),
     to: ['recipient@example.com'],
     truncated: false,
   })

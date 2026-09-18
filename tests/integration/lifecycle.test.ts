@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { SessionEventLike, SessionLike } from '../../src/runtime-adapter.ts'
+import { DedupeCache } from '../../src/notifier.ts'
 import type { MailJob, SendResult } from '../../src/types.ts'
 import {
   assistantMessage,
@@ -38,8 +39,7 @@ import {
   mountPlugin as mount,
   TimerService,
 } from '../support/plugin-harness.ts'
-import { delay, waitFor } from '../support/harness.ts'
-
+import { delay, turn, waitFor } from '../support/harness.ts'
 /* ── Registration and the master switch ───────────────────────────────── */
 
 test('ADP-06 only session/event and session/disposed are registered', async () => {
@@ -87,17 +87,19 @@ test('E2E-01 a complete turn produces exactly one job with real telemetry', asyn
 
   assert.equal(sink.jobs.length, 1)
   const job = sink.jobs[0]
-  assert.ok(job !== undefined)
-  assert.equal(job.candidate.schemaVersion, 2)
-  assert.equal(job.candidate.turn, 1)
-  assert.equal(job.candidate.status, 'completed-clean')
-  assert.equal(job.candidate.visibleText, 'the final answer')
-  assert.equal(job.candidate.telemetryComplete, true)
-  assert.equal(job.candidate.sawTurnStart, true)
-  assert.equal(typeof job.candidate.durationMs, 'number')
-  assert.equal(job.candidate.provider, 'deepseek-official')
-  assert.equal(job.candidate.model, 'deepseek-chat')
-  assert.equal(job.candidate.cwd, 'E:\\Projects\\DSHarness\\dsh-mail-notify')
+  assert.ok(job !== undefined, 'the turn must produce a job')
+  const candidate = turn(job)
+  assert.ok(candidate !== undefined, 'the job must carry a turn notification')
+  assert.equal(candidate.schemaVersion, 2)
+  assert.equal(candidate.turn, 1)
+  assert.equal(candidate.status, 'completed-clean')
+  assert.equal(candidate.visibleText, 'the final answer')
+  assert.equal(candidate.telemetryComplete, true)
+  assert.equal(candidate.sawTurnStart, true)
+  assert.equal(typeof candidate.durationMs, 'number')
+  assert.equal(candidate.provider, 'deepseek-official')
+  assert.equal(candidate.model, 'deepseek-chat')
+  assert.equal(candidate.cwd, 'E:\\Projects\\DSHarness\\dsh-mail-notify')
   assert.equal(job.truncated, false)
   assert.deepEqual([...job.to], ['recipient@example.com'])
 })
@@ -122,7 +124,7 @@ test('E2E-02 a mid-turn attach produces one job with an unknown duration and rea
   await handle.queue.settle()
 
   assert.equal(sink.jobs.length, 1)
-  const candidate = sink.jobs[0]?.candidate
+  const candidate = turn(sink.jobs[0])
   assert.ok(candidate !== undefined)
   assert.equal(candidate.durationMs, null, 'an unobserved start must not become a duration')
   assert.notEqual(candidate.durationMs, 0)
@@ -146,7 +148,7 @@ test('E2E-03 in a mixed session population only the top-level turn notifies', as
   await handle.queue.settle()
 
   assert.equal(sink.jobs.length, 1, 'three subagent turns must produce nothing')
-  assert.equal(sink.jobs[0]?.candidate.sessionId, top.id)
+  assert.equal(turn(sink.jobs[0])?.sessionId, top.id)
   assert.deepEqual(handle.handlers.stateSizes(), { sessions: 0, turns: 0, stepSets: 0 })
 })
 
@@ -169,7 +171,7 @@ test('E2E-04 a turn with an explicit tool error is classified and marked as such
   emit(harness.ctx, rootSession(), healthyTurnChain(1, 'answer despite a tool failure', { toolError: true }))
   await handle.queue.settle()
 
-  const candidate = sink.jobs[0]?.candidate
+  const candidate = turn(sink.jobs[0])
   assert.ok(candidate !== undefined)
   assert.equal(candidate.status, 'completed-with-tool-errors')
   assert.equal(candidate.explicitToolErrorCount, 1)
@@ -191,7 +193,7 @@ test('TOOL-05 end to end: a non-zero shell exit leaves the turn completed-clean'
   ])
   await handle.queue.settle()
 
-  const candidate = sink.jobs[0]?.candidate
+  const candidate = turn(sink.jobs[0])
   assert.ok(candidate !== undefined)
   assert.equal(candidate.explicitToolErrorCount, 0)
   assert.equal(candidate.status, 'completed-clean')
@@ -335,9 +337,13 @@ test('a refused enqueue leaves the turn eligible rather than marking it sent', a
 
   assert.equal(handle.queue.stats().droppedCount, 1)
   assert.equal(handle.queue.stats().depth, 1)
-  assert.equal(handle.dedupe.has('session-a:1'), true, 'the in-flight turn spent its key')
-  assert.equal(handle.dedupe.has('session-b:1'), true, 'the waiting turn spent its key')
-  assert.equal(handle.dedupe.has('session-c:1'), false, 'the refused turn must stay eligible for a later delivery')
+  assert.equal(handle.dedupe.has(DedupeCache.keyFor('session-a', 1)), true, 'the in-flight turn spent its key')
+  assert.equal(handle.dedupe.has(DedupeCache.keyFor('session-b', 1)), true, 'the waiting turn spent its key')
+  assert.equal(
+    handle.dedupe.has(DedupeCache.keyFor('session-c', 1)),
+    false,
+    'the refused turn must stay eligible for a later delivery',
+  )
 
   release?.()
   await handle.queue.settle()
@@ -369,7 +375,7 @@ test('the includeUserPrompt switch is what carries the prompt, and nothing else 
     turnEnd(1, 1030),
   ])
   await first.handle.queue.settle()
-  assert.equal(withSwitch.jobs[0]?.candidate.userText?.includes(USER_PROMPT_SENTINEL), true)
+  assert.equal(turn(withSwitch.jobs[0])?.userText?.includes(USER_PROMPT_SENTINEL), true)
 
   const withoutSwitch = controllableSink()
   const second = await mount({}, { sink: withoutSwitch.sink })
@@ -381,7 +387,7 @@ test('the includeUserPrompt switch is what carries the prompt, and nothing else 
     turnEnd(1, 1030),
   ])
   await second.handle.queue.settle()
-  const candidate = withoutSwitch.jobs[0]?.candidate
+  const candidate = turn(withoutSwitch.jobs[0])
   assert.ok(candidate !== undefined)
   assert.equal(candidate.userText, undefined)
   assert.equal(JSON.stringify(candidate).includes(USER_PROMPT_SENTINEL), false)
@@ -553,8 +559,8 @@ test('LIFE-06b the dedupe cache stops growing at its configured bound', async ()
   }
   await handle.queue.settle()
   assert.equal(handle.dedupe.size, 10)
-  assert.equal(handle.dedupe.has('session-0:1'), false, 'the oldest key was evicted')
-  assert.equal(handle.dedupe.has('session-24:1'), true)
+  assert.equal(handle.dedupe.has(DedupeCache.keyFor('session-0', 1)), false, 'the oldest key was evicted')
+  assert.equal(handle.dedupe.has(DedupeCache.keyFor('session-24', 1)), true)
 })
 
 test('LIFE-07 an excluded subagent never creates a state entry', async () => {
@@ -623,8 +629,8 @@ test('a minTurnDurationMs floor suppresses a fast turn but not an unknown-durati
   await handle.queue.settle()
 
   assert.equal(sink.jobs.length, 1)
-  assert.equal(sink.jobs[0]?.candidate.sessionId, 'session-mid')
-  assert.equal(sink.jobs[0]?.candidate.durationMs, null)
+  assert.equal(turn(sink.jobs[0])?.sessionId, 'session-mid')
+  assert.equal(turn(sink.jobs[0])?.durationMs, null)
 })
 
 test('notifyErrors gates an error turn while notifyMaxTokens lets a truncated one through', async () => {
@@ -645,7 +651,7 @@ test('notifyErrors gates an error turn while notifyMaxTokens lets a truncated on
   await handle.queue.settle()
 
   assert.equal(sink.jobs.length, 1, 'error is off by default; max-tokens is on')
-  assert.equal(sink.jobs[0]?.candidate.status, 'max-tokens')
+  assert.equal(turn(sink.jobs[0])?.status, 'max-tokens')
 })
 
 test('the switchless termination kinds produce nothing even with every switch on', async () => {
@@ -675,10 +681,16 @@ test('the debug sink records safe summaries and never the visible text', async (
   assert.equal(records.length, 1)
   const record = records[0]
   assert.ok(record !== undefined)
-  assert.equal(record.status, 'completed-clean')
-  assert.equal(record.visibleTextLength, Array.from('a distinctive answer body').length)
-  assert.equal(record.explicitToolErrorCount, 0)
-  assert.equal(record.durationMs !== null, true)
+  // Since D018 a debug record is a discriminated union, so the turn family is
+  // named before its fields are read.
+  assert.equal(record.notificationKind, 'turn')
+  assert.equal(record.notificationKind === 'turn' ? record.status : null, 'completed-clean')
+  assert.equal(
+    record.notificationKind === 'turn' ? record.visibleTextLength : null,
+    Array.from('a distinctive answer body').length,
+  )
+  assert.equal(record.notificationKind === 'turn' ? record.explicitToolErrorCount : null, 0)
+  assert.equal(record.notificationKind === 'turn' && record.durationMs !== null, true)
   assert.ok(!JSON.stringify(record).includes('a distinctive answer body'), 'the sink records lengths, not text')
   assert.ok(!handle.logger.render().includes('a distinctive answer body'), 'and neither does the log')
 })
@@ -721,7 +733,7 @@ test('a truncated body is marked as truncated on the job', async () => {
   emit(harness.ctx, rootSession(), healthyTurnChain(1, 'x'.repeat(5000)))
   await handle.queue.settle()
   assert.equal(sink.jobs[0]?.truncated, true)
-  assert.equal(sink.jobs[0]?.candidate.visibleTextLength, 5000, 'the candidate keeps the pre-truncation length')
+  assert.equal(turn(sink.jobs[0])?.visibleTextLength, 5000, 'the candidate keeps the pre-truncation length')
 })
 
 test('TRUNC-05 the candidate length is measured before truncation', async () => {
@@ -732,7 +744,7 @@ test('TRUNC-05 the candidate length is measured before truncation', async () => 
   const long = '中'.repeat(2500)
   emit(harness.ctx, rootSession(), healthyTurnChain(1, long))
   await handle.queue.settle()
-  const candidate = sink.jobs[0]?.candidate
+  const candidate = turn(sink.jobs[0])
   assert.ok(candidate !== undefined)
   assert.equal(candidate.visibleTextLength, 2500)
   assert.equal(Array.from(candidate.visibleText).length, 2500, 'the candidate text itself is not truncated')

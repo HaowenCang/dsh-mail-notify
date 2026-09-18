@@ -257,8 +257,44 @@ test('ADP-05b the returned event is JSON-serializable', () => {
 
 test('turn/start and tool/call adapt their turn and step', () => {
   assert.deepEqual(toInternalEvent(turnStart(4, 1000)), { kind: 'turn-start', turn: 4, timeMs: 1000 })
-  const call = toInternalEvent({ type: 'tool/call', time: 20, data: { turn: 2, step: 3, callId: 'c', name: 'pwsh', arguments: '{}' } })
+  const call = toInternalEvent({
+    type: 'tool/call',
+    time: 20,
+    data: { turn: 2, step: 3, callId: 'c', name: 'pwsh', arguments: '{}' },
+  })
+  // Since D018 a tool call also carries its name, its call id, and its raw
+  // argument string so the question parser can decide whether the call is an
+  // `ask_user_question`. Nothing else in the plugin may read `rawArguments`.
+  assert.deepEqual(call, {
+    kind: 'tool-call',
+    turn: 2,
+    step: 3,
+    callId: 'c',
+    name: 'pwsh',
+    rawArguments: '{}',
+    timeMs: 20,
+  })
+})
+
+test('a tool/call without a name or arguments adapts to the bare shape', () => {
+  const call = toInternalEvent({ type: 'tool/call', time: 20, data: { turn: 2, step: 3 } })
   assert.deepEqual(call, { kind: 'tool-call', turn: 2, step: 3, timeMs: 20 })
+})
+
+test('a non-string arguments value is not copied', () => {
+  // A structured argument object reaches the parser through the parse path's own
+  // object branch, not through this field; the adapter only carries strings, so a
+  // payload with an object here degrades to "no arguments" rather than being
+  // passed onward untyped.
+  const call = toInternalEvent({
+    type: 'tool/call',
+    time: 20,
+    data: { turn: 2, step: 3, name: 'ask_user_question', arguments: { questions: [] } },
+  })
+  assert.equal(call.kind, 'tool-call')
+  if (call.kind !== 'tool-call') return
+  assert.equal(call.name, 'ask_user_question')
+  assert.equal(call.rawArguments, undefined)
 })
 
 /* ── Tool results (D005) ──────────────────────────────────────────────── */
