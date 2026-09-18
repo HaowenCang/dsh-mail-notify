@@ -440,6 +440,8 @@ interface TurnState {
 
 四个覆盖字段都是**必须**字段且恒存在：0 与 `false` 是有效观测（中途装载的 Turn 即 `usageSampleCount: 0` 且 `usageComplete: false`），省略它们会使「未统计」与「统计为零」不可区分。`telemetryComplete` 保持 v1 语义不变，与 `usageComplete` 分属两个断言（D017 第 8 条）。
 
+本候选自 D018 起不再直接作为队列条目的载体，而是包在下一节的判别联合里。
+
 ### 4.2 通知信封（D018）
 
 `NotificationCandidate` 描述的是**一个已结算的 Turn**。回合中的人工交互不是已结算的 Turn：`status`、`durationMs`、`usage`、`visibleText` 对它都没有意义。因此队列承载的信封是一个判别联合，而不是把两类事件塞进同一个候选：

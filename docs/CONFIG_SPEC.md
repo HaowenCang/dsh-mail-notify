@@ -27,13 +27,13 @@
 
 **`to` 为空数组时不会触发 schema 的 `.min(1)`。** 数组长度约束写在显式检查里而不是 schema 上，因为一条「去重后仍需 ≥ 1 项」的规则无法用 `.min()` 表达（`['a@b.com', 'A@B.COM']` 长度为 2 而去重后为 1）。`to` 在 schema 上的默认值是 `[]`，因此漏配 `to` 会走到同一条显式检查，得到 `to must contain at least one valid recipient address`，而不是一条 schema 类型错误。行为与第 4 节的「按字段级失败处理」一致。
 
-**第三条警告的判定条件**是 `!notifyCompleted && !notifyErrors && !notifyMaxTokens`，与第 4 节表中「`minTurnDurationMs > 0` 且三个开关全关」略有出入：实现只在三个开关全关时警告，不要求 `minTurnDurationMs > 0`。三个开关全关时，无论门槛取何值都不可能发出任何邮件，因此把门槛并入条件是更窄的判据而非不同的语义；此处记录以避免被读成静默偏离。
+**第三条警告的判定条件**（Phase 3 时为 `!notifyCompleted && !notifyErrors && !notifyMaxTokens`，Phase 8 起扩为五个开关全关，见本节 Phase 8 补记）与第 4 节表中「`minTurnDurationMs > 0` 且开关全关」略有出入：实现只在开关全关时警告，不要求 `minTurnDurationMs > 0`。开关全关时，无论门槛取何值都不可能发出任何邮件，因此把门槛并入条件是更窄的判据而非不同的语义；此处记录以避免被读成静默偏离。
 
 **`enabled: false` 的短路位置**在 schema 校验之前：该分支直接返回一份字段全为默认值的 `ResolvedConfig`，不触碰任何必填字段，因此关闭插件不会被无关的必填字段错误阻塞（与第 4 节末段一致）。
 
 > **Implementation note（Phase 8 补记，2026-09）。** 以下为本文件在 v0.2.0（D018）下的增量事实，已就地更新正文对应位置；第 1–7 节除这些点外未被改写。
 >
-> 1. **两个通知开关（`notifyQuestions` / `notifyApprovals`）新增**，默认均为 `false`，见第 2.5 节。上表「三个通知开关全关」的判据随之扩为五个开关全关，警告文本也逐项列出五个键。
+> 1. **两个通知开关（`notifyQuestions` / `notifyApprovals`）新增**，默认均为 `false`，见第 2.5 节。实现中的「全关」警告判据随之扩为五个开关全关，警告文本也逐项列出五个键；第 4 节表与该判据已同步。
 > 2. **`notifyErrors` 的语义被明确**：它覆盖 `status === 'error'`，且**不要求该 Turn 有可见文本**。旧文字中「无可见文本即抑制」对该状态不再适用。默认值仍为 `false`（D018 第四条）。
 > 3. **`CREDENTIAL_REF_PATTERN` 放宽**为同时接受裸名与 DSH 凭据存储的 `<scope>/<id>` 寻址，见第 2.2 节。存储本身仍是该引用是否可解析的唯一权威。
 > 4. **question 解析器的界限常量**记录于第 2.5 节之后的新表；它们不是配置项，不可由用户调整。
