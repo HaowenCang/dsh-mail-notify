@@ -451,7 +451,7 @@ a1f14bc docs: record the phase 8.1 git facts and the remote re-read
 | `v0.1.0` tag（本地与远端） | 对象 `0d113e70…` → commit `02191a43…`，未移动 |
 | npm 已发布版本 | `0.1.0`、`0.1.1`；**无 `0.2.0`** |
 
-`f44fd2a` 之前的检查点 HEAD 为 `9a9cf8469e1dbe2454cb9b5d7c84336a1400f5cb`；`a1f14bc` 只改动了本报告，未触碰任何源、测试、脚本或其它文档文件，因此上表 SHA 同时是「本报告所述全部验证所对应的源状态」与「远端状态」。
+`f44fd2a` 之前的检查点 HEAD 为 `9a9cf8469e1dbe2454cb9b5d7c84336a1400f5cb`；`a1f14bc` 与 `3c0d89d` 只改动了本报告，未触碰任何源、测试、脚本或其它文档文件，因此上表 SHA 同时是「本报告所述全部验证所对应的源状态」与「远端状态」。上表在 `3c0d89d` 时记录为 `a1f14bc`，`3c0d89d` 是随后一次纯报告提交：分支的**源状态**自 `a1f14bc` 起未再变化，其上重跑的 `check:text` / `typecheck` / `npm test`（409/409）/ `build` / `pack` / `pack:check` / `scan:secrets` / `npm audit` / 六个探针场景 / 全新安装全部为绿。
 
 推送后按 Phase 8.1 §1 的要求从远端独立复读六个文件，方式为比对本地 blob 哈希与 `origin/feat/v0.2.0-human-attention:<path>` 的 blob 哈希，并另读远端内容：
 
