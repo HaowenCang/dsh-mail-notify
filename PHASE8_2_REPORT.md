@@ -127,14 +127,20 @@ diff 为纯文档变更，因此未重复 SMTP / approval / credential E2E 探�
 ## Final SHA
 
 ```text
-<filled after commit>
+5af8d91d36d9b5ed3c18a1f0088204a73f7ef3e8
 ```
 
 ## Remote SHA
 
 ```text
-<filled after push>
+5af8d91d36d9b5ed3c18a1f0088204a73f7ef3e8
+origin/feat/v0.2.0-human-attention — local HEAD == remote HEAD
+origin/main...HEAD = 0 / 13
 ```
+
+## Git
+
+单次提交 `docs: reconcile v0.2.0 rc decisions`，已推送至 `origin/feat/v0.2.0-human-attention`。未合并 `main`、未发布、未创建 `v0.2.0` tag。
 
 ## RC status
 
