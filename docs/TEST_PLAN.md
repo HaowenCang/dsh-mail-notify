@@ -1,6 +1,6 @@
 # TEST_PLAN — dsh-mail-notify
 
-本文件定义测试矩阵、测试层次与断言要求。矩阵中的每条用例都对应 [`DECISIONS.md`](DECISIONS.md) 中某项可验证的冻结断言；未在矩阵中出现的决策不视为已冻结。文件成文于 Phase 3，`§6.2`、`§6.3`、`§14.1`、`§14.2`、`PKG-07`、`PKG-08` 与 `DUR-05/06` 由 Phase 6 增补；既有条目未被改写。
+本文件定义测试矩阵、测试层次与断言要求。矩阵中的每条用例都对应 [`DECISIONS.md`](DECISIONS.md) 中某项可验证的冻结断言；未在矩阵中出现的决策不视为已冻结。文件成文于 Phase 3，`§6.2`、`§6.3`、`§14.1`、`§14.2`、`PKG-07`、`PKG-08` 与 `DUR-05/06` 由 Phase 6 增补，`§8.1`、`§14.3`–`§14.6` 与 `PKG-09` 由 Phase 8 增补（D018）；既有条目未被改写。
 
 ---
 
@@ -8,7 +8,7 @@
 
 | 层次 | 对象 | 工具策略 | 是否触网 |
 | --- | --- | --- | --- |
-| L1 纯函数单测 | `content.ts`、`completion.ts`、`normalize.ts`、`subject.ts`、`retry.ts`、`turn-state.ts`、`telemetry.ts`、`notifier.ts` | 无 mock、无 I/O、时间由参数注入 | 不触网 |
+| L1 纯函数单测 | `content.ts`、`completion.ts`、`normalize.ts`、`subject.ts`、`retry.ts`、`turn-state.ts`、`telemetry.ts`、`notifier.ts`、`human-attention.ts` | 无 mock、无 I/O、时间由参数注入 | 不触网 |
 | L2 队列与生命周期单测 | `queue.ts`、`event-handler.ts` | 注入假 sink、假 timer、假记录器 | 不触网 |
 | L3 适配器测试 | `runtime-adapter.ts` | 手工构造的 `SessionEvent` 形状对象（含畸形样本） | 不触网 |
 | L4 SMTP 集成测试 | `mailer.ts` + `retry.ts` + `queue.ts` | Nodemailer `streamTransport` / `jsonTransport` 或自定义 stub transport；错误由 stub 抛出 | **不触网** |
@@ -52,6 +52,9 @@
 | D014 截断 | L1 | TRUNC-01…TRUNC-05 |
 | D015 时长门槛与时长语义 | L1、L5 | DUR-01…DUR-06 |
 | D017 Turn 级遥测聚合 | L1、L5 | USE-10…USE-25b、TEL-01…TEL-15 |
+| D018 三条通知链路与隐私边界 | L1、L2、L4、L5，外加 `§14.3`、`§14.4` 的探针 | FNL-01…FNL-11、HAT-01…HAT-12f、HAT-POL-01…HAT-POL-08、QUE-01…QUE-12、APR-01…APR-08、PROBE-01…PROBE-03 |
+
+D018 同一行内出现两个 `QUE-` 前缀组，各自属于不同对象：`§9` 的 `QUE-01…QUE-07` 是**队列**用例，`§14.5` 的 `QUE-01…QUE-12` 是 **question 通知**用例。编号沿用各自文件中的既有 id，不重新编号；引用时以所在小节为准。
 
 ---
 
@@ -204,6 +207,24 @@ USE-05 对应 Phase 1 记录的 `inputTokens` 与 `totalTokens` 数量级不自�
 | SUP-05 | `enabled: false` | 任意候选 | `suppress('disabled')`（实现上应为不注册监听器） | L2、L5 |
 | SUP-06 | 判定顺序 | 同时满足多个抑制条件 | 记录的 reason 符合固定顺序（ARCHITECTURE.md §3 `notifier.ts`） | L1 |
 
+### 8.1 终局失败通知（D018 第一至四条）
+
+`tests/integration/failure-notification.test.ts`（11 项，`FNL-*`）以真实事件总线驱动完整插件，断言失败事实只在最终 `turn/end` 读取、并且不要求可见文本。
+
+| 编号 | 用例 | 期望 | 层次 |
+| --- | --- | --- | --- |
+| FNL-01 | 无可见输出的终局失败 | `turn/end(error)` 且 `visibleText === ''`，`notifyErrors: true` | **入队**（空文本规则对 error 不适用） | L5 |
+| FNL-02 | 默认开关 | 同上，`notifyErrors: false` | 不入队；日志含 `suppressedReason: disabled-by-policy` | L5 |
+| FNL-03 | 逐码分类 | 每个可重试码与一个词表外的码 | 各自按 `code` 原值分类，不映射、不归并 | L5 |
+| FNL-04 | 只读结构化码 | message 文本中含 `429` / `quota` / `timeout` 字样而 `code` 为其它值 | 分类只由 `code` 决定；正文照录 message | L5 |
+| FNL-05 | 未报告的字段写「未报告」 | provider 只给 `code` | `HTTP status: not reported`、`Retry-After: not reported`；**不写** `0` | L5 |
+| FNL-06 | 失败前的输出 | 失败前存在可见文本 | 段落标题为 `--- Partial model output before failure ---`，不得表述为最终答案 | L5 |
+| FNL-07 | 恢复的重试 | `llm/retry` 后 Turn 以 `completed` 结束，`notifyErrors: true` | **不产生失败邮件**（`llm/retry` 不是触发器） | L5 |
+| FNL-08 | 多次重试后终局失败 | 若干 `llm/retry` + `turn/end(error)` | 恰好 1 封失败邮件 | L5 |
+| FNL-09 | 失败前的遥测 | 失败前有可折叠 usage | 邮件携带失败前观察到的用量，不上报未观察到的部分 | L5 |
+| FNL-10 | 请求身份与栈不入邮件 | fixture 中含 `requestId`、stack 与 sentinel | 三者均不出现在主题、正文、队列条目与日志中 | L5 |
+| FNL-11 | aborted 不是失败 | `turn/end(aborted)`，五个开关全开 | 不发邮件（`aborted` 无开关） | L5 |
+
 ---
 
 ## 9. Queue（D009）
@@ -346,6 +367,81 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 
 该脚本是开发期证据工具，不进入 `files` 打包清单，也不被任何自动化测试调用。
 
+### 14.3 失败通知的端到端探针（Phase 8）
+
+终局失败**不能靠真实 provider 稳定复现**：要触发它必须真的耗尽额度或让请求终局失败，代价是消耗真实配额，且失败形态由 provider 决定而非由测试决定。因此该路径的运行时证据来自脚本化 provider：`scripts/probe-e2e.mjs errors` 让脚本中的一次模型调用直接返回 `{ message, code: 'QUOTA', status: 402 }`，脚本 provider 不声明重试策略，于是该失败是终局的。
+
+| 编号 | 场景 | 期望 | 层 |
+| --- | --- | --- | --- |
+| PROBE-02 | `errors` 场景 | 回环 SMTP 服务器恰好收到 1 封，主题为 `[DSH] Task failed — QUOTA`；该 Turn 无可见助手输出 | 探针（非自动化） |
+
+实测结果与本节一致：1 封。该场景同时证明「无可见输出的终局失败会被寄出」这一条在真实 DSH composition 中成立，而不只是在单元与集成层成立。
+
+### 14.4 人工注意力通知的端到端探针（Phase 8）
+
+| 编号 | 场景 | 期望 | 层 |
+| --- | --- | --- | --- |
+| PROBE-01 | `questions` 场景 | 回环 SMTP 服务器恰好收到 2 封：`[DSH] Input required — Choose Mode` 与 `[DSH] Task completed — probe-scripted` | 探针（非自动化） |
+| PROBE-03 | `approvals` 场景 | 预期 1 封 `[DSH] Approval required — <tool>` | 探针（非自动化） |
+
+**实测结果与「期望」并不一致，必须如实记录。** PROBE-01 的 2 封已实测得到，两封而非一封正是「question 的去重命名空间没有消耗 Turn 的键」的运行时证据。PROBE-03 **未达成**：本环境下审批请求始终没有打开（`approval/asked` 从未被追加），因此该场景没有产出审批邮件，其输出**不构成** approval 族的证据。approval 路径的覆盖由 `§14.5` 的集成用例承担，不应据探针结果宣称该路径已在真实 composition 中验证。
+
+探针的实际运行环境为 Node `v24.13.0` 与 DSH `0.1.5-rc.1`（`dsh --version`）。它以 `--profile headless --patch <overlay>` 启动，overlay 中携带脚本化 provider、`ask_user_question` 工具、人工替身与指向回环 SMTP 的插件本体四行；`DSH_HOME` 指向 `tmp/probe/home`，operator 自己的 DSH 安装根通过 `DSH_INSTALL_ROOT` 提供，二者互不写入。
+探针替换的恰好两项（脚本化模型 provider、人工替身）在输出中被具名；真实的 agent loop、工具注册表、session log、插件的监听器、队列与 mailer、以及一次真实 SMTP 会话全部参与。三个场景各自只打开自己要验证的开关，另两个交互开关保持关闭，因此一封邮件只可能来自被测族。
+
+### 14.5 question 与 approval 通知链（Phase 8，D018 第五至十一条）
+
+`tests/integration/attention-notification.test.ts`（19 项，`QUE-*` / `APR-*`）以真实事件总线驱动完整插件，事件序列取运行时顺序。question 走持久化 `tool/call`，approval 走持久化 `approval/asked`。
+
+| 编号 | 场景 | 期望 |
+| --- | --- | --- |
+| QUE-01 | 一次提问 | 1 封邮件；正文含问题文本、选项 label 与 description，以及「打开 DSH 作答、本消息不能回复作答」的说明 |
+| QUE-02 | 一次调用含多个问题 | 1 封邮件携带全部被携带的问题 |
+| QUE-03 | 同一 Turn 内两次调用 | 各 1 封（不同 `callId` 各自可通知） |
+| QUE-04 | 同一 call 重复投递 | 仅 1 封（`duplicate`） |
+| QUE-05 | 入队时机 | 在 `tool/call` 事件上**同步**产生 job，不等待 `tool/result`、`turn/end` 或人工回答 |
+| QUE-06 | 开关关闭 | `notifyQuestions: false` 时不发，日志为 `disabled-by-policy` 并指明该开关 |
+| QUE-07 | 其它工具的参数 | `bash` / `pwsh` / `fs` / `subagent` 的参数不出现在任何 job、邮件或日志中 |
+| QUE-08 | 畸形 arguments | 不发邮件；`question.unparsable` 记录原因与计数，**参数原文不出现** |
+| QUE-09 | 白名单外的字段 | 模型额外塞入的字段被丢弃，永不渲染 |
+| QUE-10 | 超长问题 | 被界限截断，邮件仍然产出 |
+| QUE-11 | subagent 提问 | `includeSubagents: false` 时静默；开启后才通知 |
+| QUE-12 / APR-08 | 时长门槛 | `minTurnDurationMs` 极大时 question 与 approval **仍**通知 |
+| APR-01 | 一次审批请求 | 1 封邮件，主题为 `[DSH] Approval required — <tool>`，正文含工具名与 reason |
+| APR-02 | 开关关闭 | 不发，日志为 `disabled-by-policy` 并指明 `notifyApprovals` |
+| APR-03 | 同一审批重复投递 | 仅 1 封 |
+| APR-04 | `approval/decided` | **不产生**第二封「需要你处理」的邮件 |
+| APR-05 | 无 `callId`、无 `reason` | 仍可通知（两者都是可选字段） |
+| APR-06 | 敌意载荷 | 载荷中额外添加的 arguments 字段不出现在邮件、job 或日志中 |
+| APR-07 | subagent 审批 | `includeSubagents: false` 时静默；开启后才通知 |
+
+### 14.6 question 解析器的白名单与界限（Phase 8，D018 第七、八条）
+
+`tests/unit/human-attention.test.ts`（25 项，`HAT-*`）与 `tests/unit/attention-policy.test.ts`（8 项，`HAT-POL-*`）覆盖解析器本身与两条策略判定。
+
+| 编号 | 用例 | 期望 | 层次 |
+| --- | --- | --- | --- |
+| HAT-01 | 提问里带凭据 | 只产出两个白名单字段；凭据串不出现在结果中 | L1 |
+| HAT-02 | 选项重建 | 选项只由 label 与 description 重建，源对象不被 spread | L1 |
+| HAT-03 | 合法字段与两种拼写 | `header`、选项字段与 `multi_select` 保留；服务侧拼写 `multiSelect` 同样被接受 | L1 |
+| HAT-04 | 非布尔 `multi_select` | 丢弃而不做真值转换 | L1 |
+| HAT-05 / 05b | 数量界限 | 超过 `MAX_QUESTIONS` / `MAX_OPTIONS_PER_QUESTION` 的部分被计数或截断，不读取 | L1 |
+| HAT-05c / 05d | 长度与总量界限 | 单字段截断至码点上限；总量只携带放得下的部分并计数其余 | L1 |
+| HAT-06 | 星光面字符 | 按码点计界，不切断代理对 | L1 |
+| HAT-07 / 07b | 畸形与非法输入 | 降级为「无可通知内容」，**不抛异常**；非字符串/非对象与空问题数组各自给出 reason | L1 |
+| HAT-08 | 结构化 arguments | 兼容分支同样逐字段复制 | L1 |
+| HAT-09 | 缺 id 或缺正文 | 按路径丢弃该问题并记录路径 | L1 |
+| HAT-10 / 10b | 控制字符 | C0/C1 整段被压成空格，行结构被抹平；选项 label 走同一规则 | L1 |
+| HAT-11 / 11b / 11c / 11d | 界限的可达性与前缀性 | 纯数量溢出上报 question-limit；被尺寸拒绝的问题同样消耗额度，携带集合是前缀；当前界限下 `content-limit` 不可达且被明确断言不为该值；全部不可用时不报任何界限 | L1 |
+| HAT-12 / 12b…12f | approval 载荷 | 只由白名单字段重建；无工具名即不构成通知；超长 reason 截断且抹平行结构；cwd 已知才携带；两个可选字段互相独立；超长 `callId` 按 id 上限截断 | L1 |
+| HAT-POL-01 / 02 | 默认值 | 两个开关默认 `false`，抑制原因各自指明自己的开关 | L1 |
+| HAT-POL-03 | 开关独立性 | 双向验证：开一个不会影响另一个 | L1 |
+| HAT-POL-04 | 主开关优先 | `enabled: false` 时以 `disabled` 抑制，先于任何通知开关 | L1 |
+| HAT-POL-05 | 时长门槛不适用 | 极大 `minTurnDurationMs` 下 question 仍通知 | L1 |
+| HAT-POL-06 | 去重顺序 | 重复判定在开关判定之后，且仅在其后 | L1 |
+| HAT-POL-07 | 默认配置快照 | 空配置下两个注意力开关均为 `false` | L1 |
+| HAT-POL-08 | 全关警告 | 「五个开关全关」的警告文本逐项列出两个注意力开关 | L1 |
+
 ---
 
 ## 15. 打包产物测试（L6）
@@ -360,6 +456,7 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 | PKG-06 | 卸载 | 卸载后无残留监听器、无残留状态；DSH 正常运行 |
 | PKG-07 | 产物新鲜度（Phase 6） | tarball 内的 `lib/**` 与当前 `npm run build` 输出逐文件一致，且 `package.json` 版本与候选版本一致 |
 | PKG-08 | 双版本安装（Phase 6） | 同一份 tarball 在 `0.1.5-rc.1` 与 `0.1.5-rc.2` 下均安装、装载、投递成功 |
+| PKG-09 | 新模块进入产物（Phase 8） | tarball 内的编译产物含 `human-attention` 对应的 `lib` 文件；`scripts/probe-e2e.mjs` 与 `scripts/probe/` **不在**归档内 |
 
 ---
 
@@ -380,9 +477,11 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 | 项 | 处理方式 |
 | --- | --- |
 | 真实 SMTP 服务器的端到端投递 | 手工 smoke test |
-| 五种非 `completed` 的 `turn/end` 在真实 DSH 会话中的触发 | 运行时观察（Phase 1 已确认接口；真实触发依赖模型与 provider 行为，不可自动化） |
+| 五种非 `completed` 的 `turn/end` 在真实 DSH 会话中的触发 | 运行时观察（Phase 1 已确认接口；真实触发依赖模型与 provider 行为，不可自动化）。`error` 由 `§14.3` 的脚本化 provider 场景实际触发；续期与审批路径中的真实 provider 故障仍属本行 |
 | `session/disposed` 在真实 DSH 中的触发 | 运行时观察（Phase 1 已记录：进程存活期内会话通常不卸载） |
 | 跨进程去重语义 | 明确不保证（D008），因此不测试 |
 | DSH 升级后的字段路径变化 | L3 适配器测试的手工样本需随 DSH 版本更新；这是设计上预期的维护点 |
 | 失败模型调用的 usage | 现有事件面（`llm/retry`、`assistant/attempt`）均不携带，因此不可自动化取回；以 `usageComplete: false` 如实表达，并以 `llm/retry` 的计数作为「该 Turn 存在不可观察调用」的证据 |
 | provider 侧的 bucket 完备性 | 各 provider 对可选 bucket 的报告策略不同，插件按「报告过的 sample 求和」处理（D017 第 4 条）；这是披露策略而非可测试的运行时事实 |
+| 用真实 provider 触发终局失败 | 需要真的耗尽额度或让请求终局失败，代价是消耗真实配额，且失败形态由 provider 而非由测试决定；因此该路径的运行时证据来自 `§14.3` 的脚本化 provider，而不是真实账号 |
+| approval 路径在真实 composition 中的触发 | `§14.4` 的 `approvals` 场景在本环境下未能打开审批请求，因此该路径的真实 composition 证据**尚缺**；当前覆盖来自 `§14.5` 的集成用例 |

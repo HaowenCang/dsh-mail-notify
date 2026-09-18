@@ -66,6 +66,12 @@ single `session/event` event, so every field access descends through `event.data
 | Turn end reason | `event.data.reason.kind` |
 | Abort cause | `event.data.reason.reason.kind` |
 | Provider error | `event.data.reason.error.code` / `.message` |
+| Provider error, structured | `event.data.reason.error.status` / `.providerRetryAfterMs`; `.requestId` is read by nobody |
+| Tool name, per call | `event.data.name` on `tool/call`; matched exactly before any argument is looked at |
+| Tool call id | `event.data.callId` on `tool/call`; the question notification's dedupe identity |
+| Tool arguments | `event.data.arguments` on `tool/call`; read by `human-attention.ts` only, and only when the name matched |
+| Approval identity | `event.data.id` on `approval/asked`; used as a dedupe identity, never rendered |
+| Approval target | `event.data.toolName`, `event.data.callId?`, `event.data.reason?` on `approval/asked`; the payload carries no `turn` and no `session`, and no tool arguments |
 
 Every path in this table is read behind a runtime shape check, because the plugin may be loaded
 from a bundle whose dependency versions differ from the ones it was compiled against. A `turn`
@@ -99,6 +105,44 @@ covered by fixtures and by the L5 telemetry suite.
 is not accumulated, because the call it announces a replacement for is already counted at
 `llm/retry`, and the replacement settles through its own `assistant/message` or
 `assistant/attempt`.
+
+### 2.2 Human-attention event support
+
+`0.2.0` added two triggers, and both are durable events rather than waterfalls. Phase 8 re-read the
+installed declarations for this, because a wrong trigger would either claim an answer it must not
+claim or miss the interaction entirely.
+
+| Item | `0.1.5-rc.1` | `0.1.5-rc.2` | Trigger used | Not used, and why |
+| --- | --- | --- | --- | --- |
+| Ask a human (`tool/call`, name `ask_user_question`) | present | not re-verified in this phase | the `session/event` member `tool/call`, exact name match first | — |
+| `tool/call` payload | `{ turn, step, callId, name, arguments }`, all required, `arguments` an unparsed JSON string | identical declaration | all four fields read | — |
+| `user-questions/request` | present, `@mode waterfall` | not re-verified in this phase | **not registered** | returning from it claims the request and would displace the official answerer (D018 §6) |
+| Approval ask (`approval/asked`) | present, log-only audit, no `surfaceOp` | not re-verified in this phase | the `session/event` member `approval/asked` | — |
+| `approval/asked` payload | `{ id, toolName, callId?, reason? }`; no `turn`, no `session`, no arguments | identical declaration | `toolName`, `callId`, `reason` | the payload's own omission of tool arguments is what keeps them out of the mail |
+| `approval/decided` | present, log-only audit | not re-verified in this phase | nothing | a decision means the human already acted, so a second "you are needed" mail would be false |
+| `approval/request` | present, `@mode waterfall` | not re-verified in this phase | **not registered** | same ownership reason as `user-questions/request` (D018 §8) |
+
+Two facts about the question path are worth stating because they bound what any observer can do.
+`ctx.userQuestions.ask` throws `DELEGATED_CALLER` for a delegated caller, so whether a subagent can
+ask at all depends on the composition; the plugin's `includeSubagents` gate is therefore asserted
+independently of that ability. And `dsh-tool-ask-user` maps the model-facing `multi_select` argument
+onto the service-side `multiSelect`, so the parser accepts both spellings and the notification does
+not depend on which side of that mapping it is reading.
+
+Phase 8 verified the two new surfaces against the `0.1.5-rc.1` installation only, which is the one
+present on this machine. The two versions were shown byte-identical for the packages Phase 6
+checked; that check was not repeated for `dsh-user-questions`, `dsh-user-approval`, or
+`dsh-tool-ask-user`, so `0.1.5-rc.2` is **unverified for the human-attention surfaces** rather than
+known-good or known-bad. If a shape difference exists there, the compatibility branch belongs in
+`runtime-adapter.ts` and nowhere else.
+
+### 2.3 Feature availability
+
+No supported version lacks any capability this plugin uses. `ask_user_question` requires the
+`dsh-tool-ask-user` row to be mounted, and approval notifications require `dsh-user-approval`; a
+profile that mounts neither still loads this plugin, and the corresponding switch simply never has
+an event to act on. That is availability of a row in a profile, not a DSH version boundary, and it
+is reported by the plugin's own `plugin.ready` line rather than assumed.
 
 ## 3. Wire-level facts that shape the code
 

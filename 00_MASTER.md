@@ -50,6 +50,7 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 6 — Turn-level telemetry correctness hotfix | 查明真实运行时语义、修复 Turn 级 Token／Duration 遥测（`BUG-TEL-001`）、schema v2 迁移、全量回归与 rc.1/rc.2 复验，产出 v0.1.1 RC | **PASS — v0.1.1 RC READY**（见 [`PHASE6_REPORT.md`](PHASE6_REPORT.md)） |
 | Phase 6.1 — Nodemailer 10 security uplift | 将已停止安全维护的 Nodemailer 7.x 升级到受支持的 10.x，删除 legacy `@types/nodemailer`，并在新依赖下重新完成 v0.1.1 的全量回归、打包、全新安装、rc.1/rc.2 与真实 SMTP 复验 | **PASS — v0.1.1 RELEASE READY**（见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)） |
 | Phase 7 — v0.1.1 Formal Release | 冻结发布对象 `340ef362`、复现归档 SHA、`npm publish` 精确 tarball、annotated tag `v0.1.1`、GitHub Release 与 asset，以及本地／npm／GitHub 三方 SHA-256 一致性与 registry 全新安装核验 | **PASS — v0.1.1 RELEASED**（见 [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)） |
+| Phase 8 — Failure and human-attention notifications | 新增终局失败通知（`turn/end(error)`，不要求可见文本）与回合中人工注意力通知（`ask_user_question`、`approval/asked`）两条链路；新增 `notifyQuestions` / `notifyApprovals`（默认 `false`）；question 参数白名单解析；去重命名空间分离；端到端探针 | **PASS — v0.2.0 RC READY**（未发布） |
 
 重新编排的理由：
 
@@ -70,6 +71,8 @@ Phase 6 处理发布后由真实邮件暴露的遥测语义缺陷：`usage` 实�
 Phase 6.1 处理 v0.1.1 正式发布前暴露的依赖安全缺陷：Phase 6 的遥测 RC 原先保留 Nodemailer 7.x，而 7.x 已不在 Nodemailer 的受支持范围内（只有 `10.x` 收到安全修复），且处于 `GHSA-2x7j-588g-ccc2` 等 10 条 advisory 的影响区间内。本阶段把运行时依赖升级到 `^10.0.9`，删除与内置声明冲突的 `@types/nodemailer`，并证明升级**未改动任何源码**：本包只在一个文件中以一条调用形态使用 Nodemailer。随后在同一 tarball 上重新完成全量回归（336 项）、打包、隔离全新安装、rc.1/rc.2 两个 DSH 版本的受控 Turn 与真实 163 投递，以及三个面的密钥扫描。「当前配置下该 advisory 不可达」被记录为降低实际风险的事实，而非推迟升级的理由。结论为 **PASS — v0.1.1 RELEASE READY**，详见 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)。本阶段同样不发布。
 
 Phase 7 只做发布，不新增功能、不重构、不改动 telemetry 语义，也不升级依赖。发布对象被固定为已完整验证的 `340ef3624126bc4cf8bd0f2c26394371e4fa7b56` / `0.1.1`：执行开始时逐项核对 baseline（HEAD 与 `origin/main` 同为该 commit、工作树干净、`v0.1.1` 的 npm 版本／Git tag／GitHub Release 三者均不存在），之后全部变更均不发生在此之前。在第 7 节重新执行 `npm pack` 所得的归档 SHA-256 与 Phase 6.1 已验证归档**逐字节一致**，因此发布的确为既有验证对象。npm `dsh-mail-notify@0.1.1`、Git 注释 tag `v0.1.1`（tag object `819fde114357cb653d8ad902f74a8fd35d30a0af`，指向 `340ef362`）与 GitHub Release `v0.1.1` 均已创建，本地 tarball、npm registry 产物与 GitHub Release asset 的 SHA-256 三方一致。registry 全新隔离安装（`mnrel011h`，headless 模板 + 按 specifier 从 registry 安装）完成了加载、受控 Turn 与回环 SMTP 投递。发布后的 README 与报告以 post-release documentation commit 形式位于 `main > v0.1.1`，tag 不随之移动。结论为 **PASS — v0.1.1 RELEASED**，详见 [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)。
+
+Phase 8 把通知面从「一个已结算 Turn」扩展到三条链路。终局失败（`turn/end` 且 `reason.kind === 'error'`）成为独立链路：失败事实只在最终 `turn/end` 边界读取一次，被 DSH 重试并恢复的请求不产生任何故障邮件；分类只读结构化 `code`，从不匹配 message 文本；`requestId` 不外发。故障邮件**不要求可见文本**——真实取证显示 provider 终局故障经常不产生任何可见助手输出，而那正是最需要被告知的一类失败；该条款取代 D011 中「`status === 'error'` 且无可见文本仍不发送」的后半句，`notifyErrors` 的公开默认值仍保持 `false`。回合中的人工交互成为另外两条链路：question 由持久化 `tool/call` 且 `name` 精确等于 `ask_user_question` 触发，approval 由持久化 `approval/asked` 审计事件触发；`user-questions/request` 与 `approval/request` 两个 waterfall 均不注册，插件只观察、不参与作答权的争夺。question 的参数经五项字段白名单逐字段复制（不存在任何 spread），其余工具参数仍禁止外发；`notifyQuestions` 与 `notifyApprovals` 默认均为 `false`。去重按 `turn:` / `question:` / `approval:` 三套命名空间分离，使回合中的提问不能消耗该 Turn 的键。端到端探针在一次性 home 上启动出厂 `headless` profile，配以回环 SMTP、脚本化 provider 与人工替身：`questions` 场景实测投递恰好 2 封（`[DSH] Input required — Choose Mode` 与 `[DSH] Task completed — probe-scripted`），`errors` 场景实测恰好 1 封（`[DSH] Task failed — QUOTA`），`approvals` 场景在本环境下未走到审批路径，其结果不构成证据。结论为 **PASS — v0.2.0 RC READY**。本阶段不发布：`npm publish`、`git tag v0.2.0`、GitHub Release 均未执行。
 
 各阶段的详细结论见 [`PHASE1_REPORT.md`](PHASE1_REPORT.md)、[`PHASE2_REPORT.md`](PHASE2_REPORT.md)、[`PHASE3_REPORT.md`](PHASE3_REPORT.md)、[`PHASE4_REPORT.md`](PHASE4_REPORT.md)、[`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md)、[`PHASE6_REPORT.md`](PHASE6_REPORT.md)、[`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md)、[`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)。
 
@@ -160,13 +163,15 @@ Phase 2 冻结的实现规格见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)�
 
 `max-tokens` → 通知，但必须明确标记为 max-tokens，不得写成成功完成
 
-`error` → 默认关闭，可配置通知
+`error` → 默认关闭，可配置通知；Phase 8 起**不要求可见文本**（终局 provider 故障经常不产生任何可见输出）
 
 `aborted` → 默认不通知
 
 `blocked` → 默认不通知
 
 `interrupted` → 默认不通知
+
+**Phase 8 补记：本阶段新增两条不属于「已结算 Turn」的链路。** 终局失败仍是上面的 `error` 一行，其新增语义已就地写在括号内；此外还有两条**回合中**的人工交互链路——Agent 阻塞在 `ask_user_question` 与阻塞在审批决定时各发一封通知，分别由 `notifyQuestions` / `notifyApprovals` 控制，默认均为 `false`。二者不经过上面这张 Turn 状态机，也不适用 `minTurnDurationMs`（D018 第五、六、八条）。
 
 ---
 
@@ -303,6 +308,8 @@ SMTP Password 不允许直接放入 cordis.patch.yml。
 例如：
 
 `DSH_MAIL_SMTP_PASSWORD`
+
+**Phase 8 补充。** 该字段同时接受 DSH 凭据存储自身的 `<scope>/<id>` 寻址形式（每段匹配 `^[a-z][a-z0-9-]*$`），例如 `dsh/mail-smtp-password`。放宽的原因是实现期取证发现两种形式都是合法引用：存储只接受后一种键形，而本项目历史上只校验裸名，于是把密码存进 store 的部署会在挂载期被拒绝。该模式只判断引用名的拼写，引用是否可解析仍由 Credential 服务裁决（D010、D018）。
 
 **更名说明（Phase 2）。** 本字段原名 `smtpPasswordEnv`，现更名为 `smtpPasswordCredential`。原因是运行时 `CredentialRef` 是一个**分层解析器**（按序解析自进程环境变量、provider 管理的存储与 `.env` 文件），名称中的 `Env` 会误导用户以为只能通过环境变量配置。字段名与运行时类型 `CredentialRef`、服务方法 `resolve(ref: CredentialRef)` 保持一致，实质要求（secret 不进入 `cordis.patch.yml`、每次操作解析、不缓存）不变。依据见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D010 与 D016 第 3 项。
 
@@ -594,6 +601,10 @@ notifyCompleted
 notifyErrors
 
 notifyMaxTokens
+
+notifyQuestions
+
+notifyApprovals
 
 minTurnDurationMs
 

@@ -18,6 +18,18 @@
 >
 > 6. **`apply()` 的返回值。** 生产路径返回 `undefined`（`index.ts` 不向外暴露服务）；当 `enabled: false` 或配置校验失败时同样返回 `undefined` 且不注册任何资源。集成测试通过第三个 `internals` 参数注入 sink、时钟与等待函数，该参数在生产调用中省略。
 
+> **Implementation note（Phase 8 补记，2026-09）。** 以下为本文件在 v0.2.0（D018）下的增量事实。**第 1–11 节除第 3、4 节明确标注的扩充点外未被改写**；本补记与既有条目冲突时，以本补记为准，并已在正文对应位置就地更新。
+>
+> 1. **实际模块清单在第 3 节的 15 个模块之外共增加五个。** Phase 3 增加 `src/credentials.ts`（凭据解析 seam）与 `src/transport.ts`（`MailTransport` 接口与 Nodemailer transport 工厂），Phase 6 增加 `src/telemetry.ts`（Turn 级 usage 折叠），Phase 8 增加 `src/human-attention.ts`。加上第 3 节 P3.4 所要求的 `src/debug-sink.ts`，`src/` 现共 20 个模块。`human-attention.ts` 是其中唯一被允许读取 `tool/call.arguments` 的模块，职责为：question 参数白名单解析、approval 载荷清洗，以及两条人工注意力通知的策略判定。
+>
+> 2. **`Notification` 成为判别联合，`MailJob` 的载体随之改变。** 此前队列条目的载体是 `NotificationCandidate`；现在它是 `Notification = TurnNotification | QuestionNotification | ApprovalNotification`，`kind` 是唯一判别字段。`NotificationCandidate` 本身未变，`schemaVersion` 仍为 `2`——变的是承载它的信封。
+>
+> 3. **`session/event` 上注册两个监听器。** 第一个维护 Turn 状态，第二个只观察 `approval/asked`。`user-questions/request` 与 `approval/request` 不在注册集合内（D018 第六、八、十一条）。
+>
+> 4. **`DedupeCache` 的键带命名空间前缀**：`turn:` / `question:` / `approval:`。`keyFor` 的旧键形不再是契约的一部分；去重不持久化，因此该变更无迁移成本（D008、D018 第九条）。
+>
+> 5. **`CREDENTIAL_REF_PATTERN` 放宽**为同时接受裸名与 DSH 凭据存储的 `<scope>/<id>` 寻址。存储本身仍是「该引用是否可解析」的唯一权威（D010、D018 Consequences）。
+
 
 ---
 
@@ -39,6 +51,7 @@
 DSH Session + SessionEvent（live 对象 + event.data 深路径）
             │
             │  ctx.on('session/event', (session, event) => …)      ← 同步路径起点
+            │  （Turn 监听器 + approval/asked 观察监听器，共两次注册）
             ▼
     runtime-adapter.ts
             │  读 session.header.* / event.data.*
@@ -46,29 +59,32 @@ DSH Session + SessionEvent（live 对象 + event.data 深路径）
             │  产出：InternalEvent（无 DSH 引用）
             ▼
     event-handler.ts
-            │  根/子会话判定 → 丢弃 subagent
+            │  根/子会话判定 → 丢弃 subagent（覆盖全部三个族）
             │  turnStateOf(turn) 懒初始化
             │  按 type 分派累积
-            ▼
-      turn-state.ts  ──────►  content.ts（text 白名单提取）
-            │                 telemetry.ts（Turn 级 usage 折叠，D017）
-            │                 normalize.ts（lossless JSON）
-            │  turn/end 到来
-            ▼
-      completion.ts
-            │  reason.kind + explicitToolErrorCount → status
-            ▼
-      NotificationCandidate（schemaVersion 2）
-            │
-            ▼
-      notifier.ts
+            ├──────────────────────────────────────────────┐
+            ▼                                              ▼
+      turn-state.ts  ──────►  content.ts（text 白名单提取）   human-attention.ts
+            │                 telemetry.ts（Turn 级 usage 折叠，D017） │  tool/call 且 name 精确命中
+            │                 normalize.ts（lossless JSON）           │  → 白名单解析 question
+            │  turn/end 到来                                          │  approval/asked → 清洗 approval
+            ▼                                                        │
+      completion.ts                                                  │
+            │  reason.kind + explicitToolErrorCount → status          │
+            │  reason.error → FailureFacts（仅 error，D018）           │
+            ▼                                                        │
+      NotificationCandidate（schemaVersion 2）                        │
+            │                                                        │
+            ▼                                                        ▼
+      notifier.ts  ──►  Notification（判别联合：turn / question / approval）
             │  抑制规则（无可见文本 / 时长门槛 / 策略开关）
-            │  去重标记（仅在确定要发时写入）
+            │  去重标记（三套命名空间，仅在确定要发时写入）
             ▼
         queue.ts（concurrency = 1，上界 queueSize，满则拒绝最新）
             │  后台 worker
             ▼
-        mailer.ts ──► credentials.resolve()（每次操作重新解析）
+        mailer.ts ──► 渲染（subject.ts，按 kind 分支）
+            │        ──► credentials.resolve()（每次操作重新解析）
             │        ──► nodemailer transport.sendMail()
             ▼
          retry.ts（transient 才重试，指数退避）
@@ -77,13 +93,13 @@ DSH Session + SessionEvent（live 对象 + event.data 深路径）
         结果记录（logger.ts，脱敏后）
 ```
 
-`subject.ts` 与渲染函数在 `mailer.ts` 之前被调用，从候选生成主题与正文；它们是纯函数，不参与上面主链的状态传递。
+`subject.ts` 与渲染函数在 `mailer.ts` 之前被调用，从信封生成主题与正文；它们是纯函数，不参与上面主链的状态传递。`human-attention.ts` 的接入点有两处：question 走 `tool/call` 事件（与 Turn 状态无关，命中即同步入队），approval 走 `approval/asked` 审计事件（由第二个监听器进入）。两条支路都不经过 `completion.ts` 与 `decideNotification`，因此 Turn 的状态分类与时长门槛对它们均不适用。
 
 ---
 
 ## 3. 模块规格
 
-Phase 3 的目录布局固定为（Phase 6 新增 `telemetry.ts`）：
+Phase 3 的目录布局固定为（Phase 6 新增 `telemetry.ts`，Phase 8 新增 `human-attention.ts`；`credentials.ts` / `transport.ts` / `debug-sink.ts` 为 Phase 3 的职责拆分模块）：
 
 ```text
 src/
@@ -96,12 +112,16 @@ src/
 ├─ telemetry.ts
 ├─ content.ts
 ├─ completion.ts
+├─ human-attention.ts
 ├─ normalize.ts
 ├─ notifier.ts
 ├─ queue.ts
 ├─ mailer.ts
+├─ credentials.ts
+├─ transport.ts
 ├─ retry.ts
 ├─ subject.ts
+├─ debug-sink.ts
 └─ logger.ts
 ```
 
@@ -116,7 +136,9 @@ src/
 | 输出 | 注册到当前 Fiber 的监听器、队列、日志器；其 disposer 由 Cordis 管理 |
 | 不允许 | 不包含事件分派逻辑、不读 `event.data`、不构造候选、不做配置默认值计算（委托 `config.ts`）、不实现 SMTP |
 
-`apply()` 的装配顺序固定为：解析配置 → 校验配置 → 构造 logger → 构造 queue → 构造 mailer → 构造 handler → `ctx.on('session/event', …)` → `ctx.on('session/disposed', …)`。
+`apply()` 的装配顺序固定为：解析配置 → 校验配置 → 构造 logger → 构造 queue → 构造 mailer → 构造 handler → `ctx.on('session/event', …)` → `ctx.on('session/disposed', …)` → `ctx.on('session/event', onApprovalEvent)`。
+
+`session/event` 上有**两次注册**（Phase 8，D018）：第一次挂 Turn 状态维护监听器，第二次挂只观察 `approval/asked` 的监听器。二者回答不同的问题——前者对每个事件维护 Turn 状态，后者只处理一种 durable 审计类型——因此拆成两个入口，而不是在第一个入口内分支。拆开的另一个作用是把「观察的是哪个事件」写在注册处：被观察的是 `approval/asked` 审计记录，`approval/request` waterfall 拥有作答权，**不在注册集合内**。第二次注册在结构上比 DSH 声明更窄，因此以类型断言跨越该边界；函数体内不读取结构视图未声明的字段。
 
 ### `config.ts`
 
@@ -133,7 +155,7 @@ src/
 
 | 项 | 内容 |
 | --- | --- |
-| 职责 | 全部内部 DTO 与枚举的类型声明：`InternalEvent`、`TurnState`、`NotificationCandidate`、`CandidateStatus`、`TurnEndKind`、`NotifyDecision`、`SuppressionReason`、`RetryClass`、`MailJob` |
+| 职责 | 全部内部 DTO 与枚举的类型声明：`InternalEvent`、`TurnState`、`NotificationCandidate`、`CandidateStatus`、`TurnEndKind`、`FailureFacts`、`QuestionItem` / `QuestionParseResult` / `QuestionDropReason`、`Notification`（判别联合）、`NotifyDecision`、`SuppressionReason`、`RetryClass`、`MailJob` |
 | 输入 | 无（纯类型模块） |
 | 输出 | 类型声明 |
 | 不允许 | 不含任何运行时代码；不含 DSH 类型导入（DSH 类型的出现位置仅限 `runtime-adapter.ts`，且仅在适配函数签名上） |
@@ -142,9 +164,9 @@ src/
 
 | 项 | 内容 |
 | --- | --- |
-| 职责 | 唯一的 DSH 边界。把 `(session, event)` 转为 `InternalEvent`；把 `session.header` 转为 `SessionFacts`；实现根/子会话三判据（D003）；处理字段可选性与未知形状 |
-| 输入 | live `Session` 对象、`SessionEvent`（其 `data` 是已 snapshot + deepFreeze 的普通 JSON） |
-| 输出 | `InternalEvent` 判别联合：`{ kind: 'turn-start', turn, timeMs }`、`{ kind: 'step-start', turn, step, timeMs }`、`{ kind: 'assistant-message', turn, step, seq?, blocks, messageId?, provider?, model?, usage?, timeMs }`、`{ kind: 'assistant-attempt', turn, step, seq?, usage?, timeMs }`、`{ kind: 'llm-retry', turn, step, seq?, timeMs }`、`{ kind: 'tool-call', turn, step, timeMs }`、`{ kind: 'tool-result', turn, step, explicitError, errorName?, errorCode?, timeMs }`、`{ kind: 'user-message', turn?, text, timeMs }`、`{ kind: 'turn-end', turn, turnEndKind, detail?, timeMs }`、`{ kind: 'other', type, turn?, timeMs }`；以及 `SessionFacts = { sessionId, isSubagent, decidedBy, cwd?, agentPreset? }` |
+| 职责 | 唯一的 DSH 边界。把 `(session, event)` 转为 `InternalEvent`；把 `session.header` 转为 `SessionFacts`；实现根/子会话三判据（D003）；把 `approval/asked` 的原始 payload 转为 `ApprovalObservation`；处理字段可选性与未知形状 |
+| 输入 | live `Session` 对象、`SessionEvent`（其 `data` 是已 snapshot + deepFreeze 的普通 JSON）、`approval/asked` 的原始 payload |
+| 输出 | `InternalEvent` 判别联合：`{ kind: 'turn-start', turn, timeMs }`、`{ kind: 'step-start', turn, step, timeMs }`、`{ kind: 'assistant-message', turn, step, seq?, blocks, messageId?, provider?, model?, usage?, timeMs }`、`{ kind: 'assistant-attempt', turn, step, seq?, usage?, timeMs }`、`{ kind: 'llm-retry', turn, step, seq?, timeMs }`、`{ kind: 'tool-call', turn, step, callId?, name?, rawArguments?, timeMs }`、`{ kind: 'tool-result', turn, step, explicitError, errorName?, errorCode?, timeMs }`、`{ kind: 'user-message', turn?, text, timeMs }`、`{ kind: 'turn-end', turn, turnEndKind, detail?, reasonDetail?, failure?, timeMs }`、`{ kind: 'other', type, turn?, timeMs }`；`SessionFacts = { sessionId, isSubagent, decidedBy, cwd?, agentPreset? }`；`ApprovalObservation = { sessionId, notification }` |
 | 不允许 | 不做业务判定、不构造候选、不累积状态、不写日志（返回值由 handler 记录）、不访问网络或文件、不抛异常（未知形状转 `{ kind: 'other' }`） |
 
 适配器的实现约束：
@@ -156,18 +178,34 @@ src/
 - 返回的对象只含标量与自有数组，**不得**包含对 `session`、`event`、`event.data` 的任何引用。
 - `assistant/message` 的 usage 取值顺序是 `data.usage` 优先、`data.stream` 中最后一条 `{ type: 'chunk', chunk: { type: 'usage' } }` 记录次之（与 `dsh-token-meter` 一致）；`assistant/attempt` 只从 stream 取。两条路径都不合成、不补齐缺失计数器。
 - `seq` 是 settlement 身份：它是 durable 事件的单调序号（实测 `assistant/message`、`assistant/attempt`、`llm/retry`、`step/start`、`tool/call`、`tool/result`、`turn/start`、`turn/end` 全部携带），适配器原样透传，缺失时省略而不补默认值。
+- `tool/call` 的 `name` 与 `arguments` 各作一次字符串拷贝即以原样携带（D018 第一条与 A8 补记）：`name` 供 handler 精确比对，`arguments` 作为单个不透明字符串交专用解析器，适配器不解析、不记录、不存储；实测该字段恒为字符串，遇到结构化值即视为无参数。
+- `turn/end` 的 `failure` 只在 `reason.kind === 'error'` 时由 `completion.ts` 的 `extractFailureFacts()` 产出，且在此处读取一次（D018 第一条）。恢复的 `llm/retry` 永不进入该分支。
+- `approval/asked` 不走 `InternalEvent`：它由独立的 `toApprovalObservation()` 处理，逐字段复制 `toolName` / `callId` / `reason`，请求 id 刻意不进 `ApprovalNotification`（只作去重身份，由 handler 另行读取）。
 - `llm/retry-started` 不翻译为可累积事件：它标记的失败调用已在 `llm/retry` 计入，替代它的调用通过自身的 `assistant/message` 或 `assistant/attempt` 结算。
 
 ### `event-handler.ts`
 
 | 项 | 内容 |
 | --- | --- |
-| 职责 | 事件分派与状态累积的粘合层：`session/event` 的监听器主体；维护 `Map<sessionId, Map<turn, TurnState>>`；在 `turn/end` 时驱动 completion → notifier → enqueue；处理 `session/disposed` |
-| 输入 | `InternalEvent`、`SessionFacts`、`ResolvedConfig`、queue 引用、logger 引用 |
+| 职责 | 事件分派与状态累积的粘合层：`session/event` 的监听器主体；维护 `Map<sessionId, Map<turn, TurnState>>`；在 `turn/end` 时驱动 completion → notifier → enqueue；在 `tool/call` 命中 `ask_user_question` 时驱动 human-attention 解析 → 策略 → enqueue；在 `approval/asked` 时驱动 approval 观察 → 策略 → enqueue；处理 `session/disposed` |
+| 输入 | `InternalEvent`、`SessionFacts`、`ResolvedConfig`、queue 引用、logger 引用、`approval/asked` 的原始 payload |
 | 输出 | 状态变更、`queue.enqueue(job)` 调用、结构化日志 |
-| 不允许 | 不做 `await`（必须同步返回）、不做 SMTP、不做内容提取（委托 `content.ts`）、不做状态分类（委托 `completion.ts`）、不读 `event.data` |
+| 不允许 | 不做 `await`（必须同步返回）、不做 SMTP、不做内容提取（委托 `content.ts`）、不做状态分类（委托 `completion.ts`）、不解析 question 参数（只做一次精确工具名比较后转交 `human-attention.ts`）、不读 `event.data` |
 
 `session/event` 回调的返回类型是 `void`，实现中不得把 handler 写成 `async`。
+
+三个族共用同一条入队函数 `enqueueNotification()`，因此「只在入队被接受时才写入去重标记」这条规则不会在三个族之间漂移：被拒绝的任务不留标记、保持可再次尝试，且拒绝会被计数而不是静默丢弃。
+
+### `human-attention.ts`
+
+| 项 | 内容 |
+| --- | --- |
+| 职责 | 人工注意力通知的唯一解析与策略点：`ask_user_question` 参数的严格白名单解析（`parseAskUserQuestionArguments`）、`approval/asked` 载荷清洗（`toApprovalNotification`）、两条策略判定（`decideQuestionNotification` / `decideApprovalNotification`），以及 `QUESTION_TOOL_NAME` 与全部界限常量 |
+| 输入 | 原始 `arguments` 值（期望为模型产生的 JSON 字符串）、`approval/asked` 原始 payload、`ResolvedConfig`、去重命中与否 |
+| 输出 | `QuestionParseResult`、`ApprovalNotification`、`AttentionDecision` |
+| 不允许 | 不做 I/O、不写日志、不认识 `TurnState`、不读取除白名单字段以外的任何参数、不对源对象做 spread、不保留原始 JSON 字符串或对它的任何引用、不因畸形输入抛异常 |
+
+两条结构性保证不是约定而是构造：解析结果逐字段新建，源值随即丢弃，因此下游无法持有对 `arguments` 的引用；文件中不存在对源对象的 spread，因此白名单未命名的字段即使到达也不会被携带。畸形 JSON 是正常结果，降级为「无可通知内容」并记录原因与计数，不在 session append 路径上抛出。
 
 ### `turn-state.ts`
 
@@ -232,10 +270,10 @@ src/
 
 | 项 | 内容 |
 | --- | --- |
-| 职责 | 由 `NotificationCandidate` 与 `ResolvedConfig` 决定 `NotifyDecision`：`{ notify: true, job }` 或 `{ notify: false, reason: SuppressionReason }`；维护去重缓存（D008） |
+| 职责 | 由 `NotificationCandidate` 与 `ResolvedConfig` 决定 `NotifyDecision`：`{ notify: true, job }` 或 `{ notify: false, reason: SuppressionReason }`；维护去重缓存（D008）；提供三个命名空间的键构造器（D018） |
 | 输入 | `NotificationCandidate`、`ResolvedConfig`、去重缓存 |
-| 输出 | `NotifyDecision` |
-| 不允许 | 不做 SMTP、不做模板渲染、不 await、不修改候选 |
+| 输出 | `NotifyDecision`、`DedupeCache` 的键 |
+| 不允许 | 不做 SMTP、不做模板渲染、不 await、不修改候选、不判定 question / approval（属 `human-attention.ts`） |
 
 判定顺序固定（顺序本身是契约，因为它决定日志中出现哪个 `suppressedReason`）：
 
@@ -243,13 +281,38 @@ src/
 1. enabled === false                        → suppress("disabled")
 2. isSubagent 且 includeSubagents === false → suppress("subagent-excluded")   [在 handler 中提前返回]
 3. 状态策略开关（completed / error / max-tokens 三类）→ suppress("disabled-by-policy")
-4. visibleText.trim().length === 0          → suppress("no-visible-text")
+4. visibleText.trim().length === 0          → suppress("no-visible-text")     [status === 'error' 时不适用，D018]
 5. durationMs !== null 且 < minTurnDurationMs → suppress("below-min-duration")
 6. 去重命中                                  → suppress("duplicate")
 7. 否则                                      → notify，并写入去重标记
 ```
 
 第 3 步中不含配置开关的三种终止方式（`aborted`、`blocked`、`interrupted`）以及防御性的 `unknown` 恒为 `suppress("disabled-by-policy")`。
+
+第 4 步自 D018 起是条件规则：**终局失败通知不要求可见文本**（provider 故障常常不产生任何可见输出，而那正是最需要被告知的一类失败），`completed` 与 `max-tokens` 通知仍然要求。空文本判定用 `trim()` 后的值，而 `visibleTextLength` 仍记原始长度。
+
+第 5 步的时长门槛是 Turn 级规则：question 与 approval 通知不经过本函数，因此永不施加该门槛（D018 第五条）。
+
+#### 三套去重命名空间（D018 第九条）
+
+```text
+turn:${sessionId}:${turn}
+question:${sessionId}:${callId}       // 无 callId 时回落 question:${sessionId}:t${turn}:s${step}
+approval:${sessionId}:${approvalId}
+```
+
+命名空间是让三条生命周期互不干扰的机制，而不是命名风格。question 通知在 Turn 仍打开时触发，若复用 `turn:` 键，一次中途提问就会占用该 Turn 的键，使随后的完成或失败通知被判为重复而丢弃；反过来，终局通知在人工回答之后**必须**仍然可通知。同一 Turn 内不同 `callId` 各自可通知，因此一次调用多问两次会得到两封邮件，而同一 call 的重复投递只得到一封。三条规则都不改变缓存自身的保证：它仍是有界、插入序淘汰、不持久化的（D008）。
+
+`human-attention.ts` 的两条策略判定顺序同样是契约，且刻意短于 Turn 的判定：
+
+```text
+1. enabled === false            → suppress("disabled")
+2. 对应开关为 false              → suppress("disabled-by-policy")   [detail 指明是哪个开关]
+3. 去重命中                      → suppress("duplicate")
+4. 否则                          → notify，并写入去重标记
+```
+
+两条判定都不接受通知本身作为参数：到达该函数的 question 已经过白名单解析，是否值得发送只取决于配置与去重，接受载荷会诱导未来对内容添加条件——本阶段没有任何规则授权这种条件。
 
 ### `queue.ts`
 
@@ -288,12 +351,14 @@ src/
 
 | 项 | 内容 |
 | --- | --- |
-| 职责 | 由 `NotificationCandidate` 生成邮件主题，并生成正文的元数据头部 |
-| 输入 | `NotificationCandidate`、`ResolvedConfig` |
-| 输出 | `{ subject: string, header: string }` |
+| 职责 | 由通知信封生成邮件主题与正文：Turn 主题（含失败码标签）、人工注意力主题（固定的 question / approval 前缀）、元数据块、失败段、question 段、approval 段、footer |
+| 输入 | `Notification`（判别联合）、`RenderConfig`、截断标志、被忽略的配置字段 |
+| 输出 | `RenderedMail = { subject, text, bodyTextLength }` |
 | 不允许 | 不做 SMTP、不读配置以外状态、不做截断（截断属 `content.ts`）、不引入换行（主题必须单行） |
 
 主题长度上限固定为 200 字符，超出时截断并保留状态前缀。任何源自候选的字符串在写入主题前必须移除 `\r` 与 `\n`。
+
+渲染按 `kind` 显式分支，而不是依据「哪些字段有值」反推形态：`turn` 走 `renderTurnMail`，`question` / `approval` 走 `renderAttentionMail`。这条显式分支是「提问绝不能被渲染成模型的最终输出」的实现保证。人工注意力邮件的主题前缀是常量（`[DSH] Input required`、`[DSH] Approval required`），因此没有任何模型提供的字符串能决定一条消息是否读起来像插件发出的指令；approval 的正文明确写出被审批工具的参数未由 DSH 发布、也不在本消息中。
 
 ### `logger.ts`
 
@@ -375,6 +440,22 @@ interface TurnState {
 
 四个覆盖字段都是**必须**字段且恒存在：0 与 `false` 是有效观测（中途装载的 Turn 即 `usageSampleCount: 0` 且 `usageComplete: false`），省略它们会使「未统计」与「统计为零」不可区分。`telemetryComplete` 保持 v1 语义不变，与 `usageComplete` 分属两个断言（D017 第 8 条）。
 
+### 4.2 通知信封（D018）
+
+`NotificationCandidate` 描述的是**一个已结算的 Turn**。回合中的人工交互不是已结算的 Turn：`status`、`durationMs`、`usage`、`visibleText` 对它都没有意义。因此队列承载的信封是一个判别联合，而不是把两类事件塞进同一个候选：
+
+```ts
+type Notification = TurnNotification | QuestionNotification | ApprovalNotification
+// TurnNotification      = { kind: 'turn', candidate: NotificationCandidate }
+// QuestionNotification  = { kind: 'question', questions, droppedQuestions, argumentsUnreadable?, ...HumanAttentionPayload }
+// ApprovalNotification  = { kind: 'approval', toolName, reason?, ...HumanAttentionPayload }
+// HumanAttentionPayload = { sessionId, turn?, step?, callId?, cwd?, observedAt }
+```
+
+**question 为什么不是 `NotificationCandidate`。** 三个理由，各自独立成立。其一，类型层面必须保留「该 Turn 是否已结算」这一判据；把 question 表达为候选的字段组合会使该判据只能靠「哪些字段有值」反推，而那种反推正是把提问渲染成最终答案的路径。其二，`candidate` 的必填字段（`status`、`visibleText`、四个 usage 覆盖字段）对回合中事件全是无意义的填充，填充它们等于让每个读者都要先判断这些值是否可信。其三，隐私边界需要一个唯一的声明点：question 的内容来自白名单解析，approval 的内容来自 DSH 审计契约，二者的来源与 Turn 的可见文本都不同，混在一个类型里会让「什么可以外发」不再可核查。
+
+`kind` 是唯一判别字段，因此对它的 `switch` 会穷尽；`MailJob.notification` 的类型随之从候选变为该联合。`truncated` 只描述 turn 变体的可见文本：人工注意力变体恒为 `false`，它们的内容由解析器的界限而非 `maxBodyChars` 约束。
+
 ---
 
 ## 5. Completion 分类
@@ -401,6 +482,8 @@ detail 提取：
 | 其它 | 省略 | 省略 |
 
 注意 `completed-clean` 的语义边界：它只表示 DSH 未报告显式工具失败，**不表示**所有 shell / pwsh 命令的业务执行均成功（D005）。主题与正文的渲染不得使用「全部成功」之类措辞。
+
+`error` 一行另有结构化补充（D018 第二条）：`completion.ts` 的 `extractFailureFacts()` 从同一个 `reason.error` 对象逐键取出 `code`、`status`、`providerRetryAfterMs`、`message`，产出 `FailureFacts`。**只有 `code` 参与分类**；`message` 仅供人阅读，禁止对 `"429"`、`"quota"`、`"timeout"` 等做字符串匹配。`requestId` 刻意不在该形状内，本阶段不外发。四个字段各自的缺失都记为缺失（`status` / `providerRetryAfterMs` 省略，`message` 缺失时置 `messageMissing`），不写默认值。
 
 ---
 
@@ -487,7 +570,7 @@ Map<sessionId, Map<turn, TurnState>>
 | 出口 | 内容 | 约束 |
 | --- | --- | --- |
 | 结构化日志 | 事件生命周期、抑制原因、队列状态、重试次数、错误分类、遥测覆盖范围 | 字段白名单，见 `SECURITY.md` |
-| 计数器 | `candidatesProduced`、`notificationsSent`、`notificationsSuppressed`（按 reason 分组）、`queueDropped`、`sendFailures`（按 class 分组） | 只增不减的整数，随插件生命期存在 |
+| 计数器 | `candidatesProduced`、`notificationsSent`、`notificationsSuppressed`（按 reason 分组）、`queueDropped`、`sendFailures`（按 class 分组）、`questionCallsObserved`、`approvalAsksObserved`、`attentionUnparsable` | 只增不减的整数，随插件生命期存在 |
 | 调试出口（可选） | 归一化后的候选记录 | 仅在显式开启时输出；输出前必须经 `normalize.ts` |
 
 `candidate.produced` 一行的字段集（Phase 6 扩充，D017）：`schemaVersion`、`sessionId`、`turn`、`status`、`turnEndKind`、`visibleTextLength`、`explicitToolErrorCount`、`telemetryComplete`、`durationMs`、`provider`、`model`、`sawTurnStart`、`usageSampleCount`、`usageMissingCount`、`usageUnobservableRetries`、`usageComplete`、`steps`、`normalizeDropped`。
@@ -498,6 +581,8 @@ Map<sessionId, Map<turn, TurnState>>
 
 日志与计数器都不得包含 `visibleText` 全文、reasoning、tool arguments/results 或任何凭据（D012）。
 
+人工注意力路径的日志字段同样受此约束：`question.unparsable` 只携带 `dropReason` 与 `argumentsReadable`，`approval.unusable` 只携带 `sessionId`，`notification.enqueued` / `notification.suppressed` 只携带 notificationKind、turn、step、questionCount 之类的标量。question 的文本与 approval 的 reason **不进入日志**——它们只进入邮件正文。这与「正文已对收件人可见，因此写进日志不增加信息、只扩大暴露面」是同一条理由（`SECURITY.md` 第 4 节）。
+
 ---
 
 ## 10. 与 DSH 的接口面
@@ -506,7 +591,7 @@ Map<sessionId, Map<turn, TurnState>>
 
 | 接口 | 用途 | 获取方式 | 取证 |
 | --- | --- | --- | --- |
-| `session/event` 事件 | 唯一的事件观察入口 | `ctx.on('session/event', (session, event) => …)` | Inspect + Runtime |
+| `session/event` 事件 | 唯一的事件观察入口（注册两次：Turn 状态维护 + `approval/asked` 观察） | `ctx.on('session/event', (session, event) => …)` | Inspect + Runtime |
 | `session/disposed` 事件 | 状态释放信号 | `ctx.on('session/disposed', (session) => …)` | Inspect |
 | `credentials.resolve(ref)` | 每次发送操作解析 SMTP 密码 | `ctx.get('credentials')` + `undefined` 检查 | Inspect |
 | `credentials.describe(ref)` | 构造不含 secret 的诊断信息 | 同上 | Inspect |
@@ -518,13 +603,15 @@ Map<sessionId, Map<turn, TurnState>>
 
 `session/event` 上被识别的 `event.type` 共十种：`turn/start`、`step/start`、`assistant/message`、`assistant/attempt`、`llm/retry`、`tool/call`、`tool/result`、`user/message`、`turn/end`，以及显式忽略但仍被适配器识别的 `llm/retry-started`。全部事件类型的实际支持矩阵与取证见 [`DSH_INTEGRATION.md`](DSH_INTEGRATION.md) 第 2 节。
 
+`approval/asked` 同样经 `session/event` 投递，但不经过上面这张适配器表（D018 第八条）：它由第二个监听器直接观察，并由 `runtime-adapter.ts` 的 `toApprovalObservation()` 转为安全标量。它是一次性的 durable 审计事件，不带 turn 上下文，这决定了它的触发点只能落在审计事件本身，而不能落在 `approval/request` 上。
+
 **本插件为 Host-only。** 不存在 Client half，不注册 Slot，不依赖浏览器环境。
 
 ---
 
 ## 11. 明确非目标
 
-以下内容不属于本项目范围，Phase 3 不得实现：
+以下内容不属于本项目范围，Phase 3 不得实现；末两项由 Phase 8 复核（D018 Consequences），其结论是维持非目标：
 
 - 邮件附件（任何形式的正文外附件，含超长正文转附件）。
 - HTML 邮件模板系统或主题定制引擎。
@@ -535,3 +622,5 @@ Map<sessionId, Map<turn, TurnState>>
 - 基于 `usage` 的成本统计或配额告警。
 - Client / 浏览器 UI。
 - 对 DSH 核心源码的任何修改。
+- 邮件内作答、action link、一键批准与远程回调：人工注意力通知是只读观察，不参与 answer ownership chain。
+- 任何含 DSH Web token 的深链接：`?token=…`、auth token 与会话 secret 一律不得进入邮件；插件不构造 Web 链接，也不读取 token。

@@ -1,10 +1,11 @@
 # dsh-mail-notify
 
-DeepSeek Harness (DSH) host plugin. When a **top-level** Agent turn finishes, it emails that
-turn's final user-visible model output over SMTP.
+DeepSeek Harness (DSH) host plugin. It emails a **top-level** Agent turn's final user-visible model
+output, that turn's terminal failures, and the mid-turn requests at which the agent blocked waiting
+for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.1.1` (released; `0.1.0` is the previous release)
+- Version: `0.2.0` (an unpublished release candidate; `0.1.1` is the current release)
 - Host-only: no browser half, no UI, no Client package
 - Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
@@ -32,6 +33,24 @@ changed no source line: the plugin reaches Nodemailer through one file and one c
 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md).
 
 
+**v0.2.0 is a release candidate, and is not published.** No `npm publish`, no `v0.2.0` tag, and no
+GitHub Release were performed; `0.1.1` remains the released version. The candidate tarball is
+`dsh-mail-notify-0.2.0.tgz`. What the candidate adds is two notification lifecycles beside the
+release that already existed — a **terminal turn failure** and a **mid-turn human-attention
+request** — with two new switches, `notifyQuestions` and `notifyApprovals`, both off by default.
+`notifyErrors` keeps its `false` default and gains the meaning it always claimed: a failed turn is
+mailed even when it produced no visible assistant output. `smtpPasswordCredential` now accepts a
+bare credential name and the DSH store's `<scope>/<id>` addressing.
+
+The end-to-end probe in this repository boots the shipped `headless` profile against a disposable
+DSH home, a loopback SMTP server, a scripted model provider, and a human stand-in. Two of its three
+scenarios were measured on this machine. The `questions` scenario delivered exactly two messages,
+`[DSH] Input required — Choose Mode` and `[DSH] Task completed — probe-scripted`, which is what
+proves a mid-turn question's dedupe namespace does not consume the turn's. The `errors` scenario
+delivered exactly one, `[DSH] Task failed — QUOTA`. The `approvals` scenario did **not** reach the
+approval path in this environment — its approval request never opened — so it is not evidence for
+the approval family, and the approval path is covered by the offline suite instead.
+
 **v0.1.1 released.** It is published as `dsh-mail-notify@0.1.1` on npm, tagged `v0.1.1` at commit
 `340ef362`, with the release archive attached to the GitHub Release. The local archive, the npm
 registry artifact, and the GitHub asset are byte-identical. It changes what the email's token line
@@ -48,26 +67,99 @@ smoke message and a real top-level Agent turn both reached `mail.sent` from the 
 
 The plugin never reads reasoning text, tool arguments, tool results, the system prompt, or your
 own prompt (unless you explicitly enable the last one), and it never puts the SMTP password in a
-file it ships.
+file it ships. From `0.2.0` that rule carries two enumerated exceptions, both off by default: the
+presentation fields of an `ask_user_question` call, and the tool name and reason of an approval ask.
+Neither exception covers any other tool's arguments. Section *Notification families* below states
+exactly what each one carries.
 
 ---
 
 ## What it does
 
-At `turn/end` the plugin builds one `NotificationCandidate` — the turn's facts, not a copy of any
-runtime object — decides whether that turn deserves an email, and hands it to a bounded queue. A
-single background worker resolves the SMTP password from the DSH Credential service for that one
-send, renders the message, and transmits it.
+When a **top-level** Agent turn finishes, the plugin builds one `NotificationCandidate` — the turn's
+facts, not a copy of any runtime object — decides whether that turn deserves an email, and hands it
+to a bounded queue. The same queue also carries two mid-turn families, produced while the agent is
+still blocked: a question the agent asked a human, and an approval it is waiting for. A single
+background worker resolves the SMTP password from the DSH Credential service for that one send,
+renders the message, and transmits it.
 
-Three properties are worth stating plainly, because they are design boundaries rather than
+Five properties are worth stating plainly, because they are design boundaries rather than
 limitations discovered later:
 
 | Property | Meaning |
 | --- | --- |
-| **Top-level turns only** | Subagent turns produce nothing by default (`includeSubagents: false`). |
+| **Top-level turns only** | Subagent turns produce nothing by default (`includeSubagents: false`). Since `0.2.0` the same switch covers all three families, so a subagent's question or approval is silent too. |
 | **Completed-clean means "DSH reported no explicit tool failure"** | It does **not** mean every shell command succeeded. A `pwsh` non-zero exit is a successful tool result in DSH and is not counted. |
-| **Deduplication is in-process only** | At most one email per `(sessionId, turn)` per DSH process lifetime. Restarting DSH can produce a second email for a replayed turn. |
+| **Deduplication is in-process only** | At most one email per family lifecycle per DSH process lifetime. Restarting DSH can produce a second email for a replayed turn. |
 | **Token usage is the whole turn, or it says it is not** | DSH reports token counters per model call. The plugin sums every call it observed in the turn and states whether that covers all of them (`Token telemetry complete:`). From `0.1.1` onward this is the turn aggregate; `0.1.0` reported only the last model call. |
+| **A human-attention mail is notification-only** | A question or an approval mail says that someone is needed. It cannot be answered by reply, and there is no link to click: the plugin never constructs a DSH Web link and never reads or sends a token. |
+
+### Notification families
+
+Three lifecycles are notified, each with its own trigger and its own dedupe key. A mail always
+states which one it is, in the subject and in the body.
+
+**A settled turn.** Produced at `turn/end` for a top-level turn, under `notifyCompleted`,
+`notifyErrors`, or `notifyMaxTokens`. The body carries the turn's final visible assistant text plus
+the metadata block. `aborted`, `blocked`, `interrupted`, and any unrecognised reason have no switch
+and never notify.
+
+**A terminal failure.** Also produced at `turn/end`, and only there. What makes it a failure is the
+final reason: `turn/end` with `reason.kind === 'error'`. `llm/retry` is a durable record of one
+failed model call, not a failure notification — if DSH retries and the turn then completes, no
+incident mail is sent, because only the final `turn/end` reason decides. This is the one case where
+the old "no visible text means no mail" rule is lifted: a provider failure frequently produces no
+assistant output at all, and that is exactly the failure worth knowing about. A *completed* turn with
+empty text is still suppressed.
+
+The failure mail names the structured code, and the HTTP status when the provider reported one:
+
+```text
+[DSH] Task failed — QUOTA (429)
+```
+
+Only `code` classifies anything. The provider's message is carried for a human reader and is never
+pattern-matched, so a failure whose text happens to say `"429"` is still classified by its code. The
+body gains a `--- Failure ---` section, which writes `not reported` for each fact the runtime did not
+supply rather than a default value. Output produced before the failure keeps its own heading,
+`--- Partial model output before failure ---`, so partial text is never read as the final answer;
+when there was none, the mail says so instead of leaving a gap.
+
+**A mid-turn human-attention request.** Two triggers, both durable session events, and neither is a
+waterfall. A question is produced by observing the `tool/call` event whose name is exactly
+`ask_user_question`; an approval is produced by observing the `approval/asked` audit event. The
+plugin registers neither `user-questions/request` nor `approval/request`: those are answer-ownership
+chains, and a notification plugin must not join one. `approval/decided` produces no mail, because the
+human has already acted and a second "you are needed" message at that point would be false. These
+notifications are enqueued synchronously on the event, while DSH is still blocked on the human, and
+they never wait for `turn/end`.
+
+```text
+[DSH] Input required — Choose Mode
+[DSH] Approval required — bash
+```
+
+A question's subject names the question's own header when the call carried one, or the question count
+when it carried several. An approval's subject names the exact tool awaiting the decision, and its
+body states plainly that the approved tool's arguments are not published by DSH and are not in the
+message. Both bodies end by saying to open DSH to answer, and that the message cannot be answered by
+reply.
+
+### Configuration switches and content
+
+| Switch | Default | What enabling it sends to the mail system |
+| --- | --- | --- |
+| `notifyCompleted` | `true` | The turn's final visible assistant output and the metadata block |
+| `notifyMaxTokens` | `true` | The same, for a turn truncated at the token limit |
+| `notifyErrors` | `false` | The turn's failure code, HTTP status, provider retry delay, and provider message, plus whatever partial output preceded the failure |
+| `notifyQuestions` | `false` | The question text, its id, its header, its option labels and descriptions, and whether it accepts more than one choice |
+| `notifyApprovals` | `false` | The tool name awaiting a decision and the asker's reason |
+
+**Turning any interaction notification on sends that content to a third-party mail system.** A
+question's text is written by the model and may quote your task, your file paths, or a business
+identifier; an approval's reason is written by whichever component raised the ask. Both leave this
+machine and are stored by your mail provider. Read [`docs/SECURITY.md`](docs/SECURITY.md) before
+enabling either.
 
 The metadata block of the body looks like this:
 
@@ -91,6 +183,21 @@ no call in that turn reported the bucket, which is not the same as `0`. `Token t
 no` means at least one model call of the turn reported no usage — a retried call, for instance —
 and the numbers above cover only the rest. The plugin never derives a total, a cost, or a missing
 counter.
+
+A human-attention body carries a shorter metadata block, because a mid-turn request has no duration
+and no token aggregate to report:
+
+```text
+Status:    Waiting for a human
+Session:   session-7abf8371-0583-4160-967d-df591b335d66
+Turn:      1
+Step:      1
+Workspace: E:\Projects\DSHarness\dsh-mail-notify
+Observed:  2026-09-18T15:33:11.596Z
+```
+
+After that block comes either `--- Question ---` or `--- Approval ---`, and the mail ends by saying
+to open DSH to answer because the message cannot be answered by reply.
 
 ---
 
@@ -149,6 +256,8 @@ keys fall back to the schema defaults.
     notifyCompleted: true
     notifyErrors: false
     notifyMaxTokens: true
+    notifyQuestions: false
+    notifyApprovals: false
 
     minTurnDurationMs: 0
     maxBodyChars: 100000
@@ -170,13 +279,15 @@ keys fall back to the schema defaults.
 | `smtpPort` | `587` | Integer 1–65535. |
 | `smtpSecure` | `false` | `true` = implicit TLS (normally 465); `false` allows a STARTTLS upgrade (normally 587). |
 | `smtpUser` | — required | Authentication user name. |
-| `smtpPasswordCredential` | — required | A credential **reference name**, never a password. Matches `^[A-Za-z_][A-Za-z0-9_]*$`. |
+| `smtpPasswordCredential` | — required | A credential **reference name**, never a password. Accepts a bare environment-style name (`^[A-Za-z_][A-Za-z0-9_-]*$`) and the DSH store's `<scope>/<id>` addressing, where each segment matches `^[a-z][a-z0-9-]*$`. |
 | `from` | — required | Envelope sender. |
 | `to` | — required | One or more addresses. An empty or entirely invalid list refuses to mount. |
-| `includeSubagents` | `false` | Turning this on sends subagent output too; read the security section first. |
+| `includeSubagents` | `false` | Turning this on sends subagent output, subagent questions, and subagent approvals too; read the security section first. |
 | `notifyCompleted` | `true` | Covers `completed-clean` and `completed-with-tool-errors`. |
-| `notifyErrors` | `false` | Covers `status === 'error'`. |
+| `notifyErrors` | `false` | Covers `status === 'error'`. A terminal failure is mailed **even when the turn produced no visible assistant output**; a completed turn with empty text is still suppressed. |
 | `notifyMaxTokens` | `true` | Covers `status === 'max-tokens'`. |
+| `notifyQuestions` | `false` | Covers an agent blocked on `ask_user_question`. Off by default; enabling it sends the question's text and options to the mail system. |
+| `notifyApprovals` | `false` | Covers an agent blocked on an approval decision. Off by default; enabling it sends the tool name and the asker's reason to the mail system. The approved tool's arguments are never sent. |
 | `minTurnDurationMs` | `0` | Suppresses turns shorter than this. An **unknown** duration is never suppressed. |
 | `maxBodyChars` | `100000` | Visible-text cap in code points, 1000–1000000. |
 | `includeMetadata` | `true` | Session id, workspace, model, timing, status block. |
@@ -188,8 +299,14 @@ keys fall back to the schema defaults.
 | `maxDedupeEntries` | `1000` | Dedupe cache capacity. |
 
 `aborted`, `blocked`, `interrupted`, and any unrecognised `turn/end` reason have **no** enabling
-switch and never notify. There is also no option to send an email with an empty body: a turn with
-no visible text is skipped regardless of the notification switches.
+switch and never notify. There is also no option to send a *completion* mail with an empty body: a
+completed or max-tokens turn with no visible text is skipped regardless of the notification
+switches. A **terminal failure** is the one exception — it is mailed even with no visible output,
+because the failure itself is the message.
+
+`minTurnDurationMs` applies only to the settled-turn notification. It is never applied to a question
+or an approval: an agent that asks something two seconds into a turn is exactly the case the mail
+exists for, and a turn-length floor would suppress it.
 
 ## Credential
 
@@ -258,7 +375,7 @@ npm install
 npm run typecheck     # tsc --noEmit, sources and tests
 npm test              # node --test, no network
 npm run build         # tsc -> lib/
-npm pack              # dsh-mail-notify-0.1.1.tgz
+npm pack              # dsh-mail-notify-0.2.0.tgz
 npm run pack:check    # audit the archive's contents
 ```
 
@@ -304,6 +421,10 @@ remove that injection instead.
 | A turn finished but no candidate appears in the log | The plugin attached mid-turn: `durationMs` will be `null` and the counters only cover what it saw. That is expected and does not suppress the email. |
 | The token numbers look far too small | You are reading a `0.1.0` message. That version reported the last model call's counters, not the turn's. Check `schemaVersion` in the log line; `2` is the aggregate. Both versions are still distinguishable this way after the v0.1.1 release. |
 | `Token telemetry complete: no` | At least one model call of the turn reported no usable usage — a retried call is the usual cause. `candidate.produced` carries `usageMissingCount` and `usageUnobservableRetries` with the counts. |
+| A failed turn produced no email | `notifyErrors` is `false` by default, and the log line will read `suppressedReason":"disabled-by-policy"`. |
+| No question email arrived | `notifyQuestions` is `false` by default. `notification.suppressed {"notificationKind":"question"}` names the reason. |
+| A question call produced no email although the switch is on | Look for `question.unparsable`, which carries `dropReason` and `argumentsReadable` and nothing else — the argument text is deliberately not logged. |
+| No approval email arrived | `notifyApprovals` is `false` by default. Check that the ask actually appended an `approval/asked` audit event: nothing is mailed from `approval/request`, and nothing at all from `approval/decided`. |
 
 **To see the plugin's own structured log lines** you need an exporter: Cordis buffers logs in
 memory and prints nothing by itself. The `dsh` command line registers no exporter, which is why
@@ -325,25 +446,71 @@ mail provider you configure. Before turning it on, consider:
 2. If a recipient is a shared mailbox or a mailing list, everyone on it can read the content. The
    plugin cannot restrict that.
 3. `includeUserPrompt: true` sends your own prompt text as well.
-4. `includeSubagents: true` sends intermediate, often half-formed subagent output.
-5. TLS certificate verification is **always on**. There is no setting to disable it, and
+4. `includeSubagents: true` sends intermediate, often half-formed subagent output, and the same
+   applies to a subagent's question or approval.
+5. `notifyQuestions: true` and `notifyApprovals: true` send the model's own question text, the
+   option labels and descriptions it wrote, the name of the tool awaiting approval, and the asker's
+   reason. That content is written by the agent, not by the plugin, and it can quote your task or
+   your workspace.
+6. The plugin never builds a DSH Web link, never reads a token, and never puts one in a message. A
+   human-attention mail is notification-only: it cannot be answered by reply, and it carries no
+   credential, session secret, or deep link.
+7. TLS certificate verification is **always on**. There is no setting to disable it, and
    `rejectUnauthorized: false` appears nowhere in the package. A self-signed certificate must be
    solved with a real trust chain.
-6. Uninstalling or setting `enabled: false` is the only complete stop.
+8. Uninstalling or setting `enabled: false` is the only complete stop.
 
-The full boundary — threat model, credential lifecycle, log redaction rules, and the list of
-content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECURITY.md).
+The full boundary — threat model, credential lifecycle, log redaction rules, the enumerated
+human-attention exceptions, and the list of content that no configuration can send — is in
+[`docs/SECURITY.md`](docs/SECURITY.md).
+
+## Test the notification families
+
+The automated suite never sends mail and never boots DSH. One probe does both, and only when you run
+it. `scripts/probe-e2e.mjs` with `scripts/probe/` starts a loopback SMTP server on
+`127.0.0.1:2525`, boots the shipped `headless` profile against a disposable DSH home, and runs one
+task. It replaces exactly two things: the model provider (a scripted provider, so the run consumes
+no real quota and needs no credential) and the human (a stand-in that answers the question or
+approval request the profile raises).
+
+```powershell
+node scripts/probe-e2e.mjs questions "Ask me which implementation to use, then finish."
+node scripts/probe-e2e.mjs errors    "Fail this turn terminally."
+node scripts/probe-e2e.mjs approvals "Write a file outside the workspace."
+```
+
+Everything else is the production path: the real agent loop, the real tool registry, the real session
+log, the plugin's own listeners, queue, and mailer, and a real SMTP conversation. The probe prints
+the subject of every message the server accepted and writes the full messages, the child's stdout,
+and the child's stderr under `tmp/probe/out/`.
+
+| Scenario | Switch set | Measured result |
+| --- | --- | --- |
+| `questions` | `notifyQuestions: true`, `notifyCompleted: true` | Exactly 2 messages: `[DSH] Input required — Choose Mode` and `[DSH] Task completed — probe-scripted`. Two rather than one is the point: the question's dedupe namespace did not consume the turn's. |
+| `errors` | `notifyErrors: true`, `notifyCompleted: true` | Exactly 1 message: `[DSH] Task failed — QUOTA`. The scripted provider declares no failure policy, so the failure is terminal rather than retried, and the failed turn produced no visible output. |
+| `approvals` | `notifyApprovals: true`, `notifyCompleted: true` | The approval path was **not reached** in this environment — the approval request never opened. The scenario produced no approval mail, and its output is not evidence for the approval family. |
+
+Each scenario enables only the switch it is about; the other two interaction switches stay off, so a
+message can only have come from the family under test. The same switch set is the one the probe
+prints before booting, so what took effect and what was reported cannot diverge.
 
 ## Known limitations
 
 - **Deduplication does not survive a restart.** It is a bounded in-memory cache with a deliberately
-  narrow guarantee: one email per `(sessionId, turn)` per process lifetime.
+  narrow guarantee: one email per lifecycle key per process lifetime, where the key is namespaced
+  `turn:`, `question:`, or `approval:` so a mid-turn question cannot consume the turn's key.
+- **A question mail cannot be answered from the mail.** There is no reply channel, no action link,
+  and no approval button. The message says to open DSH, and that is the only way to answer.
+- **The approval path was not reached by the end-to-end probe.** The probe's `approvals` scenario
+  never opened an approval request in this environment, so it produced no evidence for the approval
+  family; that family is covered by the offline suite instead.
 - **Duration is unknown for a mid-turn attach.** If the plugin loads after a turn has started, that
   turn's `durationMs` is `null` (not `0`), so `minTurnDurationMs` cannot suppress it.
-- **Five of the six `turn/end` reasons have not been observed on a live turn.** `completed` is
-  verified end to end in a real composition; `max-tokens`, `error`, `aborted`, `blocked`, and
-  `interrupted` are verified against the recorded payload shapes and the frozen classification
-  table, but triggering them live depends on model and provider behaviour.
+- **Four of the six `turn/end` reasons have not been observed on a live turn.** `completed` is
+  verified end to end in a real composition, and `error` was exercised by the probe's `errors`
+  scenario against a scripted provider. `max-tokens`, `aborted`, `blocked`, and `interrupted` are
+  verified against the recorded payload shapes and the frozen classification table, but triggering
+  them live depends on model and provider behaviour.
 - **`session/disposed` rarely fires.** DSH keeps sessions loaded for the life of the process, so the
   dominant release path is the per-turn cleanup, not that event.
 - **Token counters are reported and folded, never interpreted.** `usage` is the sum of the per-call
@@ -373,7 +540,7 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`RELEASE_NOTES_V0.1.1.md`](RELEASE_NOTES_V0.1.1.md) | The release notes published on the v0.1.1 GitHub Release |
 | [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
 | [`RELEASE_NOTES_V0.1.0.md`](RELEASE_NOTES_V0.1.0.md) | The release notes published on the GitHub Release |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D017 decision records with reasons, rejected alternatives, and consequences |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D018 decision records with reasons, rejected alternatives, and consequences |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module layout and per-module responsibility boundaries |
 | [`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md) | Configuration specification: fields, defaults, validation, failure behaviour |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, credential lifecycle, TLS constraint, log redaction, privacy defaults |
@@ -381,6 +548,7 @@ content that no configuration can send — is in [`docs/SECURITY.md`](docs/SECUR
 | [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | P3.1–P3.7 execution plan with per-step verification and failure conditions |
 | [`docs/DSH_INTEGRATION.md`](docs/DSH_INTEGRATION.md) | The DSH interfaces this plugin actually uses, and the versions they were verified against |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Build, pack, install, update, and rollback |
+| [`scripts/probe/README.md`](scripts/probe/README.md) | What each end-to-end probe scenario asserts, and why the probe's switch set lives in one place |
 | [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md) | Functional scope and explicit non-goals |
 | [`00_MASTER.md`](00_MASTER.md) | Original project design and the execution roadmap |
 

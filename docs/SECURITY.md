@@ -16,7 +16,9 @@
 >
 > **第 5 节（隐私默认值与内容边界）。** 五个默认值逐项实现并与第 5 节一致。`includeUserPrompt` 的采集路径与第 6 节一致：采集始终进行，仅渲染受开关控制；采集的暂存以 120 s 为界并随 turn 结算清除。
 >
-> **第 6 节（仓库与产物卫生）。** `.gitignore` 未削弱。`package.json` 的 `files` 白名单为 `["lib", "cordis.patch.yml", "README.md", "LICENSE"]`，`tests/`、`scripts/` 与 `src/` 均不在其中；`tests/package/tarball.test.ts` 对真实 `.tgz` 逐条断言白名单命中与禁止项缺席，并额外扫描归档内每个编译文件，查找形如密码字面量的赋值。
+> **第 5 节（Phase 8 补充）。** 三个族各自的边界由 `tests/unit/human-attention.test.ts`（25 项，`HAT-*`）与 `tests/integration/attention-notification.test.ts`（19 项，`QUE-*` / `APR-*`）逐条断言，方式是**否定断言**：往调用里塞入 sentinel 凭据、额外字段与畸形 JSON，断言它们不出现在通知、队列条目与日志中。approval 的「参数不在消息里」不是本插件重新推导的属性，而是 DSH approval 契约本身的性质——`ApprovalNotification` 里没有任何字段可以承载它。
+>
+> **第 6 节（仓库与产物卫生）。** `.gitignore` 未削弱。`package.json` 的 `files` 白名单为 `["lib", "cordis.patch.yml", "README.md", "LICENSE"]`，`tests/`、`scripts/` 与 `src/` 均不在其中；`tests/package/tarball.test.ts` 对真实 `.tgz` 逐条断言白名单命中与禁止项缺席，并额外扫描归档内每个编译文件，查找形如密码字面量的赋值。Phase 8 新增的端到端探针（`scripts/probe-e2e.mjs` 与 `scripts/probe/`）同样落在 `files` 白名单之外，因此不进入归档。
 >
 > **第 7 节（运行时边界）与第 8 节（用户须知）。** `enabled: false` 在 `apply()` 内于任何资源创建之前短路返回，因此第 8 节第 4 条是事实而非近似：不注册监听器、不创建队列、不读取凭据。该行为在真实 DSH composition 中已观察为一条 `plugin.disabled` 日志与一次无副作用的运行。
 
@@ -31,8 +33,10 @@
 | --- | --- | --- |
 | 模型对用户工作区的输出 | 经第三方邮件服务商传输与存储；可能包含源码片段、路径、标识符 | 最小化外发字段（第 5 节）；正文上限；不提供开启推理/工具参数/工具结果的开关 |
 | SMTP 密码 | 经源码、配置、日志、Git 泄露 | 仅以引用名存储；每次操作解析；不缓存；不入日志（第 2、4 节） |
-| 推理内容与工具参数 | 经邮件正文泄露 | 白名单提取（第 5 节） |
+| 推理内容与工具参数 | 经邮件正文泄露 | 白名单提取（第 5 节）；自 Phase 8 起 `ask_user_question` 的展示字段是一个具名例外，其余工具参数仍无外发路径 |
 | 用户原始输入 | 经邮件正文泄露 | 默认关闭（第 5 节） |
+| 回合中的人工交互内容（question 文本、approval 工具名与 reason） | 经邮件正文泄露 | 两个开关默认关闭；question 经五项字段白名单解析，approval 只取 DSH 审计契约已发布的安全字段（第 5 节） |
+| 被审批工具的参数 | 经邮件正文泄露 | 由 DSH approval 契约本身排除——该契约刻意不发布参数，插件不回头 join `tool/call`（D018 第八条） |
 
 不在威胁模型内的项：本插件不防御已获得本机文件系统读写权限的攻击者——该攻击者可直接读取 DSH 的凭据存储，插件不是这一层级的控制点。本插件也不防御邮件服务商本身的泄露：一旦发送，内容即受服务商的策略与保留期约束，这一点必须对用户明确。
 
@@ -119,6 +123,10 @@ SMTP error category 与 class
 suppression reason
 credential 引用名（不是值）
 credential describe() 的 configured / source
+notificationKind（turn / question / approval）
+question 的计数、turn、step、dropReason、argumentsReadable、droppedFieldCount
+approval 的 toolName 与 hasReason / hasCallId 布尔值
+failure code 与 failure status（结构化标量；failure message 不进日志）
 ```
 
 ### 禁止记录
@@ -134,6 +142,10 @@ tool results
 SMTP auth 对象
 Nodemailer transport 对象
 完整邮件正文或主题（主题含 model 名，属允许范围，但不得整串记录正文）
+question 的文本、id、header、选项 label 与 description
+approval 的 reason 文本
+approval 的请求 id（只作去重身份，不写日志）
+failure message（provider 文本，只进邮件正文）
 ```
 
 ### 排障与内容可见性的边界
@@ -167,23 +179,57 @@ SMTP 错误对象在记录前必须处理，规则如下：
 | cwd | 是 | 用于区分工作区 |
 | provider / model | 是 | 用于区分来源模型 |
 | 耗时、是否完整覆盖 | 是 | 元数据 |
+| 终局失败的 code、HTTP status、provider 重试延迟与 provider message | **否** | `notifyErrors: true` 时外发；默认关闭 |
+| question 的展示字段（id、header、question、选项 label/description、multi_select） | **否** | `notifyQuestions: true` 时外发；默认关闭 |
+| approval 的工具名与提问方 reason | **否** | `notifyApprovals: true` 时外发；默认关闭 |
+| 被审批工具的参数 | **否** | 无开关可开启：DSH approval 契约本身不发布参数 |
 | 用户原始输入 | **否** | `includeUserPrompt: false` |
-| subagent 内容 | **否** | `includeSubagents: false` |
+| subagent 内容 | **否** | `includeSubagents: false`，覆盖全部三个通知族 |
 
 `includeMetadata` 为假时只保留状态与终止方式，其余元数据项不出现。
+
+### 通用工具参数禁止外发，例外恰好两项（Phase 8，D018 第七条）
+
+「tool arguments never leave the process」这一原则继续成立，不因新增功能而放宽。新增的例外是一个**语义白名单**而不是权限，且恰好两项，逐项列举如下：
+
+**例外一：`ask_user_question` 的展示字段。** DSH 已把这些字段定义为 human-facing presentation——它们本来就是给人类读者准备的。可外发的字段恰好五项：`id`、`header`、`question`、`options[].label`、`options[].description`，加上布尔字段 `multi_select`。**原始 `ask_user_question` arguments 仍然禁止外发**：JSON 字符串被解析后逐字段复制进新对象即丢弃，不保留引用、不落日志、不进邮件，实现中不存在对源对象的任何 spread；白名单未命名的字段（含任何 `additionalProperties`）即使到达也一律丢弃。可核验的实现约束有三条：`src/human-attention.ts` 是 `src/` 中唯一读取该字段的模块；`runtime-adapter.ts` 对该字段只做一次 `typeof === 'string'` 拷贝，不检视内容；`event-handler.ts` 只对该工具的**名字**做一次精确比较，随后把值直接转交解析器，不检视、不记录、不存储。
+
+**例外二：`approval/asked` 的工具名与提问方 reason。** 触发点是 durable 审计事件，只使用该审计契约实际提供的安全字段：`toolName` 与可选的 `reason`（另有 `id` 与可选 `callId`，二者只作去重身份，不进入邮件正文）。
+
+**被审批工具的参数不在消息里，这是构造性的而非过滤的结果。** DSH 的 approval 契约刻意不复制 tool arguments，`ApprovalNotification` 只有 `toolName` 与 `reason?` 两个内容字段，渲染器没有可以放入参数的字段。据此，「为了展示被批准的是什么」而回头把 `approval/asked.callId` 与 `tool/call.arguments` join 起来是被明确禁止的做法：它会直接破坏该契约保留的安全属性（D018 第八条、Rejected alternatives 第 9 项）。
+
+除上述两项之外，任何工具的参数（`bash` / `pwsh` 的命令行、`fs` 的路径、`subagent` 的提示词等）都没有进入通知、队列条目、日志或邮件的路径。
+
+### 失败邮件的脱敏规则（Phase 8，D018 第二、三条）
+
+终局失败的结构化事实由 `src/completion.ts` 的 `extractFailureFacts()` 逐键复制，规则如下：
+
+| 字段 | 处理 |
+| --- | --- |
+| `code` | 唯一参与分类的字段。按 `FAILURE_CODE_LIMIT`（120 码点）清洗截断；缺失时写入运行时自己的 `UNKNOWN` 取值，而不是插件自造的类型 |
+| `status` | 仅在为有限数字时保留；缺失即省略，不写默认值 |
+| `providerRetryAfterMs` | 仅在为有限且非负数字时保留；未报告的 Retry-After 与 0 毫秒是两个不同的事实，正文分别写作 `not reported` 与具体毫秒数 |
+| `message` | provider 文本，按 `REASON_DETAIL_LIMIT`（500 码点）清洗截断：C0/C1 控制字符压成空格、换行不保留。**永不参与判定**：禁止用 `"429"`、`"quota"`、`"timeout"` 等字符串匹配决定错误类型（D018 第二条） |
+| `requestId` | **不外发**。它是 provider 签发的不透明诊断标识，对收件人没有行动价值，出现在第三方邮箱里只扩大暴露面；`FailureFacts` 中没有该字段，因此它也没有可达的外发路径 |
+
+原始 `reason.error` 对象既不保留、不向下传递，也不写日志。日志只记 `failureCode` 与 `failureStatus` 两个结构化标量（`SECURITY.md` 第 4 节）。
+
+失败前已产生的用户可见输出会以外发为独立段落，标题为 `--- Partial model output before failure ---`，因此部分输出不会被读成最终答案；没有输出时正文写明 `--- No model output was produced before this failure ---`，而不是留空。
 
 ### 永久禁止外发的内容（无开关可开启）
 
 ```text
 reasoning 文本
 system prompt
-tool arguments
+tool arguments（除第 5 节逐项列举的两个例外）
 tool result 原文
 provider 原始错误响应的完整内容
-凭据、API key、SMTP password
+credential、API key、SMTP password
+provider 签发的 requestId
+DSH Web token、auth token、会话 secret，以及任何含它们的深链接
 ```
 
-这些项没有对应配置字段。为其提供开关会把「是否违反边界」的责任转移给用户，而其中若干项（如推理内容）在任何配置下都缺少外发的合理场景（D012）。
+这些项没有对应配置字段。为其提供开关会把「是否违反边界」的责任转移给用户，而其中若干项（如推理内容）在任何配置下都缺少外发的合理场景（D012）。深链接一项另有独立理由：插件不构造 DSH Web 链接，也不读取或发送任何 token，因此人工注意力邮件里没有可点击的链接，回复也不构成作答通道（D018 Consequences）。
 
 ### 正文上限与截断
 
@@ -194,6 +240,8 @@ provider 原始错误响应的完整内容
 所有源自候选的字符串在写入邮件主题或头部之前必须移除 `\r` 与 `\n`，并截断至固定长度。主题源自 `model` 名与状态文本，二者在正常情形下不含换行，但 `model` 字段的取值最终来自 provider 配置，属于不可信输入。
 
 正文中的元数据字段（cwd、session id、provider/model）同样按不可信文本处理：清洗控制字符。
+
+Phase 8 新增的两类主题沿用同一规则。`[DSH] Input required` 与 `[DSH] Approval required` 是常量前缀，因此没有任何模型提供的字符串能决定一条消息是否读起来像插件发出的指令；前缀之后的部分（question 的 header、approval 的工具名）是不可信文本，同样经过控制字符清洗与长度截断。question 与 approval 的正文文本在解析阶段已把整个 C0/C1 控制字符区间压成空格，**不保留换行**；这严于可读性的要求，且是刻意的：解析结果同时供给正文与主题行，主题行不能容忍 CR/LF，两者中更严的约束支配（D018 A11 补记）。
 
 ---
 
@@ -246,6 +294,7 @@ npm tarball 的 `files` 白名单必须排除：`.env` 及任何变体、`*.pem`
 | 队列有界、缓存有界、重试有界 | §19 明确禁止无限队列 / 无限 Map / 无限 retry |
 | 状态必须有释放路径 | 见 `ARCHITECTURE.md` 第 7 节 |
 | 附件不实现 | 附件不受正文同等的内容审查，且会引入 MIME 复杂度 |
+| 订阅面只读观察 | 触发点只有持久化的 `tool/call`（question）与 `approval/asked`（approval）；不注册 `user-questions/request` 与 `approval/request`，因此插件不能 claim / answer / reorder / delay / replace 官方 UI answerer（D018 第六、八、十一条） |
 
 「不吞掉异常」与「失败不影响 Agent Loop」并不矛盾，二者通过分层实现：监听器路径不抛异常（异常在适配器与策略层被转为拒绝决策），发送路径的异常被捕获后写入结构化日志与计数器，并作为 `SendResult` 返回给队列。异常被**记录**，而不是被**向上传播**。
 
@@ -260,5 +309,8 @@ npm tarball 的 `files` 白名单必须排除：`.env` 及任何变体、`*.pem`
 3. 若收件人地址指向共享邮箱或邮件组，可见范围由该地址的成员决定，插件无法控制。
 4. 关闭插件（`enabled: false`）是唯一的完全停止方式；仅调整通知开关仍会保留事件监听与状态累积（但不会发送）。
 5. 密码轮换后无需重启 DSH——每次发送都会重新解析凭据。
+6. `notifyErrors: true` 意味着终局失败的 provider 错误文本也会外发，且该邮件可能完全没有模型输出可读——它的全部信息量来自失败事实本身。
+7. `notifyQuestions: true` / `notifyApprovals: true` 意味着模型自己写的提问文本、选项，以及待审批的工具名与提问方 reason 会离开本机。这些内容由 Agent 产生，可能引用用户的任务、路径或业务标识。
+8. 人工注意力邮件是**通知**而不是通道：不能用回复作答，也没有可点击的链接；插件不构造 DSH Web 链接，也不读取或发送任何 token。作答只能在 DSH 内完成。
 
-第 4 项需要实现上的对应：`enabled: false` 时不注册监听器（见 `CONFIG_SPEC.md` 第 1 节），这使该说明成为事实而非近似。
+第 4 项需要实现上的对应：`enabled: false` 时不注册监听器（见 `CONFIG_SPEC.md` 第 1 节），这使该说明成为事实而非近似。第 8 项同样有实现上的对应：插件注册的监听器集合中不含 `user-questions/request` 与 `approval/request`，因此不存在任何从邮件回流的作答路径（D018 第十一条）。

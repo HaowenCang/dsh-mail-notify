@@ -1,7 +1,7 @@
 {
   "name": "dsh-mail-notify",
-  "version": "0.1.1",
-  "description": "DeepSeek Harness host plugin: email the final user-visible output of a top-level Agent turn over SMTP.",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness host plugin: email a top-level Agent turn's final output, its terminal failures, and its mid-turn human-attention requests over SMTP.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -32,7 +32,8 @@
     "test": "node --test \"tests/**/*.test.ts\"",
     "check:text": "node scripts/check-text-integrity.mjs",
     "pack:check": "node scripts/inspect-tarball.mjs",
-    "scan:secrets": "node scripts/scan-tarball-secrets.mjs dsh-mail-notify-0.1.1.tgz",
+    "scan:secrets": "node scripts/scan-tarball-secrets.mjs dsh-mail-notify-0.2.0.tgz",
+    "probe:e2e": "node scripts/probe-e2e.mjs",
     "smoke": "node scripts/smtp-smoke-test.ts",
     "verify": "npm run check:text && npm run typecheck && npm test && npm run build"
   },

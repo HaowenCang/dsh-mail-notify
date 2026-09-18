@@ -43,6 +43,7 @@ README.md 当前状态
 | D015 | 时长门槛在未知时长时不抑制 | Frozen |
 | D016 | 文档冲突裁决清单 | Frozen |
 | D017 | Turn 级遥测聚合语义（`usage` 语义变更，schema v2） | Frozen |
+| D018 | Human-attention 通知触发器与隐私边界（Phase 8，2026-09） | Frozen |
 
 ---
 
@@ -489,6 +490,8 @@ TLS 校验不可关闭的理由不是一般性的安全建议：邮件正文包�
 
 该规则**无配置开关**，对所有 `status` 一致生效。即使未来把 `notifyErrors` 打开，`status === 'error'` 且无可见文本的 Turn 仍然不发送——v1 不存在「仅状态邮件」这一形态。
 
+> **D018 对本条的修订（Phase 8，2026-09）**：本决策的后半句——「`status === 'error'` 且无可见文本的 Turn 仍然不发送」——已被 **D018 第 3 条**取代。自 v0.2.0 起，`error` 状态豁免于无可见文本抑制，理由是「终局故障」本身就是该邮件的全部内容，而终局 provider 故障恰恰是模型不产生任何可见输出的那一类情形。本条前半句（completion 型通知仍需可见文本）以及「规则无配置开关」仍完全有效。D011 的其余内容未被修改。
+
 **Reason**
 
 `00_MASTER.md` 与 README 定义的核心语义是「把该 Turn 最终用户可见的模型输出通过 SMTP 发送」。`visibleText` 为空时，邮件不含任何模型输出，收件人只会收到一封说明「某个 Turn 以某种状态结束」的邮件——它既不满足核心语义，也不携带用户在打开邮件前无法从其它渠道得知的信息。此类邮件在长期使用中会稳定地稀释通知通道的信噪比，使真正需要阅读的邮件被忽略。
@@ -824,7 +827,170 @@ D006 的三条原则继续成立且未被削弱；D017 补充的是同一 Turn �
 
 ---
 
-## 附：Implementation Addendum（Phase 3，2026-09）
+## D018 — Human-attention 通知触发器与隐私边界（Phase 8，2026-09）
+
+**背景**
+
+v0.1.1 的通知模型只有一个生命周期：一个已结算的 Turn。Phase 8 要求覆盖另外两条真实存在的链路——**终局失败**与**回合中的人工交互**（`ask_user_question`、`approval/asked`）。这三者不是同一个东西，把它们塞进同一个 `NotificationCandidate` 会让「已结算 Turn」这一语义被稀释，也会让隐私边界失去唯一的声明点。
+
+Phase 8 同时暴露了 v0.1.1 的一个实质缺陷：`turn/end.reason.kind === 'error'` 的 Turn 若无可见文本，则按 D011 被无条件抑制。真实运行时取证确认，终局 provider 故障（额度耗尽、速率限制最终失败、传输失败）恰好经常不产生任何可见输出——被抑制的正是最需要被告知的那一类失败。
+
+本决策同时冻结三件事：三条链路的触发点、失败邮件的结构语义、以及 `ask_user_question` 引入的、项目历史上第一个工具参数外发例外。
+
+**Decision**
+
+**一、终局失败只在最终 `turn/end` 触发，恢复的重试不触发。**
+
+失败事实只在 `turn/end` 的 `reason.error` 边界读取一次，且只在 `reason.kind === 'error'` 时读取。`llm/retry` 是**单次失败尝试**的持久化记录，不是故障通知触发器：DSH 内部重试后恢复的请求，其 Turn 仍以 `{ kind: 'completed' }` 结束，因此不产生任何故障邮件。
+
+```text
+temporary request failure
+    !=
+terminal turn failure
+```
+
+该区分是硬语义，不是优化。`llm/retry` 的默认可重试码集合为 `EMPTY_RESPONSE` / `RATE_LIMIT` / `SERVER` / `TIMEOUT` / `TRANSPORT`（`dsh-llm` 的 `DEFAULT_RETRYABLE_CODES`），在正常网络条件下这些都是会被自动恢复的瞬时状态；对它们发邮件会稳定地制造噪声。
+
+**二、失败分类只读结构化字段，不读 message 文本。**
+
+只读取 `reason.error` 的 `code`、`status`、`providerRetryAfterMs`。**禁止**用 `"429"`、`"quota"`、`"timeout"`、`"rate limit"` 等字符串匹配决定错误类型。`message` 仅供人阅读，不参与任何状态判定。该约束的权威依据是 DSH 自身：`HarnessError.code` 的文档明确要求「route on this, never by parsing `message`」。
+
+`reason.error.requestId` 本阶段**不外发**。它是 provider 签发的不透明诊断标识，对收件人没有行动价值，出现在第三方邮箱里只扩大暴露面。
+
+**三、故障邮件不要求可见文本；completion 邮件仍然要求。**
+
+```text
+completed notification
+    may require visible assistant output
+
+failure notification
+    does NOT require visible assistant output
+```
+
+该条款取代 D011 中「`status === 'error'` 且无可见文本仍不发送」的后半句。D011 的其余部分（completion 型通知需有文本、规则无配置开关）继续有效。
+
+故障邮件必须携带独立的 Failure 段，逐项声明观察结果；运行时不提供的项写「not reported」，**不写默认值**——未报告的 Retry-After 与 0 毫秒是两个不同的事实。失败前存在用户可见输出时，该输出放入标题为 `--- Partial model output before failure ---` 的独立段落，**不得**被表述为最终答案；不存在时写明 `--- No model output was produced before this failure ---`，而不是留空。
+
+**四、`notifyErrors` 的公开默认值保持 `false`。**
+
+升级不得使既有用户突然开始外发故障信息。修正的是文档语义而非默认值：`notifyErrors: true` 必须真正意味着「终局 error Turn 即使没有可见助手输出也会发送通知」。不新增含义重复的 `notifyFailures`。
+
+**五、人类注意力通知是回合中事件，不是已结算 Turn。**
+
+`question` / `approval` 属于回合中的人工交互生命周期，与终局 Turn 生命周期是两件事，因此在类型上是 discriminated union 的两个独立成员（`turn` / `question` / `approval`），而不是同一个 `NotificationCandidate` 的字段组合。渲染器按 `kind` 显式分支，question/approval/failure 三种形态**不得**伪装成「模型最终输出」。footer 措辞也按族区分。
+
+`minTurnDurationMs` **只**适用于终局 Turn 通知。刚进入 Turn 两秒就提问的 Agent 正是该邮件存在的理由，对它施加回合时长门槛会系统性地把它抑制掉。
+
+**六、`ask_user_question` 经持久化 `tool/call` 观察，不拦截 waterfall。**
+
+触发点是持久化的 `tool/call` 会话事件，且仅在 `name === 'ask_user_question'` 精确命中时才解析其 `arguments`。`user-questions/request` 是 **answer ownership chain**（返回答案即认领该请求，否则调用 `next()` 委托），通知插件不得注册它，也不得 claim / answer / reorder / delay / replace 官方 UI answerer。邮件通知必须是 observation only。
+
+收到合法 `tool/call` 后立即构建通知并异步入队，**同步返回**；不等待 `tool/result`、不等待 `turn/end`、更不等待人工回答。session/event 监听器仍不得 `await` SMTP。
+
+**七、通用工具参数仍然禁止外发；例外是一个语义白名单，不是权限。**
+
+项目原则「tool arguments never leave the process」继续成立。新增的例外极窄：
+
+> `ask_user_question` 中**已由 DSH 定义为 human-facing presentation** 的白名单字段可以进入 question notification。
+
+白名单恰好五项：`id`、`header`、`question`、`options[].label`、`options[].description`，加上布尔字段 `multi_select`。**原始 `ask_user_question` arguments 仍然禁止外发**：JSON 字符串被解析后逐字段复制进新对象即丢弃，不保留引用、不落日志、不进邮件；实现中不存在对源对象的任何 spread。其它任何 `additionalProperties` 一律丢弃。
+
+解析器必须防御性 `JSON.parse`、做形状检查、逐字段拷贝、并对长度与数量设界（问题数、每题选项数、单字段字符数、总字符数）。畸形 JSON 是正常结果而非异常：降级为「无可通知内容」并记录原因，**不得**在 session append 路径上抛出。
+
+**八、approval 经持久化 `approval/asked` 观察，不用 `approval/request` waterfall。**
+
+理由与第六条同构：`approval/asked` 是 durable audit 事件（与 `hook/*` 同类，无 `surfaceOp`），观察它不会争夺 answer ownership。只使用该审计契约实际提供的安全字段（`id`、`toolName`、`callId?`、`reason?`）；DSH 的 approval 契约**刻意不复制** tool arguments，该安全属性必须原样保持——不得为了展示「被批准的是什么」而回头去 join `tool/call`。
+
+只在 `asked` 时发送「需要处理」邮件。`decided` 表示人工已经作出决定，此时再发第二封「需要你处理」是错误陈述。本阶段也不发送「你已批准」状态邮件。
+
+**九、去重命名空间彼此独立。**
+
+```text
+turn:${sessionId}:${turn}
+question:${sessionId}:${callId}          // 无 callId 时回落 question:${sessionId}:t${turn}:s${step}
+approval:${sessionId}:${approvalId}
+```
+
+question 通知**不得**复用 `${sessionId}:${turn}`，否则它会与同一 Turn 的终局通知互相消耗：回合中的提问会占用该 Turn 的键，导致后续的完成或失败通知被判为重复而丢弃。同一 call 至多通知一次（进程生命周期内），同一 Turn 中不同 `callId` 各自可通知，终局通知在人工回答之后**仍然必须**保持可通知。
+
+**十、`includeSubagents` 的既有语义覆盖全部三个族。**
+
+`includeSubagents: false`（默认）下，子代理的回合、提问与审批都不发邮件。该判定在状态建立之前完成，因此被排除的会话不占内存。
+
+**十一、订阅面保持 observation only。**
+
+`approval/asked` 与 question 的 `tool/call` 都只读观察。插件注册的监听器集合中不存在 `user-questions/request` 与 `approval/request`。
+
+**Reason**
+
+三条链路各自的触发点是运行时取证的结果，而非设计偏好。`turn/end.reason.error` 的形状是 `LlmFailure = { message, code, status?, providerRetryAfterMs?, requestId? }`（`dsh-llm` 类型面，且由 `failureSnapshot` 在运行时校验为闭集），因此结构化分类有据可依；`tool/call` 的 payload 是 `{ turn, step, callId, name, arguments }`，`arguments` 是「模型原样产生的未解析 JSON 字符串」，因此「精确匹配工具名后再解析」是唯一可用的观察方式；`approval/asked` 的 payload 是 `{ id, toolName, callId?, reason? }`，其中**没有** turn 与 session 字段——turn 上下文是位置性的（只在 open turn 内合法），session 是 append 目标。这三点共同决定了触发器只能落在持久化事件上，而不是 waterfall 上。
+
+把 question/approval 塞进 `NotificationCandidate` 会在类型层面失去「该 Turn 是否已结算」这一判据，`status`、`durationMs`、`usage`、`visibleText` 这些字段对回合中事件均无意义；用一个 `candidate` 承载三种语义必然导致渲染层靠「哪些字段有值」反推形态，而那种反推正是把提问渲染成最终答案的路径。
+
+隐私例外之所以必须写成白名单而非权限，是因为工具参数的禁止规则一旦以「按工具名放行」的形式表达，下一个需要放行的工具就会以同样理由被加入。白名单把例外锚定在「DSH 已定义为面向人的展示字段」这一可核验的属性上：这些字段本来就是给人类读者准备的，而 `bash` 的命令行、`fs` 的路径、`subagent` 的提示词从来不是。
+
+**Rejected alternatives**
+
+1. **对每个 `llm/retry` 发失败邮件**：在正常网络条件下制造稳定噪声，且把「瞬时失败已被自动恢复」与「任务最终失败」等同起来，掩盖真正需要人工介入的事件。
+2. **用 message 文本匹配判断错误类型**：与 DSH 自身的显式要求冲突；provider 的措辞会变化，且模型可控文本出现在分类路径上等于把状态判定交给不可信输入。
+3. **保留「无可见文本即抑制」并让用户在 `notifyErrors` 之外再开一个「仅状态邮件」开关**：需要第二个邮件形态与第二套测试矩阵，而它要解决的问题（终局故障无输出）应当直接由 `notifyErrors: true` 的语义覆盖。
+4. **把 `notifyErrors` 默认改为 `true`**：升级会使用户在不知情的情况下开始外发故障信息，包含 provider 错误文本。
+5. **注册 `user-questions/request` waterfall 监听器并调用 `next()`**：会进入 answer ownership chain；即使只是调用 `next()` 也是对该链的参与，一旦某处实现偏离（忘记 `next()`、抛错、改变顺序），官方 UI answerer 就会被静默替换。
+6. **在 `approval/decided` 时补发一封结果邮件**：本阶段不需要状态邮件，且「已决定」的邮件会被误读为仍需处理。
+7. **question 复用 `${sessionId}:${turn}` 去重键**：会吞掉同一 Turn 的终局通知，这恰是 Phase 8 第 33 节端到端用例要证明不能发生的事。
+8. **把 `minTurnDurationMs` 也施加于 question/approval**：会系统性抑制「刚开始就提问」这一最常见情形。
+9. **为了展示被审批的命令而把 `approval/asked.callId` 与 `tool/call.arguments` join 起来**：直接破坏 DSH approval 契约刻意保留的安全属性。
+
+**Consequences**
+
+- `MailJob` 的载体由 `candidate` 变为 discriminated union `Notification`；`renderMail` 的入参同步改变。这是内部契约变更，不涉及 `NotificationCandidate` 的 `schemaVersion`（仍为 `2`）：候选本身未变，变的是承载它的信封。
+- 新增两个配置项 `notifyQuestions`、`notifyApprovals`，默认均为 `false`。README 必须明确：开启任一项都会把相应的人机交互内容发送到第三方邮件系统。
+- 新增模块 `src/human-attention.ts`，是 `src/` 中唯一被允许读取 `tool/call.arguments` 的模块；`runtime-adapter.ts` 只做字符串拷贝，`event-handler.ts` 只做一次精确工具名比较后转交。
+- `src/index.ts` 注册两个 `session/event` 监听器：一个维护 Turn 状态，一个只观察 `approval/asked`。`user-questions/request` 与 `approval/request` 不在注册集合内。
+- `DedupeCache` 新增 `questionKeyFor` / `approvalKeyFor`，`keyFor` 的返回值改为带 `turn:` 前缀。旧键形不再是契约的一部分（去重不持久化，跨重启无保证，见 D008），因此该变更无迁移成本。
+- `CREDENTIAL_REF_PATTERN` 放宽为同时接受裸名与 DSH 存储的 `<scope>/<id>` 寻址。运行时取证发现二者都是合法引用：Credential store 只接受 `<scope>/<id>`（每段 `^[a-z][a-z0-9-]*$`），而本项目历史上只校验裸名，因此一个把密码存进 store 的部署会在挂载期被拒绝，而操作者无法在不损害凭据卫生的前提下修正它。
+- 子代理的 `ask` 能力不假设可用：DSH 的 `dsh-user-questions` 对 delegated caller 抛 `DELEGATED_CALLER`，因此「子代理是否真能提问」随 composition 而异。插件的闸门（`includeSubagents`）必须独立于该能力可观测。
+- 本阶段不实现：邮件回复作答、邮件内 action link、一键批准、远程回调。也不构造任何含 DSH Web token 的深链接——`?token=...`、auth token、session secret 一律不得进入邮件。
+
+---
+
+## 附：Implementation Addendum — Phase 8（2026-09）
+
+本节记录 v0.2.0 实现期间出现的、D001–D017 未覆盖或需补充的事实。**D001–D017 本身除 D011 中已显式标注的那一句外未被修改。**
+
+### A8（补记，非偏离）— `tool/call` 适配输出的扩展
+
+D001 与 Phase 3 补记 A1 把 `tool/call` 的输出定为 `{ kind: 'tool-call', turn, step, timeMs }`。D018 第六条要求对工具名做精确比较、并在命中时把 `arguments` 交给专用解析器，因此该变体扩展为同时携带 `callId`、`name` 与 `rawArguments`。
+
+扩展是必要推论而非语义选择：没有 `name` 就无法在不解析参数的前提下判断是否为 question call，而「不解析其它工具的参数」正是 D018 第七条要求保持的性质。`rawArguments` 只允许被 `human-attention.ts` 读取；`runtime-adapter.ts` 只做一次 `typeof === 'string'` 拷贝，`event-handler.ts` 只做一次精确比较后转交，不检视、不记录、不存储。**不构成对 D001 的偏离。**
+
+实测边界：`tool/call` 的 `arguments` 在已安装运行时恒为**字符串**（`dsh-session` 类型面声明为 `arguments: string`）。适配器因此只接受字符串，遇到结构化值即视为无参数；解析器自身另有一条接受对象的兼容分支，使该字段在两侧都不会以未类型化的形式被传递。
+
+### A9（补记，非偏离）— `QuestionDropReason` 中 `content-limit` 在当前界限下不可达
+
+`content-limit` 只在「本次调用中每一个问题都被运行总量界限拒绝」时上报。而首个可用问题的成本上限为 `MAX_QUESTION_CHARS`（2000）加 `MAX_QUESTION_ID_CHARS`（200），远低于 `MAX_TOTAL_QUESTION_CHARS`（6000），因此首个问题除非自身字段校验失败，否则必被携带——该原因在当前界限下不可达。
+
+保留该成员而不删除，是因为解析器的记账逻辑确实能够上报它，且未来调整界限可能使其可达；「罕见」与「错误」不是同一件事。测试对该夹具能诚实给出的结论做了断言：以解析器可携带的最大集合验证原因未定义且明确不为 `content-limit`。
+
+### A10（补记，非偏离）— 实现期间修正的一个解析器缺陷
+
+`parseAskUserQuestionArguments` 的运行总量界限最初只为**被携带**的问题递增，导致被尺寸上限拒绝的问题不消耗额度，其后更小的问题会穿过缺口被携带，返回集合不再是调用的前缀。最小复现：三个 2000 字符问题加一个 3 字符问题，累计在第 3 问越界，实测携带第 1、2、4 问。
+
+修正方式为在边界判断**之前**执行累计（`totalChars += cost`），使被拒绝的问题同样消耗额度，携带集合成为严格前缀。该缺陷由 Phase 8 的单元测试发现，早于发布。
+
+### A11（补记）— `cleanText` 的实际行为严于其注释所述
+
+`human-attention.ts` 的 `cleanText` 委托 `sanitizeDetail`，后者把整个 C0/C1 控制字符区间压成空格，**不保留换行**。该行为严于「保留行结构」这一最初设想，且是刻意的：解析器的输出同时供给正文与主题行，主题行不能容忍 CR/LF，两者中更严的约束支配。注释已改为与实际一致。
+
+### A12（补记）— Phase 8 的端到端探针
+
+仓库内含 `scripts/probe-e2e.mjs` 与 `scripts/probe/`：它在一次性 `DSH_HOME` 上启动**出厂 `headless` profile**，并叠加四个探针行——脚本化模型 provider（因此运行不需要任何外部凭据、也不消耗真实套餐额度）、`ask_user_question` 工具、人工替身（应答 `user-questions/request` 与 `approval/request`）、以及指向回环 SMTP 服务器的 `dsh-mail-notify` 本体。真实的 agent loop、工具注册表、session log、插件的监听器/队列/mailer 与一次真实 SMTP 会话全部参与。
+
+与 Phase 3 补记 A6 的 `dev-boot-probe.mjs` 一样，它不属于产品交付面，`package.json` 的 `files` 白名单不含 `scripts/`，因此不进入 npm 归档。
+
+---
+
+## 附：本文件与其它文档的关系
 
 本节记录实现期间出现的、D001–D016 未覆盖或需补充说明的事实。**D001–D016 本身未被修改，也未新增或删除任何决策的语义。** 逐项标注它属于「补记」还是「需要裁决的实现偏离」。
 
@@ -885,3 +1051,4 @@ D007 的候选在实现中增加两个**可选**字段：`sawTurnStart?: boolean
 | `docs/RELEASE.md` | 构建、打包、安装、更新与回滚（Phase 3 新增） |
 | `docs/PRODUCT_SPEC.md` | 功能范围与明确的非目标（Phase 3 新增） |
 | `PHASE3_REPORT.md` | 实现与验证的逐项结果（Phase 3 新增） |
+| `PHASE8_REPORT.md` | D018 的实现与验证的逐项结果（Phase 8 新增） |
