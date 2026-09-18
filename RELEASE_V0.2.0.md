@@ -20,7 +20,7 @@ Release asset are byte-identical. No source, test, configuration, or dependency 
 | npm `dist.integrity` | `sha512-xkmDCFIQmqJf0vk4QChhQkl5li5j8dippoBhjMgGzngz1toXZd+8sZeQ5suyVB6uB6rGEW0ThZpV1+7zi4w7PA==` |
 | npm `dist.shasum` | `aefa75e4af37c7a2955e1cfee2d34c0e1766a31b` |
 | npm published | `2026-09-18T16:57:21.378Z` |
-| GitHub Release | `dsh-mail-notify v0.2.0`, id `RE_kwDOUYyDC84XV_2I`, published `2026-09-18T17:02:31Z` |
+| GitHub Release | `dsh-mail-notify v0.2.0`, REST id `391642504`, node_id `RE_kwDOUYyDC84XV_2I`, published `2026-09-18T17:02:31Z` |
 | GitHub Release asset | `dsh-mail-notify-0.2.0.tgz`, 123 390 bytes, asset id `573061736` |
 | Previous release | `v0.1.1`, tag object `819fde114357cb653d8ad902f74a8fd35d30a0af`, target `340ef3624126bc4cf8bd0f2c26394371e4fa7b56` |
 

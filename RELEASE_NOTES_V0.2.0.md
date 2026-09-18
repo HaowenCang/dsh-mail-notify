@@ -62,8 +62,10 @@ When enabled, an `approval/asked` event can send:
 [DSH] Approval required
 ```
 
-The mail includes only safe approval audit fields: the tool name, the call id, and the reason the
-requesting party gave. **Approved tool arguments are not sent.** The release probes assert this
+The mail includes only the human-facing approval fields needed by the recipient: the tool name and
+the reason the requesting party gave. The approval id and call id are used only for internal
+correlation and deduplication and are **not included in the message body**. **Approved tool arguments
+are not sent.** The release probes assert this
 directly, by scanning the raw SMTP payload, the plugin's stdout and the plugin's stderr for the
 approval's argument values and requiring zero hits.
 
