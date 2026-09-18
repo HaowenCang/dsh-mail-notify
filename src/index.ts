@@ -32,7 +32,7 @@ import { createMailer } from './mailer.ts'
 import { DedupeCache } from './notifier.ts'
 import { createMailQueue, defaultSleep, type MailQueue } from './queue.ts'
 import type { SessionEventLike, SessionLike } from './runtime-adapter.ts'
-import type { MailSink, ResolvedConfig } from './types.ts'
+import type { MailSink, Notification, ResolvedConfig } from './types.ts'
 import type { TransportFactory } from './transport.ts'
 
 /** Plugin display name; also the logger name and the patch row's `id`. */
@@ -153,9 +153,7 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
     onOutcome: (outcome) => {
       const { job, result, attempts, failure, delaysMs } = outcome
       const fields: Record<string, unknown> = {
-        sessionId: job.candidate.sessionId,
-        turn: job.candidate.turn,
-        status: job.candidate.status,
+        ...identify(job.notification),
         attempts,
         ok: result.ok,
         delaysMs: [...delaysMs],
@@ -169,8 +167,7 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
     },
     onDropped: (job, depth) => {
       logger.warn('queue.rejected', {
-        sessionId: job.candidate.sessionId,
-        turn: job.candidate.turn,
+        ...identify(job.notification),
         queueDepth: depth,
         queueSize: config.queueSize,
       })
@@ -196,6 +193,27 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
     handlers.onSessionDisposed(session)
   })
 
+  // A second listener rather than a branch inside the first, because the two
+  // registrations answer different questions: the one above maintains turn state
+  // for every event, while this one observes exactly one durable audit type.
+  // Keeping them apart makes the approval path visible at the registration site
+  // — and note which event is observed. `approval/asked` is a log-only audit
+  // record; the `approval/request` waterfall owns the answer and is deliberately
+  // not registered here (§11, §20).
+  //
+  // The cast is the same boundary the turn listener crosses, stated explicitly:
+  // the plugin's own structural view of a session event is deliberately narrower
+  // than DSH's declaration, so the registration function is typed against the
+  // structural signature and the runtime passes the real event through. Nothing
+  // in the body reads a field the structural view does not declare.
+  const onApprovalEvent = ((session: SessionLike, event: SessionEventLike): void => {
+    // Synchronous by contract, exactly like the turn listener above: the handler
+    // enqueues and returns, and never awaits SMTP on the append path.
+    if (event?.type !== 'approval/asked') return
+    handlers.onApprovalAsked(session, event.data)
+  }) as unknown as (session: unknown, event: unknown) => void
+  ctx.on('session/event', onApprovalEvent)
+
   ctx.effect(
     () => () => {
       // Order is deliberate. The handler is cleared first so no further job can
@@ -213,6 +231,8 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
     notifyCompleted: config.policy.notifyCompleted,
     notifyErrors: config.policy.notifyErrors,
     notifyMaxTokens: config.policy.notifyMaxTokens,
+    notifyQuestions: config.policy.notifyQuestions,
+    notifyApprovals: config.policy.notifyApprovals,
     minTurnDurationMs: config.policy.minTurnDurationMs,
     maxBodyChars: config.render.maxBodyChars,
     includeMetadata: config.render.includeMetadata,
@@ -251,6 +271,39 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
 /** The shape of the Cordis timer service this plugin uses. */
 interface TimerLike {
   timeout(delayMs: number): Promise<void>
+}
+
+/**
+ * The log scalars that identify a notification, per family.
+ *
+ * A question's text and an approval's reason never appear: the log records which
+ * notification was produced, not what it said.
+ *
+ * @param notification - the delivered notification.
+ * @returns fields safe to log.
+ */
+function identify(notification: Notification): Record<string, unknown> {
+  if (notification.kind === 'turn') {
+    return {
+      notificationKind: 'turn',
+      sessionId: notification.candidate.sessionId,
+      turn: notification.candidate.turn,
+      status: notification.candidate.status,
+    }
+  }
+  if (notification.kind === 'question') {
+    return {
+      notificationKind: 'question',
+      sessionId: notification.sessionId,
+      turn: notification.turn ?? null,
+      questionCount: notification.questions.length,
+    }
+  }
+  return {
+    notificationKind: 'approval',
+    sessionId: notification.sessionId,
+    toolName: notification.toolName,
+  }
 }
 
 /**

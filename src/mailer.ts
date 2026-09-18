@@ -22,7 +22,7 @@ import type { PluginLogger } from './logger.ts'
 import { classifyError, permanentFailure } from './retry.ts'
 import { renderMail } from './subject.ts'
 import { createSmtpTransport, type TransportFactory } from './transport.ts'
-import type { MailJob, MailSink, ResolvedConfig, SendResult } from './types.ts'
+import type { MailJob, MailSink, Notification, ResolvedConfig, SendResult } from './types.ts'
 
 /** Dependencies the mailer needs; all injectable so tests bind doubles. */
 export interface MailerOptions {
@@ -85,21 +85,24 @@ export function createMailer(options: MailerOptions): MailSink {
     // The cap is applied here, once, and its own answer is what marks the job:
     // rendering the full text while claiming truncation would let an unbounded
     // model answer through under a marker that says it was bounded.
-    const bounded = truncateVisibleText(job.candidate.visibleText, config.render.maxBodyChars)
+    //
+    // Only a turn notification has an unbounded body. A human-attention
+    // notification was already bounded by the parser at the point where its
+    // fields were allowlisted, so applying `maxBodyChars` to it would mean
+    // re-truncating text that is by construction already inside the bound.
+    const notification = renderNotification(job, config)
     const rendered = renderMail({
-      candidate: { ...job.candidate, visibleText: bounded.text },
+      notification: notification.value,
       render: config.render,
-      truncated: bounded.truncated,
+      truncated: notification.truncated,
     })
 
     logger.debug('mail.render', {
-      sessionId: job.candidate.sessionId,
-      turn: job.candidate.turn,
-      status: job.candidate.status,
+      ...logFieldsFor(job),
       subjectLength: Array.from(rendered.subject).length,
       bodyChars: rendered.bodyTextLength,
       recipientCount: job.to.length,
-      truncated: bounded.truncated,
+      truncated: notification.truncated,
     })
 
     const credential = await resolveSmtpPassword(provider, config.smtp.smtpPasswordCredential)
@@ -109,8 +112,7 @@ export function createMailer(options: MailerOptions): MailSink {
       // names the reference without ever reading its value.
       const failure = permanentFailure('credential-missing', credential.message ?? 'the credential was not resolved')
       logger.warn('mail.credential-missing', {
-        sessionId: job.candidate.sessionId,
-        turn: job.candidate.turn,
+        ...logFieldsFor(job),
         credentialRef: config.smtp.smtpPasswordCredential,
         category: failure.category,
         message: failure.message,
@@ -134,9 +136,7 @@ export function createMailer(options: MailerOptions): MailSink {
         text: rendered.text,
       })
       logger.info('mail.sent', {
-        sessionId: job.candidate.sessionId,
-        turn: job.candidate.turn,
-        status: job.candidate.status,
+        ...logFieldsFor(job),
         bodyChars: rendered.bodyTextLength,
         recipientCount: job.to.length,
       })
@@ -144,8 +144,7 @@ export function createMailer(options: MailerOptions): MailSink {
     } catch (error) {
       const failure = classifyError(error)
       logger.warn('mail.failed', {
-        sessionId: job.candidate.sessionId,
-        turn: job.candidate.turn,
+        ...logFieldsFor(job),
         category: failure.category,
         retryClass: failure.retryClass,
         code: failure.code ?? null,
@@ -154,5 +153,57 @@ export function createMailer(options: MailerOptions): MailSink {
       })
       return { ok: false, class: failure.retryClass, category: failure.category, message: oneLine(failure.message) }
     }
+  }
+}
+
+/**
+ * The log scalars identifying one job, per notification family.
+ *
+ * A question's text and an approval's reason are never among them: they are the
+ * body, and the log records only which notification was sent and for what
+ * session, turn, or tool.
+ *
+ * @param job - the job being delivered.
+ * @returns the log fields, without any notification body content.
+ */
+function logFieldsFor(job: MailJob): Record<string, unknown> {
+  const notification = job.notification
+  if (notification.kind === 'turn') {
+    return {
+      notificationKind: 'turn',
+      sessionId: notification.candidate.sessionId,
+      turn: notification.candidate.turn,
+      status: notification.candidate.status,
+    }
+  }
+  if (notification.kind === 'question') {
+    return {
+      notificationKind: 'question',
+      sessionId: notification.sessionId,
+      turn: notification.turn ?? null,
+      step: notification.step ?? null,
+      questionCount: notification.questions.length,
+    }
+  }
+  return {
+    notificationKind: 'approval',
+    sessionId: notification.sessionId,
+    toolName: notification.toolName,
+  }
+}
+
+/**
+ * Apply the body cap to a notification, or leave it alone.
+ *
+ * @param job - the job being delivered.
+ * @param config - the resolved configuration.
+ * @returns the notification to render and whether its visible text was cut.
+ */
+function renderNotification(job: MailJob, config: ResolvedConfig): { value: Notification; truncated: boolean } {
+  if (job.notification.kind !== 'turn') return { value: job.notification, truncated: false }
+  const bounded = truncateVisibleText(job.notification.candidate.visibleText, config.render.maxBodyChars)
+  return {
+    value: { kind: 'turn', candidate: { ...job.notification.candidate, visibleText: bounded.text } },
+    truncated: bounded.truncated,
   }
 }

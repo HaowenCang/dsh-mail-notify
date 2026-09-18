@@ -15,8 +15,21 @@ import Schema from '@deepseek-ai/schemastery'
 import type { ResolvedConfig } from './types.ts'
 import { RETRY_MAX_DELAY_MS } from './retry.ts'
 
-/** Reference-name grammar accepted for `smtpPasswordCredential` (D010). */
-export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+/**
+ * Reference-name grammar accepted for `smtpPasswordCredential` (D010).
+ *
+ * Two forms are legitimate, so both are accepted. A bare identifier is the
+ * environment-layer spelling this project has always shipped — an environment
+ * variable name such as `DSH_MAIL_SMTP_PASSWORD`. A `<scope>/<id>` pair is the
+ * DSH Credential store's own addressing, where each segment must match
+ * `^[a-z][a-z0-9-]*$`.
+ *
+ * Accepting only the first would reject a profile whose password lives in the
+ * store under the only key shape the store accepts; accepting only the second
+ * would break every existing deployment. The store, not this pattern, remains
+ * the authority on whether a reference resolves.
+ */
+export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(\/[a-z][a-z0-9-]*)?$/
 
 /** Deliberately permissive address check: the SMTP server is the real judge. */
 const ADDRESS_PATTERN = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/
@@ -38,8 +51,20 @@ export const Config = Schema.object({
 
   includeSubagents: Schema.boolean().default(false).description('Whether subagent turns are notified too.'),
   notifyCompleted: Schema.boolean().default(true).description('Notify on completed turns.'),
-  notifyErrors: Schema.boolean().default(false).description('Notify on turns that ended with an error.'),
+  notifyErrors: Schema.boolean()
+    .default(false)
+    .description(
+      'Notify on turns that ended with a terminal error, including errors that produced no visible assistant output.',
+    ),
   notifyMaxTokens: Schema.boolean().default(true).description('Notify on turns truncated at the token limit.'),
+  notifyQuestions: Schema.boolean()
+    .default(false)
+    .description(
+      'Notify when the agent blocks on ask_user_question. Sends the question text and options to the mail system.',
+    ),
+  notifyApprovals: Schema.boolean()
+    .default(false)
+    .description('Notify when the agent blocks on an approval decision. Sends the tool name and reason to the mail system.'),
 
   minTurnDurationMs: Schema.natural()
     .min(0)
@@ -133,13 +158,7 @@ export function resolveConfig(raw: unknown): ConfigResolution {
           from: '',
           to: [],
         },
-        policy: {
-          includeSubagents: false,
-          notifyCompleted: true,
-          notifyErrors: false,
-          notifyMaxTokens: true,
-          minTurnDurationMs: 0,
-        },
+        policy: { ...disabledPolicy() },
         render: {
           maxBodyChars: 100_000,
           includeMetadata: true,
@@ -218,8 +237,16 @@ export function resolveConfig(raw: unknown): ConfigResolution {
   if (!validated.smtpSecure && validated.smtpPort === 465) {
     warnings.push('smtpSecure is false while smtpPort is 465: port 465 normally expects implicit TLS (smtpSecure: true)')
   }
-  if (!validated.notifyCompleted && !validated.notifyErrors && !validated.notifyMaxTokens) {
-    warnings.push('notifyCompleted, notifyErrors, and notifyMaxTokens are all false: no email can ever be sent')
+  if (
+    !validated.notifyCompleted &&
+    !validated.notifyErrors &&
+    !validated.notifyMaxTokens &&
+    !validated.notifyQuestions &&
+    !validated.notifyApprovals
+  ) {
+    warnings.push(
+      'notifyCompleted, notifyErrors, notifyMaxTokens, notifyQuestions, and notifyApprovals are all false: no email can ever be sent',
+    )
   }
 
   const resolved: ResolvedConfig = {
@@ -238,6 +265,8 @@ export function resolveConfig(raw: unknown): ConfigResolution {
       notifyCompleted: validated.notifyCompleted,
       notifyErrors: validated.notifyErrors,
       notifyMaxTokens: validated.notifyMaxTokens,
+      notifyQuestions: validated.notifyQuestions,
+      notifyApprovals: validated.notifyApprovals,
       minTurnDurationMs: validated.minTurnDurationMs,
     },
     render: {
@@ -266,13 +295,7 @@ function emptyResolved(): ResolvedConfig {
   return {
     enabled: false,
     smtp: { smtpHost: '', smtpPort: 587, smtpSecure: false, smtpUser: '', smtpPasswordCredential: '', from: '', to: [] },
-    policy: {
-      includeSubagents: false,
-      notifyCompleted: true,
-      notifyErrors: false,
-      notifyMaxTokens: true,
-      minTurnDurationMs: 0,
-    },
+    policy: { ...disabledPolicy() },
     render: { maxBodyChars: 100_000, includeMetadata: true, includeUserPrompt: false, includeFooter: true },
     retry: { retryAttempts: 3, retryBaseDelayMs: 1000, retryMaxDelayMs: RETRY_MAX_DELAY_MS },
     queueSize: 100,
@@ -280,5 +303,25 @@ function emptyResolved(): ResolvedConfig {
     smtpConfigured: false,
     warnings: [],
     errors: [],
+  }
+}
+
+/**
+ * The default policy switches, shared by every non-validated construction path.
+ *
+ * Defined once so the disabled and failed-validation shapes cannot drift from
+ * the schema defaults: a reader comparing them sees one source of truth.
+ *
+ * @returns a fresh policy object with the frozen safe defaults.
+ */
+function disabledPolicy(): ResolvedConfig['policy'] {
+  return {
+    includeSubagents: false,
+    notifyCompleted: true,
+    notifyErrors: false,
+    notifyMaxTokens: true,
+    notifyQuestions: false,
+    notifyApprovals: false,
+    minTurnDurationMs: 0,
   }
 }

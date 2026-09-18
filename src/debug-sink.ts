@@ -17,10 +17,11 @@
  */
 
 import type { PluginLogger } from './logger.ts'
-import type { MailJob, MailSink, SendResult } from './types.ts'
+import type { Notification, MailJob, MailSink, SendResult } from './types.ts'
 
-/** The safe per-job summary the debug sink records. */
-export interface DebugSinkRecord {
+/** The safe per-job summary the debug sink records for a settled turn. */
+export interface DebugSinkTurnRecord {
+  notificationKind: 'turn'
   sessionId: string
   turn: number
   status: string
@@ -35,9 +36,37 @@ export interface DebugSinkRecord {
   usageComplete: boolean
   /** `null` when the turn's start was never observed. */
   durationMs: number | null
+  /** Structured failure code, present only for a terminal error (D018). */
+  failureCode: string | null
   truncated: boolean
   recipientCount: number
 }
+
+/**
+ * The safe per-job summary for a mid-turn human-attention notification.
+ *
+ * The question text and the approval reason are deliberately absent: they are
+ * the body of the mail, and the buffer's purpose is to prove *that* a
+ * notification was produced, not to keep a second copy of its content.
+ */
+export interface DebugSinkAttentionRecord {
+  notificationKind: 'question' | 'approval'
+  sessionId: string
+  turn: number | null
+  step: number | null
+  /** Tool awaiting approval; `null` for a question. */
+  toolName: string | null
+  questionCount: number
+  /** Whether any carried question offered options. */
+  hasOptions: boolean
+  /** Code-point length of the carried question text, measured not sampled. */
+  bodyTextLength: number
+  truncated: boolean
+  recipientCount: number
+}
+
+/** One recorded job, discriminated by the notification family it carried. */
+export type DebugSinkRecord = DebugSinkTurnRecord | DebugSinkAttentionRecord
 
 /** A `debug` sink plus the bounded buffer of everything it recorded. */
 export interface DebugSink {
@@ -94,25 +123,47 @@ export function createDebugSink(
  * Reduce a job to the recordable field set.
  *
  * `bodyTextLength` is measured, never sampled: the length of what would be sent
- * is safe to disclose, while any fragment of it is not.
+ * is safe to disclose, while any fragment of it is not. This holds for every
+ * notification family — a question's recorded length says how much text went
+ * out without revealing a word of it.
  *
  * @param job - the queued job.
  * @returns the safe summary.
  */
 function summarize(job: MailJob): DebugSinkRecord {
-  const candidate = job.candidate
+  const notification: Notification = job.notification
+  if (notification.kind === 'turn') {
+    const candidate = notification.candidate
+    return {
+      notificationKind: 'turn',
+      sessionId: candidate.sessionId,
+      turn: candidate.turn,
+      status: candidate.status,
+      turnEndKind: candidate.turnEndKind,
+      visibleTextLength: candidate.visibleTextLength,
+      bodyTextLength: Array.from(candidate.visibleText).length,
+      explicitToolErrorCount: candidate.explicitToolErrorCount,
+      telemetryComplete: candidate.telemetryComplete,
+      usageSampleCount: candidate.usageSampleCount,
+      usageComplete: candidate.usageComplete,
+      durationMs: candidate.durationMs ?? null,
+      failureCode: candidate.failure?.code ?? null,
+      truncated: job.truncated,
+      recipientCount: job.to.length,
+    }
+  }
+
+  const isQuestion = notification.kind === 'question'
+  const questions = isQuestion ? notification.questions : []
   return {
-    sessionId: candidate.sessionId,
-    turn: candidate.turn,
-    status: candidate.status,
-    turnEndKind: candidate.turnEndKind,
-    visibleTextLength: candidate.visibleTextLength,
-    bodyTextLength: Array.from(candidate.visibleText).length,
-    explicitToolErrorCount: candidate.explicitToolErrorCount,
-    telemetryComplete: candidate.telemetryComplete,
-    usageSampleCount: candidate.usageSampleCount,
-    usageComplete: candidate.usageComplete,
-    durationMs: candidate.durationMs ?? null,
+    notificationKind: notification.kind,
+    sessionId: notification.sessionId,
+    turn: notification.turn ?? null,
+    step: notification.step ?? null,
+    toolName: isQuestion ? null : notification.toolName,
+    questionCount: questions.length,
+    hasOptions: questions.some((item) => item.options !== undefined),
+    bodyTextLength: questions.reduce((total, item) => total + Array.from(item.question).length, 0),
     truncated: job.truncated,
     recipientCount: job.to.length,
   }
