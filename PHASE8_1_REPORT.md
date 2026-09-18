@@ -434,13 +434,36 @@ Phase 8 记录过一个理论性担忧：fork 出的会话也携带 `parentSessi
 分支：`feat/v0.2.0-human-attention`（从 `main` 的 `2296375` 创建）。本阶段提交边界：
 
 ```text
-fix: align smtp credential references with dsh contract
-test: close approval e2e and credential contract gaps
+f44fd2a fix: align smtp credential references with dsh contract
+0f20373 test: close approval e2e and credential contract gaps
+9a9cf84 docs: state the phase 8.1 test-count reconciliation exactly
 ```
 
-未执行且不得执行：移动或改写 `v0.1.1` / `v0.1.0`、force push 已发布历史、合并到 `main`、打 tag、npm publish。两个 tag 的对象与目标 commit 在本阶段结束时与阶段开始时一致（§1 表格）。
+| 项 | 值 |
+| --- | --- |
+| 本地 HEAD | `9a9cf8469e1dbe2454cb9b5d7c84336a1400f5cb` |
+| `origin/feat/v0.2.0-human-attention` | `9a9cf8469e1dbe2454cb9b5d7c84336a1400f5cb`（与本地一致） |
+| `rev-list --left-right --count origin/main...HEAD` | `0 9` |
+| 分支相对远端 | `rev-list --left-right --count origin/feat/v0.2.0-human-attention...HEAD` = `0 0` |
+| working tree | 干净 |
+| `v0.1.1` tag（本地与远端） | 对象 `819fde11…` → commit `340ef362…`，未移动 |
+| `v0.1.0` tag（本地与远端） | 对象 `0d113e70…` → commit `02191a43…`，未移动 |
+| npm 已发布版本 | `0.1.0`、`0.1.1`；无 `0.2.0` |
 
-分支已推送至 `origin`，推送后的远端 SHA 与工作树状态见 `PHASE8_1_REPORT.md` 交付说明与最终答复；本报告不写入自身的提交哈希（一个文件无法命名包含它自己的那个提交）。
+推送后按 Phase 8.1 §1 的要求从远端独立复读六个文件，方式为比对本地 blob 哈希与 `origin/feat/v0.2.0-human-attention:<path>` 的 blob 哈希，并另读远端内容：
+
+| 文件 | blob | 与本地 |
+| --- | --- | --- |
+| `src/human-attention.ts` | `f426576c9874ad8f5aa9700b030bf49f2fd54b85` | 一致 |
+| `src/config.ts` | `a88774d9f07b7c8262b43b62cbf03cb16cd72235` | 一致 |
+| `src/runtime-adapter.ts` | `c753cc800c56c697bf8d780de618684b61844543` | 一致 |
+| `src/event-handler.ts` | `ecfed95eca326289ab4226dd54555cdace2e7d68` | 一致 |
+| `docs/DECISIONS.md` | `87bc260f506a605903da848f09fe4355f28c7f81` | 一致 |
+| `PHASE8_REPORT.md` | `df1cabf265a747266eb998085b5f71366b286609` | 一致 |
+
+从远端内容另行核对的三项事实：`src/config.ts` 的模式为 `^[A-Za-z_][A-Za-z0-9_]*$`；`src/index.ts` 的 `ctx.on` 调用恰好三处（两处 `session/event`、一处 `session/disposed`），**没有** `approval/request` 或 `user-questions/request`；`docs/DECISIONS.md` 含 D019 与 A13–A15。
+
+未执行且不得执行：移动或改写 `v0.1.1` / `v0.1.0`、force push 已发布历史、合并到 `main`、打 tag、npm publish。两个 tag 的对象与目标 commit 在本阶段结束时与阶段开始时一致（§1 表格）。本报告不写入自身的提交哈希（一个文件无法命名包含它自己的那个提交）；上表的分支 HEAD 即包含本报告的提交。
 
 ---
 
