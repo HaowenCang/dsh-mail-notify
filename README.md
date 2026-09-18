@@ -5,7 +5,7 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.2.0` (an unpublished release candidate; `0.1.1` is the current release)
+- Version: `0.2.0` (released)
 - Host-only: no browser half, no UI, no Client package
 - Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
@@ -33,15 +33,18 @@ changed no source line: the plugin reaches Nodemailer through one file and one c
 [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md).
 
 
-**v0.2.0 is a release candidate, and is not published.** No `npm publish`, no `v0.2.0` tag, and no
-GitHub Release were performed; `0.1.1` remains the released version. The candidate tarball is
-`dsh-mail-notify-0.2.0.tgz`. What the candidate adds is two notification lifecycles beside the
-release that already existed — a **terminal turn failure** and a **mid-turn human-attention
-request** — with two new switches, `notifyQuestions` and `notifyApprovals`, both off by default.
-`notifyErrors` keeps its `false` default and gains the meaning it always claimed: a failed turn is
-mailed even when it produced no visible assistant output. `smtpPasswordCredential` takes exactly one
-form — the DSH `CredentialRef` grammar `^[A-Za-z_][A-Za-z0-9_]*$`, an environment-style name such as
-`DSH_MAIL_SMTP_PASSWORD`.
+**v0.2.0 released.** It is published as `dsh-mail-notify@0.2.0` on npm, tagged `v0.2.0` at commit
+`713100ac`, with the release archive attached to the GitHub Release. The local archive, the npm
+registry artifact, and the GitHub asset are byte-identical (SHA-256
+`50d130b57cf8668ff73573fd5ee2e0555f41014531c4d58aae3239c54f6e820d`). What it adds is two notification
+lifecycles beside the release that already existed — a **terminal turn failure** and a **mid-turn
+human-attention request** — with two new switches, `notifyQuestions` and `notifyApprovals`, both off
+by default. `notifyErrors` keeps its `false` default and gains the meaning it always claimed: a failed
+turn is mailed even when it produced no visible assistant output. `smtpPasswordCredential` takes
+exactly one form — the DSH `CredentialRef` grammar `^[A-Za-z_][A-Za-z0-9_]*$`, an environment-style
+name such as `DSH_MAIL_SMTP_PASSWORD`. The new paths were validated only against DSH `0.1.5-rc.1`;
+see [`RELEASE_V0.2.0.md`](RELEASE_V0.2.0.md) and
+[`RELEASE_NOTES_V0.2.0.md`](RELEASE_NOTES_V0.2.0.md).
 
 The end-to-end probe in this repository boots the shipped `headless` profile against a disposable
 DSH home, a loopback SMTP server, a scripted model provider, and a human stand-in. Its scenarios were
@@ -212,7 +215,7 @@ The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so
 package also mounts it.
 
 ```powershell
-dsh plugin --profile web add dsh-mail-notify@0.1.1
+dsh plugin --profile web add dsh-mail-notify@0.2.0
 ```
 
 For development, or on a machine without registry access, install the packed archive instead:
@@ -560,6 +563,9 @@ prints before booting, so what took effect and what was reported cannot diverge.
 | [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md) | Phase 6.1 report: the Nodemailer 7 → 10 security uplift, removal of `@types/nodemailer`, and the re-verification performed on the upgraded dependency |
 | [`PHASE8_REPORT.md`](PHASE8_REPORT.md) | Phase 8 report: the three notification lifecycles (`D018`), the runtime evidence behind each trigger, the two defects found and fixed during the work, the full gate results, and the one evidence path this phase did not close |
 | [`PHASE8_1_REPORT.md`](PHASE8_1_REPORT.md) | Phase 8.1 report: the approval end-to-end chain in a real assembly (allowed-once, dedupe, rejected), the credential-reference reconciliation and its evidence (`D019`), the `content-limit` and `parentSession` dispositions, and the full release-candidate gate results |
+| [`PHASE8_2_REPORT.md`](PHASE8_2_REPORT.md) | Phase 8.2 report: the commit-sequence record for the Phase 8.2 documentation set |
+| [`RELEASE_V0.2.0.md`](RELEASE_V0.2.0.md) | v0.2.0 release report: release source, main fast-forward, tag object, verification results, the six E2E probes, npm and GitHub publication records, the three-way artifact hashes, and the registry fresh-install plus published-package runtime check |
+| [`RELEASE_NOTES_V0.2.0.md`](RELEASE_NOTES_V0.2.0.md) | The release notes published on the v0.2.0 GitHub Release |
 | [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md) | v0.1.1 release report: source commit, tag object, verification results, npm and GitHub publication records, the three-way artifact hashes, and the registry fresh-install result |
 | [`RELEASE_NOTES_V0.1.1.md`](RELEASE_NOTES_V0.1.1.md) | The release notes published on the v0.1.1 GitHub Release |
 | [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
