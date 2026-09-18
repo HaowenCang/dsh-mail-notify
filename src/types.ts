@@ -442,6 +442,25 @@ export type QuestionDropReason =
   | 'unreadable-arguments'
   | 'no-questions'
   | 'question-limit'
+  /**
+   * Reserved, and currently unreachable — kept deliberately.
+   *
+   * The reason is reported only when no question was carried *and* a question
+   * was refused by the running-total bound rather than by the count bound. The
+   * two bounds make that combination impossible: a question's cost is at most
+   * `MAX_QUESTION_CHARS + MAX_QUESTION_ID_CHARS`, which is below
+   * `MAX_TOTAL_QUESTION_CHARS`, so the first well-formed question is always
+   * carried — and the size bound can only refuse a question *after* one has
+   * been carried, which means the result is a partial carry and the reason is
+   * never computed at all. `HAT-11c` proves the boundary; `HAT-11e` proves the
+   * unreachability by exhausting the budget and observing a partial carry.
+   *
+   * Removing the member would delete a value the accounting in
+   * `human-attention.ts` still assigns (`truncatedBySize`), so a future bound
+   * change that reordered the two bounds would silently start reporting a
+   * reason the vocabulary no longer has. Keeping it costs one union arm and one
+   * test, and the test states exactly why it cannot fire today (Phase 8.1 §16).
+   */
   | 'content-limit'
   | 'no-usable-question'
 

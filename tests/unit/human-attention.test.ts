@@ -524,6 +524,45 @@ test('HAT-11d questions that are all unusable report neither limit', () => {
   assert.equal(result.dropReason, 'no-usable-question')
 })
 
+test('HAT-11e exhausting the size budget yields a partial carry, which is why content-limit cannot be reported', () => {
+  // The unreachability of `content-limit` has a precise cause, and this fixture
+  // exercises it: the size bound *does* engage, refusing questions once the
+  // running total is spent — but a question can only be refused by it after an
+  // earlier one has been carried, because the cheapest well-formed question
+  // (MAX_QUESTION_CHARS + MAX_QUESTION_ID_CHARS = 2200) is below the total
+  // budget (6000). So a refusal by size always leaves `questions` non-empty,
+  // and the branch that reports `content-limit` requires it to be empty.
+  //
+  // The fixture below is that shape: five questions of 1495 characters plus a
+  // two-character id each spend 7485 in total, and the running total passes
+  // 6000 at the fifth question — with four already carried.
+  const result = parseAskUserQuestionArguments(
+    JSON.stringify({
+      questions: [
+        { id: 'q1', question: 'a'.repeat(1495) },
+        { id: 'q2', question: 'b'.repeat(1495) },
+        { id: 'q3', question: 'c'.repeat(1495) },
+        { id: 'q4', question: 'd'.repeat(1495) },
+        { id: 'q5', question: 'e'.repeat(1495) },
+      ],
+    }),
+  )
+
+  assert.equal(result.questions.length, 4, 'the size bound refuses only what comes after the budget is spent')
+  assert.deepEqual(
+    result.questions.map((question) => question.id),
+    ['q1', 'q2', 'q3', 'q4'],
+    'the carried set is a prefix of the call',
+  )
+  assert.equal(result.droppedQuestions, 1)
+  assert.deepEqual(result.droppedFields, ['questions[4]'], 'the fifth question is the one that crosses the total')
+  // A partial carry is not a drop: the reason field describes a call that
+  // carried nothing, and reporting one here would be the "content-limit" value
+  // on a call that in fact delivered four questions.
+  assert.equal(result.dropReason, undefined)
+  assert.notEqual(result.dropReason, 'content-limit')
+})
+
 test('HAT-12 an approval is rebuilt from its allowlisted fields and leaks nothing else', () => {
   const notification = toApprovalNotification(
     {

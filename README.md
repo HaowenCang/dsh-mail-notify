@@ -39,17 +39,22 @@ GitHub Release were performed; `0.1.1` remains the released version. The candida
 release that already existed — a **terminal turn failure** and a **mid-turn human-attention
 request** — with two new switches, `notifyQuestions` and `notifyApprovals`, both off by default.
 `notifyErrors` keeps its `false` default and gains the meaning it always claimed: a failed turn is
-mailed even when it produced no visible assistant output. `smtpPasswordCredential` now accepts an
-environment-style reference name and the DSH store's `<scope>/<id>` addressing.
+mailed even when it produced no visible assistant output. `smtpPasswordCredential` takes exactly one
+form — the DSH `CredentialRef` grammar `^[A-Za-z_][A-Za-z0-9_]*$`, an environment-style name such as
+`DSH_MAIL_SMTP_PASSWORD`.
 
 The end-to-end probe in this repository boots the shipped `headless` profile against a disposable
-DSH home, a loopback SMTP server, a scripted model provider, and a human stand-in. Two of its three
-scenarios were measured on this machine. The `questions` scenario delivered exactly two messages,
-`[DSH] Input required — Choose Mode` and `[DSH] Task completed — probe-scripted`, which is what
-proves a mid-turn question's dedupe namespace does not consume the turn's. The `errors` scenario
-delivered exactly one, `[DSH] Task failed — QUOTA`. The `approvals` scenario did **not** reach the
-approval path in this environment — its approval request never opened — so it is not evidence for
-the approval family, and the approval path is covered by the offline suite instead.
+DSH home, a loopback SMTP server, a scripted model provider, and a human stand-in. Its scenarios were
+measured on this machine: `questions` delivered exactly two messages, `[DSH] Input required — Choose
+Mode` and `[DSH] Task completed — probe-scripted`, which is what proves a mid-turn question's dedupe
+namespace does not consume the turn's; `errors` delivered exactly one, `[DSH] Task failed — QUOTA
+(402)`; `approvals` delivered exactly two, with the approval mail observed over SMTP while the
+answerer was still withholding its decision, and the printed timeline placing `approval/asked` before
+that mail and the mail before `approval/decided`; `approvals-duplicate` published the same approval
+id twice and still sent one approval mail; `approvals-rejected` sent one approval mail beside the
+turn's own settlement and none at the decision. The `credentials` scenario checks the reference
+grammar and resolution against the installed credential store. See
+[`PHASE8_1_REPORT.md`](PHASE8_1_REPORT.md).
 
 **v0.1.1 released.** It is published as `dsh-mail-notify@0.1.1` on npm, tagged `v0.1.1` at commit
 `340ef362`, with the release archive attached to the GitHub Release. The local archive, the npm
@@ -279,7 +284,7 @@ keys fall back to the schema defaults.
 | `smtpPort` | `587` | Integer 1–65535. |
 | `smtpSecure` | `false` | `true` = implicit TLS (normally 465); `false` allows a STARTTLS upgrade (normally 587). |
 | `smtpUser` | — required | Authentication user name. |
-| `smtpPasswordCredential` | — required | A credential **reference name**, never a password. Accepts a bare environment-style name (`^[A-Za-z_][A-Za-z0-9_-]*$`) and the DSH store's `<scope>/<id>` addressing, where each segment matches `^[a-z][a-z0-9-]*$`. |
+| `smtpPasswordCredential` | — required | A credential **reference name**, never a password. Exactly the DSH `CredentialRef` grammar, `^[A-Za-z_][A-Za-z0-9_]*$` — an environment-style name such as `DSH_MAIL_SMTP_PASSWORD`. A `<scope>/<id>` value is a `CredentialKey`, which `resolve()` cannot read, so it is refused at mount with an explanation (D019). |
 | `from` | — required | Envelope sender. |
 | `to` | — required | One or more addresses. An empty or entirely invalid list refuses to mount. |
 | `includeSubagents` | `false` | Turning this on sends subagent output, subagent questions, and subagent approvals too; read the security section first. |
@@ -322,8 +327,11 @@ $DSH_HOME/.env                                (read-only fallback)
 
 `.env.example` in this repository shows the `.env` form. The name must match exactly; an empty
 stored value counts as absent, so a blank line configures nothing. A password kept in
-`$DSH_HOME/.credentials.yaml` is addressed as `<scope>/<id>` — the store's own key shape, such as
-`dsh/mail-smtp-password` — and `smtpPasswordCredential` accepts that form as well.
+`$DSH_HOME/.credentials.yaml` belongs in that document's `refs:` section under the same
+environment-style name — that section is the one `resolve()` reads, and its keys are validated
+against the `CredentialRef` grammar. The store's `<scope>/<id>` keys belong to the separate
+`records:` section, which this plugin never reads, so `smtpPasswordCredential` does not accept that
+form (D019).
 
 The password is resolved **inside every send attempt** and never cached; the Credential service
 handle is looked up per attempt for the same reason. Rotating the password therefore takes effect
@@ -469,28 +477,36 @@ human-attention exceptions, and the list of content that no configuration can se
 ## Test the notification families
 
 The automated suite never sends mail and never boots DSH. One probe does both, and only when you run
-it. `scripts/probe-e2e.mjs` with `scripts/probe/` starts a loopback SMTP server on
-`127.0.0.1:2525`, boots the shipped `headless` profile against a disposable DSH home, and runs one
-task. It replaces exactly two things: the model provider (a scripted provider, so the run consumes
-no real quota and needs no credential) and the human (a stand-in that answers the question or
-approval request the profile raises).
+it. `scripts/probe-e2e.mjs` with `scripts/probe/` starts a loopback SMTP server on an OS-chosen port,
+boots the shipped `headless` profile against a disposable DSH home, and runs one task. It replaces
+exactly three things, all named in its output: the model provider (a scripted provider, so the run
+consumes no real quota and needs no credential), the human (a stand-in that answers the question or
+approval request the profile raises), and the SMTP peer's identity (loopback, no TLS, no
+authentication, nothing forwarded). The credential service is **not** replaced: the shipped
+file-backed store is retargeted at the disposable home, so its real resolution path runs.
 
 ```powershell
-node scripts/probe-e2e.mjs questions "Ask me which implementation to use, then finish."
-node scripts/probe-e2e.mjs errors    "Fail this turn terminally."
-node scripts/probe-e2e.mjs approvals "Write a file outside the workspace."
+npm run probe:questions             # ask_user_question, then completion
+npm run probe:errors                # one terminal provider failure
+npm run probe:approvals             # one in-Turn approval, allowed once
+npm run probe:approvals-duplicate   # the same, with the audit record replayed
+npm run probe:approvals-rejected    # the same, with the answerer rejecting
+npm run probe:credentials           # the credential-reference contract
 ```
 
 Everything else is the production path: the real agent loop, the real tool registry, the real session
-log, the plugin's own listeners, queue, and mailer, and a real SMTP conversation. The probe prints
-the subject of every message the server accepted and writes the full messages, the child's stdout,
-and the child's stderr under `tmp/probe/out/`.
+log, `ctx.approval`, the plugin's own listeners, queue, and mailer, and a real SMTP conversation. The
+probe prints the subject of every message the server accepted plus an ordered timeline, and writes
+the full messages, the child's stdout, and the child's stderr under `tmp/probe/out/`.
 
 | Scenario | Switch set | Measured result |
 | --- | --- | --- |
 | `questions` | `notifyQuestions: true`, `notifyCompleted: true` | Exactly 2 messages: `[DSH] Input required — Choose Mode` and `[DSH] Task completed — probe-scripted`. Two rather than one is the point: the question's dedupe namespace did not consume the turn's. |
-| `errors` | `notifyErrors: true`, `notifyCompleted: true` | Exactly 1 message: `[DSH] Task failed — QUOTA`. The scripted provider declares no failure policy, so the failure is terminal rather than retried, and the failed turn produced no visible output. |
-| `approvals` | `notifyApprovals: true`, `notifyCompleted: true` | The approval path was **not reached** in this environment — the approval request never opened. The scenario produced no approval mail, and its output is not evidence for the approval family. |
+| `errors` | `notifyErrors: true`, `notifyCompleted: true` | Exactly 1 message: `[DSH] Task failed — QUOTA (402)`. The scripted provider declares no failure policy, so the failure is terminal rather than retried, and the failed turn produced no visible output. |
+| `approvals` | `notifyApprovals: true`, `notifyCompleted: true` | Exactly 2 messages: `[DSH] Approval required — probe_request_approval` and `[DSH] Task completed — probe-scripted`. The printed timeline places `approval/asked` before the approval mail and the mail before `approval/decided`; the answerer withheld its answer until the probe had seen that mail over SMTP, so "the notification happened while the approval was pending" is measured rather than assumed. |
+| `approvals-duplicate` | same | Exactly 2 messages while the same approval id was published twice in the log: the duplicate audit record did not produce a second approval mail, and the approval key did not consume the turn's. |
+| `approvals-rejected` | same, answerer returns `rejected` | The approval mail once, `approval/decided` with `rejected`, a tool result marked as an error, and no second "approval required" at the decision. The turn's own later settlement is recorded as observed: here it completed with a tool error and mailed `[DSH] Task completed with tool errors — probe-scripted`. |
+| `credentials` | no notification switch | 14 contract checks, 0 FAIL, against the **installed** file-backed provider over a disposable document: reference grammar, the `CredentialRef`/`CredentialKey` split, the `refs` section, an exact-value resolution from the `file` layer, and the absence of the value from all three environment layers. |
 
 Each scenario enables only the switch it is about; the other two interaction switches stay off, so a
 message can only have come from the family under test. The same switch set is the one the probe
@@ -503,9 +519,13 @@ prints before booting, so what took effect and what was reported cannot diverge.
   `turn:`, `question:`, or `approval:` so a mid-turn question cannot consume the turn's key.
 - **A question mail cannot be answered from the mail.** There is no reply channel, no action link,
   and no approval button. The message says to open DSH, and that is the only way to answer.
-- **The approval path was not reached by the end-to-end probe.** The probe's `approvals` scenario
-  never opened an approval request in this environment, so it produced no evidence for the approval
-  family; that family is covered by the offline suite instead.
+- **An approval mail cannot be answered from the mail.** As with a question, there is no reply
+  channel and no approval button; the message says to open DSH.
+- **The approval scenarios need an `ask` permission policy.** `dsh-base` derives the approval policy
+  from `DSH_PERMISSION_MODE`, and the `danger-full-access` preset sets it to `never`, under which no
+  `approval/asked` record exists to notify about. The probe pins `approval.policy: ask` in its own
+  overlay; on a machine running the `never` preset, a real approval notification cannot be observed
+  at all. That is a property of the composition, not of the plugin.
 - **Duration is unknown for a mid-turn attach.** If the plugin loads after a turn has started, that
   turn's `durationMs` is `null` (not `0`), so `minTurnDurationMs` cannot suppress it.
 - **Four of the six `turn/end` reasons have not been observed on a live turn.** `completed` is
@@ -539,11 +559,12 @@ prints before booting, so what took effect and what was reported cannot diverge.
 | [`PHASE6_REPORT.md`](PHASE6_REPORT.md) | Phase 6 report: the turn-level token telemetry defect (`BUG-TEL-001`), the runtime evidence behind it, the duration investigation, the schema v2 migration, and the v0.1.1 release-candidate verification |
 | [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md) | Phase 6.1 report: the Nodemailer 7 → 10 security uplift, removal of `@types/nodemailer`, and the re-verification performed on the upgraded dependency |
 | [`PHASE8_REPORT.md`](PHASE8_REPORT.md) | Phase 8 report: the three notification lifecycles (`D018`), the runtime evidence behind each trigger, the two defects found and fixed during the work, the full gate results, and the one evidence path this phase did not close |
+| [`PHASE8_1_REPORT.md`](PHASE8_1_REPORT.md) | Phase 8.1 report: the approval end-to-end chain in a real assembly (allowed-once, dedupe, rejected), the credential-reference reconciliation and its evidence (`D019`), the `content-limit` and `parentSession` dispositions, and the full release-candidate gate results |
 | [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md) | v0.1.1 release report: source commit, tag object, verification results, npm and GitHub publication records, the three-way artifact hashes, and the registry fresh-install result |
 | [`RELEASE_NOTES_V0.1.1.md`](RELEASE_NOTES_V0.1.1.md) | The release notes published on the v0.1.1 GitHub Release |
 | [`RELEASE_V0.1.0.md`](RELEASE_V0.1.0.md) | v0.1.0 release report: source commit, verification results, npm and GitHub publication records, and the release artifact hashes |
 | [`RELEASE_NOTES_V0.1.0.md`](RELEASE_NOTES_V0.1.0.md) | The release notes published on the GitHub Release |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D018 decision records with reasons, rejected alternatives, and consequences |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | D001–D019 decision records with reasons, rejected alternatives, and consequences |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module layout and per-module responsibility boundaries |
 | [`docs/CONFIG_SPEC.md`](docs/CONFIG_SPEC.md) | Configuration specification: fields, defaults, validation, failure behaviour |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, credential lifecycle, TLS constraint, log redaction, privacy defaults |

@@ -285,6 +285,18 @@ ADP-05 的检查方式：对返回值做递归遍历，断言不存在指向输�
 
 SEC-02 是 D010 的核心可执行断言：它验证的是「不缓存」，而不仅是「能解析」。
 
+### 11.1 凭据引用文法与 DSH 契约（Phase 8.1，D019）
+
+`tests/integration/credential-contract.test.ts`（3 项）以**安装的** `@deepseek-ai/dsh-credentials` 为基准，而不是以插件自己的模式副本为基准——插件自己的副本正是 Phase 8 出错的那一份，用它做基准测不出这类错误。
+
+| 编号 | 用例 | 期望 | 层次 |
+| --- | --- | --- | --- |
+| CRED-01 | 文法一致性 | 对 24 个候选（含 `DSH_MAIL_SMTP_PASSWORD`、含连字符名、`<scope>/<id>` 形、含空格/点/冒号/前导数字/非 ASCII）逐一断言 `CREDENTIAL_REF_PATTERN.test(x) === isCredentialRefName(x)` | L3 |
+| CRED-02 | 接受集与拒绝集 | 接受集中的每一项都能被 `credentialRef()` 原样返回；拒绝集中的每一项都令 `isCredentialRefName` 为 `false` 且 `credentialRef()` 抛 `TypeError` | L3 |
+| CRED-03 | 两个键空间不相交 | 每个 `CredentialRef` 候选都无法被 `parseCredentialKey()` 解析；`credentialKey('credentials','smtp-password')` 的产物不被引用文法接受 | L3 |
+
+`npm run probe:credentials` 在此基础上补足「真实服务能解析」这一半：它让安装的 file-backed provider 在一次性文档上 `resolve()` 与 `describe()`，并断言来源层为 `file`、值与写入文档逐字符相同、三个环境层均不供给该值。两处证据合起来才是 D019 要求的「校验器接受」与「服务解析同一引用」。
+
 ---
 
 ## 12. 隐私（D012）
@@ -373,7 +385,7 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 
 | 编号 | 场景 | 期望 | 层 |
 | --- | --- | --- | --- |
-| PROBE-02 | `errors` 场景 | 回环 SMTP 服务器恰好收到 1 封，主题为 `[DSH] Task failed — QUOTA`；该 Turn 无可见助手输出 | 探针（非自动化） |
+| PROBE-02 | `errors` 场景 | 回环 SMTP 服务器恰好收到 1 封，主题为 `[DSH] Task failed — QUOTA (402)`；该 Turn 无可见助手输出 | 探针（非自动化） |
 
 实测结果与本节一致：1 封。该场景同时证明「无可见输出的终局失败会被寄出」这一条在真实 DSH composition 中成立，而不只是在单元与集成层成立。
 
@@ -382,12 +394,17 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 | 编号 | 场景 | 期望 | 层 |
 | --- | --- | --- | --- |
 | PROBE-01 | `questions` 场景 | 回环 SMTP 服务器恰好收到 2 封：`[DSH] Input required — Choose Mode` 与 `[DSH] Task completed — probe-scripted` | 探针（非自动化） |
-| PROBE-03 | `approvals` 场景 | 预期 1 封 `[DSH] Approval required — <tool>` | 探针（非自动化） |
+| PROBE-03 | `approvals` 场景 | 回环 SMTP 服务器恰好收到 2 封：`[DSH] Approval required — probe_request_approval` 与 `[DSH] Task completed — probe-scripted`；打印的时间线中 `approval/asked` 早于审批邮件，审批邮件早于 `approval/decided` | 探针（非自动化） |
+| PROBE-04 | `approvals-duplicate` 场景 | 同一 approval id 在日志中出现 2 次，投递仍为 2 封（一封审批 + 一封完成） | 探针（非自动化） |
+| PROBE-05 | `approvals-rejected` 场景 | 审批邮件恰好 1 封；`approval/decided` outcome 为 `rejected`；工具结果为 error；`decided` 时不补发第二封审批邮件。Turn 自身的结局按实测记录 | 探针（非自动化） |
+| PROBE-06 | `credentials` 场景 | 针对**安装的** file-backed provider 的 14 项契约检查全部 PASS | 探针（非自动化） |
 
-**实测结果与「期望」并不一致，必须如实记录。** PROBE-01 的 2 封已实测得到，两封而非一封正是「question 的去重命名空间没有消耗 Turn 的键」的运行时证据。PROBE-03 **未达成**：本环境下审批请求始终没有打开（`approval/asked` 从未被追加），因此该场景没有产出审批邮件，其输出**不构成** approval 族的证据。approval 路径的覆盖由 `§14.5` 的集成用例承担，不应据探针结果宣称该路径已在真实 composition 中验证。
+PROBE-01 的 2 封已实测得到，两封而非一封正是「question 的去重命名空间没有消耗 Turn 的键」的运行时证据。
 
-探针的实际运行环境为 Node `v24.13.0` 与 DSH `0.1.5-rc.1`（`dsh --version`）。它以 `--profile headless --patch <overlay>` 启动，overlay 中携带脚本化 provider、`ask_user_question` 工具、人工替身与指向回环 SMTP 的插件本体四行；`DSH_HOME` 指向 `tmp/probe/home`，operator 自己的 DSH 安装根通过 `DSH_INSTALL_ROOT` 提供，二者互不写入。
-探针替换的恰好两项（脚本化模型 provider、人工替身）在输出中被具名；真实的 agent loop、工具注册表、session log、插件的监听器、队列与 mailer、以及一次真实 SMTP 会话全部参与。三个场景各自只打开自己要验证的开关，另两个交互开关保持关闭，因此一封邮件只可能来自被测族。
+**PROBE-03 在 Phase 8 未达成，在 Phase 8.1 补齐。** Phase 8 执行时审批请求始终没有打开，原因是环境约束而非实现缺陷：该 composition 的 approval policy 由 `DSH_PERMISSION_MODE` 推导，本机 preset 为 `danger-full-access`，其 policy 为 `never`，在 waterfall 之前就确定性拒绝，因此不产生 `approval/asked`。Phase 8.1 的探针叠加层显式钉住 `approval.policy: ask`，并以一次真实工具执行内的 `ctx.approval.request()` 触发审批；人工替身在探针通过 SMTP 观察到审批邮件之前**不返回决定**，因此「通知发生在审批仍 pending 时」是被测量的事实而不是对时序的假设。实测结果见 `PHASE8_1_REPORT.md` 第 2–5 节。
+
+探针的实际运行环境为 Node `v24.13.0` 与 DSH `0.1.5-rc.1`（`dsh --version`）。它以 `--profile headless --patch <overlay>` 启动，overlay 中携带脚本化 provider、`ask_user_question` 工具、`probe_request_approval` 工具、人工替身、凭据契约检查与指向回环 SMTP 的插件本体；`DSH_HOME` 指向 `tmp/probe/home`（每次运行前整体重建），operator 自己的 DSH 安装根通过 `DSH_INSTALL_ROOT` 提供，二者互不写入。
+探针替换的恰好三项（脚本化模型 provider、人工替身、SMTP 服务器的身份）在输出中被具名；凭据服务**不**被替换——出厂 file-backed store 被指向一次性目录，其真实解析路径参与运行。真实的 agent loop、工具注册表、session log、`ctx.approval`、插件的监听器、队列与 mailer、以及一次真实 SMTP 会话全部参与。各场景只打开自己要验证的开关，因此一封邮件只可能来自被测族。
 
 ### 14.5 question 与 approval 通知链（Phase 8，D018 第五至十一条）
 
@@ -432,7 +449,7 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 | HAT-08 | 结构化 arguments | 兼容分支同样逐字段复制 | L1 |
 | HAT-09 | 缺 id 或缺正文 | 按路径丢弃该问题并记录路径 | L1 |
 | HAT-10 / 10b | 控制字符 | C0/C1 整段被压成空格，行结构被抹平；选项 label 走同一规则 | L1 |
-| HAT-11 / 11b / 11c / 11d | 界限的可达性与前缀性 | 纯数量溢出上报 question-limit；被尺寸拒绝的问题同样消耗额度，携带集合是前缀；当前界限下 `content-limit` 不可达且被明确断言不为该值；全部不可用时不报任何界限 | L1 |
+| HAT-11 / 11b / 11c / 11d / 11e | 界限的可达性与前缀性 | 纯数量溢出上报 question-limit；被尺寸拒绝的问题同样消耗额度，携带集合是前缀；当前界限下 `content-limit` 不可达且被明确断言不为该值；全部不可用时不报任何界限；11e 用耗尽额度的夹具让尺寸界限真实触发，证明拒绝必然留下部分携带，从而给出 11c 的成因 | L1 |
 | HAT-12 / 12b…12f | approval 载荷 | 只由白名单字段重建；无工具名即不构成通知；超长 reason 截断且抹平行结构；cwd 已知才携带；两个可选字段互相独立；超长 `callId` 按 id 上限截断 | L1 |
 | HAT-POL-01 / 02 | 默认值 | 两个开关默认 `false`，抑制原因各自指明自己的开关 | L1 |
 | HAT-POL-03 | 开关独立性 | 双向验证：开一个不会影响另一个 | L1 |
@@ -484,4 +501,4 @@ node scripts/turn-telemetry-probe.mjs --log <session.v3.jsonl.zstd> --turn <n> \
 | 失败模型调用的 usage | 现有事件面（`llm/retry`、`assistant/attempt`）均不携带，因此不可自动化取回；以 `usageComplete: false` 如实表达，并以 `llm/retry` 的计数作为「该 Turn 存在不可观察调用」的证据 |
 | provider 侧的 bucket 完备性 | 各 provider 对可选 bucket 的报告策略不同，插件按「报告过的 sample 求和」处理（D017 第 4 条）；这是披露策略而非可测试的运行时事实 |
 | 用真实 provider 触发终局失败 | 需要真的耗尽额度或让请求终局失败，代价是消耗真实配额，且失败形态由 provider 而非由测试决定；因此该路径的运行时证据来自 `§14.3` 的脚本化 provider，而不是真实账号 |
-| approval 路径在真实 composition 中的触发 | `§14.4` 的 `approvals` 场景在本环境下未能打开审批请求，因此该路径的真实 composition 证据**尚缺**；当前覆盖来自 `§14.5` 的集成用例 |
+| approval 路径在真实 composition 中的触发 | 已由 `§14.4` 的 `approvals` / `approvals-duplicate` / `approvals-rejected` 三个场景覆盖（Phase 8.1 补齐；需一个 approval policy 为 `ask` 的 composition，探针叠加层显式钉住该值） |

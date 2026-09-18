@@ -28,7 +28,7 @@
 >
 > 4. **`DedupeCache` 的键带命名空间前缀**：`turn:` / `question:` / `approval:`。`keyFor` 的旧键形不再是契约的一部分；去重不持久化，因此该变更无迁移成本（D008、D018 第九条）。
 >
-> 5. **`CREDENTIAL_REF_PATTERN` 放宽**为同时接受裸名与 DSH 凭据存储的 `<scope>/<id>` 寻址。存储本身仍是「该引用是否可解析」的唯一权威（D010、D018 Consequences）。
+> 5. **`CREDENTIAL_REF_PATTERN` 保持 DSH 的 `CredentialRef` 文法** `^[A-Za-z_][A-Za-z0-9_]*$`。Phase 8 曾放宽为同时接受 `<scope>/<id>`，Phase 8.1 撤销：那是另一个键空间 `CredentialKey`（`records` 段），`resolve()` 无法读取。存储本身仍是「该引用是否可解析」的唯一权威（D010、D019）。
 
 
 ---

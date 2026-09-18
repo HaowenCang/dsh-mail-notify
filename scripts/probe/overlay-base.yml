@@ -2,11 +2,12 @@
 #
 # Applied on top of the shipped `headless` profile by `scripts/probe-e2e.mjs`,
 # which boots `dsh --profile headless --patch <this file> "<task>"` against a
-# disposable probE home and a loopback SMTP server.
+# disposable probe home and a loopback SMTP server.
 #
 # It adds the rows the product tree does not carry for this test: a scripted
 # model provider (so the run needs no external credential and consumes no real
-# quota), the model-facing `ask_user_question` tool, the human stand-in, and
+# quota), the model-facing `ask_user_question` tool, an approval-requesting
+# tool, the human stand-in, the credential-contract checker, and
 # `dsh-mail-notify` itself pointed at the loopback server.
 #
 # The plugin specifiers are absolute paths because a loader row resolves a bare
@@ -28,23 +29,46 @@
     provider: probe
     model: probe-scripted
 
-# The shipped file-backed credential store is replaced rather than stacked: it
-# publishes the same `credentials` service, and a Cordis tree admits one owner per
-# service name. The probe's provider implements the same resolve/describe
-# contract from one environment variable, so the plugin's per-attempt resolution
-# path — including its `credential-missing` diagnostic — stays the production one.
+# The effective approval policy for this composition is `ask`.
+#
+# It has to be stated: `dsh-base` derives the policy from the permission mode,
+# and this machine runs the `danger-full-access` preset, whose policy is
+# `never` — a mode in which the approval service rejects deterministically
+# before any answerer is consulted and no `approval/asked` record exists to
+# notify about. Pinning it here is what makes the test independent of the
+# operator's own permission preset (Phase 8.1 §4).
+- id: approval
+  config:
+    policy: ask
+
+# The shipped file-backed credential store is retargeted rather than replaced.
+#
+# An earlier revision of this probe published a credential double instead, which
+# meant the run never exercised the real store — and could not, therefore, say
+# anything about the reference grammar the store actually accepts. Pointing the
+# shipped provider at the disposable probe home keeps the production resolution
+# path (per-attempt `resolve`, layer precedence, `describe`) and puts the whole
+# credential chain under the same real service the plugin talks to.
 - id: credentials
-  disabled: true
+  config:
+    path: !!js process.env.PROBE_CREDENTIALS_FILE
+    watch: true
 
 - insert:
-    - id: probe-credentials
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/fake-credentials.mjs'
+    - id: probe-timeline
+      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/timeline.mjs'
+
+    - id: probe-credential-contract
+      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/credential-contract.mjs'
 
     - id: probe-scripted-provider
       name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/scripted-provider.mjs'
 
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
+
+    - id: probe-approval-tool
+      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/approval-tool.mjs'
 
     - id: probe-auto-answer
       name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/auto-answer.mjs'

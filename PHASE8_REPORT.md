@@ -11,8 +11,10 @@ C. approval/asked notification
 最终结论：
 
 ```text
-PASS — v0.2.0 RC READY
+PARTIAL — v0.2.0 RC NOT READY
 ```
+
+> **后记（Phase 8.1，2026-09）。** 本报告发布时把状态记为 `PASS — v0.2.0 RC READY`，但第 8.3 节已经记录了唯一未闭合的验证项（approval 的真实装配端到端投递）。在该项补齐之前，RC READY 的表述过强，故此处改为与第 8.3 节一致的 `PARTIAL — v0.2.0 RC NOT READY`。三项后续处置见 [`PHASE8_1_REPORT.md`](PHASE8_1_REPORT.md)：approval E2E 已补齐（`approvals`、`approvals-duplicate`、`approvals-rejected` 三个场景）；第 11 节第 2 项记录的凭据引用诊断经复核**不成立并已撤销**（见该报告第 6 节与 `docs/DECISIONS.md` D019）；`QuestionDropReason.'content-limit'` 的处置见该报告第 7 节。Phase 8.1 的最终状态为 `PASS — v0.2.0 RC READY`。
 
 本阶段未执行且不得执行的动作均未执行：无 `npm publish`、无 `git tag v0.2.0`、无 GitHub Release。
 
@@ -350,7 +352,8 @@ fresh install PASS（临时目录安装 0.2.0 tarball 后 import 成功，
 ### 实现期间发现并修正的两个缺陷
 
 1. **解析器总量界限的记账缺陷**（`A10`）：被尺寸上限拒绝的问题不消耗额度，导致返回集合不再是前缀。已修正为在边界判断前累计。
-2. **凭据引用语法不兼容**（`D018` Consequences）：原本只接受裸名（`^[A-Za-z_][A-Za-z0-9_]*$`），而 DSH Credential store 只接受 `<scope>/<id>`（每段 `^[a-z][a-z0-9-]*$`）。一个把密码存进 store 的部署会在挂载期被拒绝，且操作者无法在不损害凭据卫生的前提下修正。已放宽为同时接受两种形式，并补测试断言两种形式及若干非法形式。
+2. ~~**凭据引用语法不兼容**（`D018` Consequences）：原本只接受裸名（`^[A-Za-z_][A-Za-z0-9_]*$`），而 DSH Credential store 只接受 `<scope>/<id>`（每段 `^[a-z][a-z0-9-]*$`）。一个把密码存进 store 的部署会在挂载期被拒绝，且操作者无法在不损害凭据卫生的前提下修正。已放宽为同时接受两种形式，并补测试断言两种形式及若干非法形式。~~
+   **该诊断经 Phase 8.1 复核不成立，放宽已撤销。** `<scope>/<id>` 是 DSH 凭据 seam 的**另一个键空间** `CredentialKey`（`records` 段，经 `readRecord`/`describeRecord` 访问），而 `resolve()` 与 `describe()` 只读 `refs` 段；把一个 `CredentialKey` 交给 `resolve()` 得到的是永久 `undefined`。因此那次放宽接受了一个永远解析不到的引用。现状：文法回归 DSH 的 `CredentialRef`（`^[A-Za-z_][A-Za-z0-9_]*$`），证据与裁决见 [`PHASE8_1_REPORT.md`](PHASE8_1_REPORT.md) 第 6 节与 `docs/DECISIONS.md` D019。
 
 ---
 
@@ -388,16 +391,19 @@ docs: document v0.2.0 notification semantics
 | SMTP E2E | PASS（回环，questions 与 errors 两个场景） |
 | secret scan | PASS |
 | supported DSH matrix | PASS（`0.1.5-rc.1`） |
+| **approval E2E（真实装配）** | **未取得证据 — 见第 8.3 节** |
 
 ```text
-PASS — v0.2.0 RC READY
+PARTIAL — v0.2.0 RC NOT READY
 ```
+
+该表中的每一行都是本阶段结束时的事实。唯一未通过的门是最后一行，它正是第 14 节第 1 项。Phase 8.1 补齐了该门并据此重判状态；本阶段的记录保持不变。
 
 ---
 
 ## 14. 未决事项
 
-1. **approval 的真实端到端投递未取得证据**（第 8.3 节）。集成层 8 项断言全部通过，但真实装配下的 `approval/asked` → 邮件链路未在一次带审批的真实运行中被观察到。建议在 RC 转正式前，在一个 approval policy 为 `ask` 的 profile 中补做。
-2. **`QuestionDropReason.'content-limit'` 在当前界限下不可达**（`A9`）。保留该成员并已在测试中记录，但若认为不可达的联合成员应当删除，需要一次决策。
-3. `includeSubagents` 的判定沿用三判据（`origin` → `parentSession` → `delegationDepth`）。运行时证据显示 fork 出的子会话也携带 `parentSession`，因此一个用户主动 fork 的顶层会话可能被判为子代理。该行为在 Phase 1 固化且本阶段未改动——本阶段的要求是保持既有语义——但它是一个独立于 Phase 8 的、值得单独复核的判据问题。
-4. 本阶段未使用真实 SMTP 凭据做投递。所有 SMTP 验证使用回环服务器；真实投递留待 RC 之后的发布验证。
+1. **approval 的真实端到端投递未取得证据**（第 8.3 节）。集成层 8 项断言全部通过，但真实装配下的 `approval/asked` → 邮件链路未在一次带审批的真实运行中被观察到。建议在 RC 转正式前，在一个 approval policy 为 `ask` 的 profile 中补做。**（Phase 8.1 已补齐：`approvals`、`approvals-duplicate`、`approvals-rejected` 三个场景，见 [`PHASE8_1_REPORT.md`](PHASE8_1_REPORT.md) 第 2–5 节。）**
+2. **`QuestionDropReason.'content-limit'` 在当前界限下不可达**（`A9`）。保留该成员并已在测试中记录，但若认为不可达的联合成员应当删除，需要一次决策。**（Phase 8.1 已裁决：保留并标注为保留值，附 `HAT-11e` 证明其不可达的成因，见该报告第 7 节。）**
+3. `includeSubagents` 的判定沿用三判据（`origin` → `parentSession` → `delegationDepth`）。运行时证据显示 fork 出的子会话也携带 `parentSession`，因此一个用户主动 fork 的顶层会话可能被判为子代理。该行为在 Phase 1 固化且本阶段未改动——本阶段的要求是保持既有语义——但它是一个独立于 Phase 8 的、值得单独复核的判据问题。**（Phase 8.1 已复核：担忧成立但范围更窄，全部运行时子代理由第一条判据覆盖，行为保持不变；见该报告第 8 节。）**
+4. 本阶段未使用真实 SMTP 凭据做投递。所有 SMTP 验证使用回环服务器；真实投递留待 RC 之后的发布验证。**（Phase 8.1 维持该边界。）**

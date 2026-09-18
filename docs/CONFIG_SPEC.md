@@ -35,7 +35,7 @@
 >
 > 1. **两个通知开关（`notifyQuestions` / `notifyApprovals`）新增**，默认均为 `false`，见第 2.5 节。实现中的「全关」警告判据随之扩为五个开关全关，警告文本也逐项列出五个键；第 4 节表与该判据已同步。
 > 2. **`notifyErrors` 的语义被明确**：它覆盖 `status === 'error'`，且**不要求该 Turn 有可见文本**。旧文字中「无可见文本即抑制」对该状态不再适用。默认值仍为 `false`（D018 第四条）。
-> 3. **`CREDENTIAL_REF_PATTERN` 放宽**为同时接受裸名与 DSH 凭据存储的 `<scope>/<id>` 寻址，见第 2.2 节。存储本身仍是该引用是否可解析的唯一权威。
+> 3. **~~`CREDENTIAL_REF_PATTERN` 放宽~~ 已在 Phase 8.1 撤销**：该模式回归 DSH 的 `CredentialRef` 文法 `^[A-Za-z_][A-Za-z0-9_]*$`，且仅此一种形式。Phase 8 记录的「存储只接受 `<scope>/<id>`」把 seam 的 record half 当成了引用文法；`resolve()` 与 `describe()` 只读 `refs` 段，`records` 段经另一组方法访问。见第 2.2 节与 `DECISIONS.md` D019。
 > 4. **question 解析器的界限常量**记录于第 2.5 节之后的新表；它们不是配置项，不可由用户调整。
 
 
@@ -68,9 +68,11 @@
 | `smtpPort` | `number` | `587` | 整数，1–65535 | 端口 |
 | `smtpSecure` | `boolean` | `false` | — | `true` = 隐式 TLS（通常配 465）；`false` = 允许 STARTTLS 升级（通常配 587） |
 | `smtpUser` | `string` | 无（必填） | 非空 | 认证用户名 |
-| `smtpPasswordCredential` | `string` | 无（必填） | 非空，且匹配 `^[A-Za-z_][A-Za-z0-9_-]*(\/[a-z][a-z0-9-]*)?$` | **凭据引用名**，不是密码本身。交给 `credentials.resolve()` 解析。示例值 `DSH_MAIL_SMTP_PASSWORD`，或存储寻址形如 `dsh/mail-smtp-password` |
+| `smtpPasswordCredential` | `string` | 无（必填） | 非空，且匹配 `^[A-Za-z_][A-Za-z0-9_]*$` | **凭据引用名**，不是密码本身。交给 `credentials.resolve()` 解析。示例值 `DSH_MAIL_SMTP_PASSWORD` |
 
-`smtpPasswordCredential` 接受两种合法形式（Phase 8 放宽，D018 Consequences）。裸标识符是环境层的拼写，形如 `DSH_MAIL_SMTP_PASSWORD`（`^[A-Za-z_][A-Za-z0-9_-]*$`）；`<scope>/<id>` 对是 DSH Credential store 自身的寻址形式，两段各自匹配 `^[a-z][a-z0-9-]*$`。只接受前者会拒绝一个把密码存在 store 里的部署，而 store 只接受后一种键形；只接受后者会破坏所有既有部署。该模式只判断**引用名的拼写**，引用是否可解析仍由 Credential 服务裁决（D010）。
+`smtpPasswordCredential` 只接受一种形式：DSH 的 `CredentialRef` 文法 `^[A-Za-z_][A-Za-z0-9_]*$`，即 POSIX 风格的环境变量名（`DECISIONS.md` D019）。该文法与 `@deepseek-ai/dsh-credentials` 的 `REF_PATTERN` 逐字符相同，也是同一 store 的 `refs` 段在解析时对每个键调用的校验。
+
+`<scope>/<id>` 形式**被拒绝**。它是同一 seam 的另一个键空间 `CredentialKey`，寻址 `.credentials.yaml` 的 `records` 段，经 `readRecord`/`describeRecord` 访问；而 `resolve()` 与 `describe()` 只读 `refs` 段与继承环境，从不查询 `records`。因此一个 `<scope>/<id>` 引用在本插件里是一个永远解析不到的引用，把它拒在挂载期比让它到每次投递时才以「未配置」的形式失败更准确。该模式只判断**引用名的拼写**，引用是否可解析仍由 Credential 服务裁决（D010）。
 
 字段名说明：`00_MASTER.md` §6/§15 原写作 `smtpPasswordEnv`。更名理由见 `DECISIONS.md` D016 第 3 项——`CredentialRef` 是分层解析器（进程环境变量 / provider 存储 / `.env`），名称中的 `Env` 会误导用户以为只能通过环境变量配置。
 

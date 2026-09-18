@@ -34,6 +34,12 @@
     "pack:check": "node scripts/inspect-tarball.mjs",
     "scan:secrets": "node scripts/scan-tarball-secrets.mjs dsh-mail-notify-0.2.0.tgz",
     "probe:e2e": "node scripts/probe-e2e.mjs",
+    "probe:questions": "node scripts/probe-e2e.mjs questions \"probe: question notification\"",
+    "probe:errors": "node scripts/probe-e2e.mjs errors \"probe: terminal failure notification\"",
+    "probe:approvals": "node scripts/probe-e2e.mjs approvals \"probe: approval notification\"",
+    "probe:approvals-duplicate": "node scripts/probe-e2e.mjs approvals-duplicate \"probe: approval dedupe\"",
+    "probe:approvals-rejected": "node scripts/probe-e2e.mjs approvals-rejected \"probe: approval rejected\"",
+    "probe:credentials": "node scripts/probe-e2e.mjs credentials \"probe: credential contract\"",
     "smoke": "node scripts/smtp-smoke-test.ts",
     "verify": "npm run check:text && npm run typecheck && npm test && npm run build"
   },

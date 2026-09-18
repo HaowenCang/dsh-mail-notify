@@ -309,7 +309,7 @@ SMTP Password 不允许直接放入 cordis.patch.yml。
 
 `DSH_MAIL_SMTP_PASSWORD`
 
-**Phase 8 补充。** 该字段同时接受 DSH 凭据存储自身的 `<scope>/<id>` 寻址形式（每段匹配 `^[a-z][a-z0-9-]*$`），例如 `dsh/mail-smtp-password`。放宽的原因是实现期取证发现两种形式都是合法引用：存储只接受后一种键形，而本项目历史上只校验裸名，于是把密码存进 store 的部署会在挂载期被拒绝。该模式只判断引用名的拼写，引用是否可解析仍由 Credential 服务裁决（D010、D018）。
+**Phase 8.1 更正。** Phase 8 曾把该字段放宽为同时接受 DSH 凭据存储的 `<scope>/<id>` 寻址（例如 `dsh/mail-smtp-password`）。该诊断**不成立**，放宽已撤销：`<scope>/<id>` 是凭据 seam 的另一个键空间 `CredentialKey`，寻址 `.credentials.yaml` 的 `records` 段并经 `readRecord`/`describeRecord` 访问，而 `resolve()` 与 `describe()` 只读 `refs` 段与继承环境，**从不查询 `records`**。因此那是一个永远解析不到的引用。字段现在只接受 DSH 的 `CredentialRef` 文法 `^[A-Za-z_][A-Za-z0-9_]*$`。该模式只判断引用名的拼写，引用是否可解析仍由 Credential 服务裁决（D010、D019）。
 
 **更名说明（Phase 2）。** 本字段原名 `smtpPasswordEnv`，现更名为 `smtpPasswordCredential`。原因是运行时 `CredentialRef` 是一个**分层解析器**（按序解析自进程环境变量、provider 管理的存储与 `.env` 文件），名称中的 `Env` 会误导用户以为只能通过环境变量配置。字段名与运行时类型 `CredentialRef`、服务方法 `resolve(ref: CredentialRef)` 保持一致，实质要求（secret 不进入 `cordis.patch.yml`、每次操作解析、不缓存）不变。依据见 [`docs/DECISIONS.md`](docs/DECISIONS.md) D010 与 D016 第 3 项。
 

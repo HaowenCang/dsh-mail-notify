@@ -113,28 +113,41 @@ From `0.2.0` the plugin has three notification families, and two of them cannot 
 scripted turn alone. The end-to-end probe covers them without spending provider quota:
 
 ```powershell
-node scripts/probe-e2e.mjs questions "Ask me which implementation to use, then finish."
-node scripts/probe-e2e.mjs errors    "Fail this turn terminally."
-node scripts/probe-e2e.mjs approvals "Write a file outside the workspace."
+npm run probe:questions             # ask_user_question, then completion
+npm run probe:errors                # one terminal provider failure
+npm run probe:approvals             # one in-Turn approval, allowed once
+npm run probe:approvals-duplicate   # the same, with the audit record replayed
+npm run probe:approvals-rejected    # the same, with the answerer rejecting
+npm run probe:credentials           # the credential-reference contract
 ```
+
+Each script is `node scripts/probe-e2e.mjs <scenario> "<task>"`; the tasks are fixed so a run is
+reproducible. `scripts/probe/README.md` documents what each scenario composes and asserts.
 
 | Scenario | Expected | Measured on this machine |
 | --- | --- | --- |
 | `questions` | 2 messages: `[DSH] Input required — Choose Mode`, then a completion message | 2 — `[DSH] Input required — Choose Mode` and `[DSH] Task completed — probe-scripted` |
-| `errors` | 1 message: `[DSH] Task failed — …` | 1 — `[DSH] Task failed — QUOTA` |
-| `approvals` | 1 message: `[DSH] Approval required — <tool>` | **not reached** — the approval request never opened in this environment, so the scenario is not evidence |
+| `errors` | 1 message: `[DSH] Task failed — …` | 1 — `[DSH] Task failed — QUOTA (402)` |
+| `approvals` | 2 messages: `[DSH] Approval required — probe_request_approval`, then a completion message | 2, with the approval mail observed over SMTP while the answerer was still withholding its decision |
+| `approvals-duplicate` | 2 messages, with the same approval id published twice in the log | 2 — one approval id, two `approval/asked` records, one approval mail |
+| `approvals-rejected` | 1 approval mail, `approval/decided` `rejected`, no second "approval required" | 2 — the approval mail, then a completion-with-tool-errors mail; the rejection produced no second approval mail |
+| `credentials` | every contract check `PASS` | 14 PASS, 0 FAIL against the installed store |
 
 **A terminal-failure notification cannot be exercised against a real provider without spending
 quota.** Triggering `turn/end` with `reason.kind === 'error'` for real means exhausting a quota or
 letting a request fail terminally, and the failure's shape would then be the provider's choice rather
 than the test's. That is why the `errors` scenario uses the probe's scripted provider: the failure
 object is declared by the script, the rest of the path is production. The same reasoning applies to
-the question family, which needs a model willing to stop and ask at a chosen moment.
+the question family, which needs a model willing to stop and ask at a chosen moment, and to the
+approval family, which needs a human willing to answer at a chosen moment.
 
-The probe's third scenario is a known gap, not a pass: `approvals` produced no approval mail here
-because `approval/asked` was never appended. The approval family's evidence is the offline suite
-(`tests/integration/attention-notification.test.ts`, `APR-*`), and no release note may claim the
-approval path was verified in a real composition until that scenario completes.
+The approval scenarios need their own composition note: `dsh-base` derives the approval policy from
+`DSH_PERMISSION_MODE`, and this machine's preset is `danger-full-access`, whose policy is `never`. A
+`never` policy rejects every ask deterministically before any answerer is consulted, so no
+`approval/asked` record exists to notify about. The probe overlay therefore pins `approval.policy:
+ask` explicitly, and the answerer withholds its answer until the probe has seen the approval mail
+arrive over SMTP — which is what makes "the notification happened while the approval was pending" a
+measured fact rather than an assumption about timing.
 
 ## 6. Update
 
@@ -194,11 +207,12 @@ points a releaser must apply when running it:
 | --- | --- |
 | Tarball name | `dsh-mail-notify-0.2.0.tgz`. `npm pack` takes the name from `package.json`, so bump the version before packing; two builds sharing one version cannot be told apart in a profile listing. |
 | Package shape | The archive now contains `lib/human-attention.js` and its declaration. `scripts/probe-e2e.mjs` and `scripts/probe/` must **not** appear in it — the `files` whitelist already excludes `scripts/`, and `npm run pack:check` re-derives that. |
-| Failure-path evidence | A terminal-failure notification cannot be exercised against a real provider without spending quota, so this path is verified with the scripted provider of `scripts/probe-e2e.mjs errors` (1 message, `[DSH] Task failed — QUOTA`), not against a live account. Record it as probe evidence, not as real-provider evidence. |
-| Question-path evidence | `scripts/probe-e2e.mjs questions` must deliver exactly 2 messages. Exactly 2 is the assertion: it is what shows the question's dedupe namespace did not consume the turn's. |
-| Approval-path evidence | Not available from the probe in this environment. The approval path is covered offline by `tests/integration/attention-notification.test.ts` (`APR-*`) and must be reported that way. |
-| Configuration surface | Two switches were added (`notifyQuestions`, `notifyApprovals`), both defaulting to `false`, and `smtpPasswordCredential` accepts two reference forms. A profile patch written for `0.1.1` keeps working unchanged; the shipped `cordis.patch.yml` still sets `enabled: false`. |
+| Failure-path evidence | A terminal-failure notification cannot be exercised against a real provider without spending quota, so this path is verified with the scripted provider of `npm run probe:errors` (1 message, `[DSH] Task failed — QUOTA (402)`), not against a live account. Record it as probe evidence, not as real-provider evidence. |
+| Question-path evidence | `npm run probe:questions` must deliver exactly 2 messages. Exactly 2 is the assertion: it is what shows the question's dedupe namespace did not consume the turn's. |
+| Approval-path evidence | `npm run probe:approvals`, `npm run probe:approvals-duplicate` and `npm run probe:approvals-rejected` must each deliver the expected count, and the printed timeline must place `approval/asked` before the approval mail and the mail before `approval/decided`. The offline suite (`APR-*`) pins the parser and policy behaviour; the probe is what shows the chain in a real assembly. |
+| Configuration surface | Two switches were added (`notifyQuestions`, `notifyApprovals`), both defaulting to `false`. `smtpPasswordCredential` takes exactly one form — the DSH `CredentialRef` grammar `^[A-Za-z_][A-Za-z0-9_]*$` (D019) — so a profile patch written for `0.1.1` keeps working unchanged and a `<scope>/<id>` value is refused at mount with an explanation. The shipped `cordis.patch.yml` still sets `enabled: false`. |
 | Publication scope | This phase produced a release candidate and **did not publish**: no `npm publish`, no `v0.2.0` tag, no GitHub Release. Do not report the candidate as released, and do not move the `v0.1.1` tag. |
+| Credential-reference contract | Before packing, re-run `npm run probe:credentials`. It boots the **installed** file-backed provider over a disposable document and prints an exact-value, source-layer, and grammar comparison; a `FAIL` there means the plugin's `CREDENTIAL_REF_PATTERN` and the store's `credentialRef()` have diverged, which is a release blocker (D019). |
 
 ## 9. Version history
 
@@ -206,7 +220,7 @@ points a releaser must apply when running it:
 | --- | --- | --- |
 | `0.1.0` | released | First release. `schemaVersion: 1`; `usage` carried the last observed per-call sample. Nodemailer `^7.0.13`. |
 | `0.1.1` | released | `usage` is the turn-level aggregate of observable per-call counters; `schemaVersion: 2`; `usageComplete` added; body labels the aggregate as such (D017); Nodemailer raised to `^10.0.9` and `npm audit --omit=dev` reports 0 vulnerabilities. No configuration field changed, so an existing profile patch needs no edit. |
-| `0.2.0` | **release candidate — not published** | Three notification families instead of one: a settled turn, a terminal turn failure, and a mid-turn human-attention request. A failure mail is produced even when the turn yielded no visible assistant output, which is the one place the old "no visible text ⇒ never notify" rule is lifted; `notifyErrors` keeps its `false` default. New switches `notifyQuestions` and `notifyApprovals`, both `false` by default. New rendering: a `--- Failure ---` section, `--- Question ---` and `--- Approval ---` sections, and the subjects `[DSH] Task failed — QUOTA (429)`, `[DSH] Input required — …`, `[DSH] Approval required — …`. Dedupe keys gained `turn:` / `question:` / `approval:` namespaces. `CREDENTIAL_REF_PATTERN` accepts a bare name and the DSH store's `<scope>/<id>` form, so a profile whose password lives in the store now mounts. `schemaVersion` stays `2`. Tarball: `dsh-mail-notify-0.2.0.tgz`. Probe evidence: `questions` = 2 messages, `errors` = 1 message, `approvals` not reached; no tag, no npm publication, no GitHub Release. |
+| `0.2.0` | **release candidate — not published** | Three notification families instead of one: a settled turn, a terminal turn failure, and a mid-turn human-attention request. A failure mail is produced even when the turn yielded no visible assistant output, which is the one place the old "no visible text ⇒ never notify" rule is lifted; `notifyErrors` keeps its `false` default. New switches `notifyQuestions` and `notifyApprovals`, both `false` by default. New rendering: a `--- Failure ---` section, `--- Question ---` and `--- Approval ---` sections, and the subjects `[DSH] Task failed — QUOTA (429)`, `[DSH] Input required — …`, `[DSH] Approval required — …`. Dedupe keys gained `turn:` / `question:` / `approval:` namespaces. `CREDENTIAL_REF_PATTERN` is exactly the DSH `CredentialRef` grammar `^[A-Za-z_][A-Za-z0-9_]*$` (D019; a Phase 8 widening to `<scope>/<id>` was withdrawn in Phase 8.1). `schemaVersion` stays `2`. Tarball: `dsh-mail-notify-0.2.0.tgz`. Probe evidence: `questions` = 2 messages, `errors` = 1, `approvals` = 2, `approvals-duplicate` = 2 with one approval id published twice, `approvals-rejected` = 2, `credentials` = 14 PASS / 0 FAIL against the installed store; no tag, no npm publication, no GitHub Release. |
 
 A `0.1.0` candidate record and a `0.1.1` candidate record for the same turn usually carry
 **different** `usage` values and always carry different `schemaVersion` values. The version field is

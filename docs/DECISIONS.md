@@ -44,6 +44,7 @@ README.md 当前状态
 | D016 | 文档冲突裁决清单 | Frozen |
 | D017 | Turn 级遥测聚合语义（`usage` 语义变更，schema v2） | Frozen |
 | D018 | Human-attention 通知触发器与隐私边界（Phase 8，2026-09） | Frozen |
+| D019 | 凭据引用文法回归 DSH 的 `CredentialRef` 契约（Phase 8.1，2026-09） | Frozen |
 
 ---
 
@@ -948,9 +949,49 @@ question 通知**不得**复用 `${sessionId}:${turn}`，否则它会与同一 T
 - 新增模块 `src/human-attention.ts`，是 `src/` 中唯一被允许读取 `tool/call.arguments` 的模块；`runtime-adapter.ts` 只做字符串拷贝，`event-handler.ts` 只做一次精确工具名比较后转交。
 - `src/index.ts` 注册两个 `session/event` 监听器：一个维护 Turn 状态，一个只观察 `approval/asked`。`user-questions/request` 与 `approval/request` 不在注册集合内。
 - `DedupeCache` 新增 `questionKeyFor` / `approvalKeyFor`，`keyFor` 的返回值改为带 `turn:` 前缀。旧键形不再是契约的一部分（去重不持久化，跨重启无保证，见 D008），因此该变更无迁移成本。
-- `CREDENTIAL_REF_PATTERN` 放宽为同时接受裸名与 DSH 存储的 `<scope>/<id>` 寻址。运行时取证发现二者都是合法引用：Credential store 只接受 `<scope>/<id>`（每段 `^[a-z][a-z0-9-]*$`），而本项目历史上只校验裸名，因此一个把密码存进 store 的部署会在挂载期被拒绝，而操作者无法在不损害凭据卫生的前提下修正它。
+- ~~`CREDENTIAL_REF_PATTERN` 放宽为同时接受裸名与 DSH 存储的 `<scope>/<id>` 寻址。~~ **该条已在 Phase 8.1 撤销，理由见 D019。** 运行时取证发现二者都是合法引用：Credential store 只接受 `<scope>/<id>`（每段 `^[a-z][a-z0-9-]*$`），而本项目历史上只校验裸名，因此一个把密码存进 store 的部署会在挂载期被拒绝，而操作者无法在不损害凭据卫生的前提下修正它。
 - 子代理的 `ask` 能力不假设可用：DSH 的 `dsh-user-questions` 对 delegated caller 抛 `DELEGATED_CALLER`，因此「子代理是否真能提问」随 composition 而异。插件的闸门（`includeSubagents`）必须独立于该能力可观测。
 - 本阶段不实现：邮件回复作答、邮件内 action link、一键批准、远程回调。也不构造任何含 DSH Web token 的深链接——`?token=...`、auth token、session secret 一律不得进入邮件。
+
+---
+
+## D019 — 凭据引用文法回归 DSH 的 `CredentialRef` 契约（Phase 8.1，2026-09）
+
+**背景。** D018 的 Consequences 记录了一项实现期修正：把 `CREDENTIAL_REF_PATTERN` 从 `^[A-Za-z_][A-Za-z0-9_]*$` 放宽为同时接受裸名与 `<scope>/<id>`，理由是「Credential store 只接受 `<scope>/<id>`」。该诊断经复核**不成立**，Phase 8.1 予以撤销。
+
+**决定。** `smtpPasswordCredential` 的校验文法回归为：
+
+```text
+^[A-Za-z_][A-Za-z0-9_]*$
+```
+
+即 DSH `CredentialRef` 的**全部**文法，且仅此一种形式。`<scope>/<id>` 形式被拒绝。
+
+**Reason**
+
+DSH 的凭据 seam 有两个**互不相通**的键空间，Phase 8 把二者混为一谈：
+
+| 概念 | 文法 | 入口 | 存储位置 |
+| --- | --- | --- | --- |
+| `CredentialRef` | `^[A-Za-z_][A-Za-z0-9_]*$` | `resolve()` / `describe()` / `set()` / `unset()` | `.credentials.yaml` 的 `refs` 段 |
+| `CredentialKey` | `<scope>/<id>`，每段 `^[a-z][a-z0-9-]*$` | `readRecord()` / `describeRecord()` / `modifyRecord()` / `listRecords()` | 同一文件的 `records` 段 |
+
+本机安装的 `@deepseek-ai/dsh-credentials@0.1.5-rc.1`（`lib/types/index.js`）把该契约实现为两个模块级常量：`REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/` 与 `KEY_SEGMENT_PATTERN = /^[a-z][a-z0-9-]*$/`；`credentialRef()` 对前者抛 `TypeError`，`credentialKey()` / `parseCredentialKey()` 对后者抛。同一安装的 `@deepseek-ai/dsh-credentials-local@0.1.5-rc.1` 在解析文档时对 `refs` 段的每个键调用 `credentialRef()`、对 `records` 段的每个键调用 `parseCredentialKey()`，因此**一个 `<scope>/<id>` 键写入 `refs` 段会使整份文档在启动期被拒绝**。
+
+关键事实是 Phase 8 遗漏的那一半：`LocalCredentialProvider.resolve()` 与 `describe()` 只读 `values`（即 `refs` 段）与继承环境，**从不查询 `records`**。因此 `<scope>/<id>` 作为 `smtpPasswordCredential` 是一个永远解析不到的引用。放宽文法不但无益，还有害：它把一次可以在挂载期报出的配置错误推迟到每次投递尝试，并且报出的是一条「未配置」诊断——而真正的原因是引用形式根本不属于该键空间。
+
+**Rejected alternatives**
+
+1. **保留双形式（Phase 8 现状）**：如上，接受一个 `resolve()` 永远读不到的引用，把挂载期错误变成运行期静默失败。
+2. **按 DSH 版本分流（Outcome B）**：本机只安装并验证过 `0.1.5-rc.1` 一个版本，两个文法常量同属该版本，不存在需要分流的第二个 shape。为一个不存在的历史差异引入版本判断只会制造未经测试的代码路径。
+3. **新增一个独立的 `smtpPasswordCredentialKey` 配置项走 records 段**：新增配置面与一条新的解析路径，而 `records` 段的 payload 是**拥有者自定义格式**（`ApiKeyRecord` 或 `GrantRecord`），seam 明确声明自己不解释它。一个 SMTP 密码放进 records 段是误用该段的设计意图，不是本插件该支持的部署。
+
+**Consequences**
+
+- `src/config.ts` 的 `CREDENTIAL_REF_PATTERN` 与 DSH 的 `REF_PATTERN` 逐字符相同；挂载期错误信息直接说明 `<scope>/<id>` 属于 record half。
+- 新增 `tests/integration/credential-contract.test.ts`：以**安装的** `credentialRef()` / `isCredentialRefName()` / `credentialKey()` / `parseCredentialKey()` 为基准，逐候选比对插件自己的文法副本。这是该缺陷类别唯一能被抓住的方式——拿插件自己的模式做基准测试，测的正是出错的那份副本。
+- 探针的凭据引用由 `credentials/smtp-password` 改为 `DSH_MAIL_SMTP_PASSWORD`，并改为把**出厂** provider 指向一次性探针目录，使 `resolve()`/`describe()` 的真实实现参与运行（A13）。
+- `.env.example`、`docs/CONFIG_SPEC.md` 与本文件的示例名称不变：它们一直是 `DSH_MAIL_SMTP_PASSWORD`，即被撤销的那次放宽从未改变文档化的默认值。
 
 ---
 
@@ -990,7 +1031,32 @@ D001 与 Phase 3 补记 A1 把 `tool/call` 的输出定为 `{ kind: 'tool-call',
 
 ---
 
-## 附：本文件与其它文档的关系
+## 附：Implementation Addendum — Phase 8.1（2026-09）
+
+### A13（补记）— 探针的凭据层由替身改为出厂 provider
+
+Phase 8 的探针用 `fake-credentials.mjs` 发布了一个凭据服务替身（从单个环境变量解析一个硬编码引用）。该替身让邮件链路可以不带真实密钥运行，但也使「插件配置里的引用是否合法」这一问题完全无法被这次运行回答：一个接受任意字符串的替身只能证明替身本身宽容。
+
+Phase 8.1 改为把**出厂**的 `@deepseek-ai/dsh-credentials-local` 指向一次性探针目录（`credentials` 行的 `path` 覆盖），文档中只放一条合成引用。于是 `resolve()`、`describe()`、层优先级与文档解析全部走真实实现，而来源仍受控。替身文件已删除。
+
+### A14（补记）— `QuestionDropReason.'content-limit'` 的处置：保留但标注为保留值
+
+`content-limit` 只在「本次调用未携带任何问题，且有某个问题被运行总量界限拒绝」时上报。当前界限下该组合不可能出现：单个良构问题的成本上限为 `MAX_QUESTION_CHARS + MAX_QUESTION_ID_CHARS = 2200`，低于 `MAX_TOTAL_QUESTION_CHARS = 6000`，因此首个良构问题必被携带；而尺寸界限只能在已有问题被携带**之后**拒绝后续问题，于是结果必然是部分携带，`dropReason` 根本不会被计算。`HAT-11c` 证明该边界，`HAT-11e` 用耗尽额度的夹具证明其不可达。
+
+**裁决：保留该成员。** 依据是解析器的记账仍会赋值 `truncatedBySize`（若两个界限的相对大小在未来改变，该值会立即变为可达），删除它会让一个仍在使用的取值脱离词汇表；保留的代价是一个联合分支加一个测试，且该测试明确写出它今天为何不能触发。`src/types.ts` 的该分支上已附这条结论。
+
+### A15（补记）— `parentSession` 与 DSH 真实 header 的对照
+
+Phase 8 记录过一个理论性担忧：fork 出的会话也携带 `parentSession`，因此三判据中的第二条可能把用户主动 fork 的会话判为子代理。Phase 8.1 对照了本机安装的 DSH 源码，结论是**该担忧成立，但范围比记录更窄**：
+
+- `dsh-subagent` 的 `childSessionMeta()`（`lib/index.js:502`）为**每一个**子代理子会话同时写入 `origin: 'subagent'`、`delegationDepth: parent + 1` 与 `parentSession: parent.id`。该函数被 `dsh-subagent`、`dsh-subagent-continuation` 与 `dsh-subagent-in-process-driver` 三条创建路径共同使用，因此运行时的子代理**全部**命中第一条判据。
+- `dsh-session` 的 `SessionStore.fork()`（`lib/index.js:1578`）只写 `parentSession` 与 `isSeeded: true`，**不写** `origin`、**不写** `delegationDepth`。该路径由 `session/fork` 远端命令（`dsh-api-session-controller`）驱动，即用户主动的会话分支。
+
+因此当且仅当一个用户主动 fork 会话时，第二条判据才会单独成立并把该会话判为子代理；`includeSubagents: false` 下该分支的回合、提问与审批都不发邮件。**未观察到任何真实子代理被误判**，故按「不以理论顾虑改动既有语义」的要求，三判据及其顺序在本阶段保持不变；上表事实作为后续复核依据记入。
+
+---
+
+## 附：Implementation Addendum — D001–D016 的实现补记
 
 本节记录实现期间出现的、D001–D016 未覆盖或需补充说明的事实。**D001–D016 本身未被修改，也未新增或删除任何决策的语义。** 逐项标注它属于「补记」还是「需要裁决的实现偏离」。
 
@@ -1052,3 +1118,4 @@ D007 的候选在实现中增加两个**可选**字段：`sawTurnStart?: boolean
 | `docs/PRODUCT_SPEC.md` | 功能范围与明确的非目标（Phase 3 新增） |
 | `PHASE3_REPORT.md` | 实现与验证的逐项结果（Phase 3 新增） |
 | `PHASE8_REPORT.md` | D018 的实现与验证的逐项结果（Phase 8 新增） |
+| `PHASE8_1_REPORT.md` | D019 的取证与裁决，approval E2E 的补齐，以及 Phase 8 遗留三项的处置（Phase 8.1 新增） |
