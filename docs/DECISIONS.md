@@ -52,7 +52,9 @@ README.md 当前状态
 
 **Decision**
 
-插件唯一的事件观察入口是顶层 Cordis 事件 `session/event`，签名为 `(this: Scoped<Session>, session: Session, event: SessionEvent): void`。`turn/start`、`assistant/message`、`tool/call`、`tool/result`、`turn/end` 均不是顶层事件，而是 `SessionEvent.type` 的取值，在单一监听器内按 `event.type` 分派。
+插件对 SessionEvent 使用的**唯一顶层 Cordis 事件名**是 `session/event`，签名为 `(this: Scoped<Session>, session: Session, event: SessionEvent): void`。`turn/start`、`assistant/message`、`tool/call`、`tool/result`、`turn/end`、`approval/asked` 均不是顶层事件，而是 `SessionEvent.type` 的取值。
+
+本决策约束的是**事件名**，不是回调数量。普通 Turn 状态由主 `session/event` 监听器按 `event.type` 分派维护；Phase 8 另注册一个同名 `session/event` observer，仅观察 `approval/asked`（D018）。两者都经 Runtime Adapter 与有界观察路径，且都不注册 `user-questions/request` 或 `approval/request`。
 
 `session/disposed` 是独立的顶层 Cordis 事件，仅用于释放 `Map<sessionId, …>`，不参与 Turn 分类。
 
@@ -949,7 +951,8 @@ question 通知**不得**复用 `${sessionId}:${turn}`，否则它会与同一 T
 - 新增模块 `src/human-attention.ts`，是 `src/` 中唯一被允许读取 `tool/call.arguments` 的模块；`runtime-adapter.ts` 只做字符串拷贝，`event-handler.ts` 只做一次精确工具名比较后转交。
 - `src/index.ts` 注册两个 `session/event` 监听器：一个维护 Turn 状态，一个只观察 `approval/asked`。`user-questions/request` 与 `approval/request` 不在注册集合内。
 - `DedupeCache` 新增 `questionKeyFor` / `approvalKeyFor`，`keyFor` 的返回值改为带 `turn:` 前缀。旧键形不再是契约的一部分（去重不持久化，跨重启无保证，见 D008），因此该变更无迁移成本。
-- ~~`CREDENTIAL_REF_PATTERN` 放宽为同时接受裸名与 DSH 存储的 `<scope>/<id>` 寻址。~~ **该条已在 Phase 8.1 撤销，理由见 D019。** 运行时取证发现二者都是合法引用：Credential store 只接受 `<scope>/<id>`（每段 `^[a-z][a-z0-9-]*$`），而本项目历史上只校验裸名，因此一个把密码存进 store 的部署会在挂载期被拒绝，而操作者无法在不损害凭据卫生的前提下修正它。
+- ~~Phase 8 曾把 `CREDENTIAL_REF_PATTERN` 放宽为同时接受裸名与 `<scope>/<id>`。~~
+  **该诊断与实现均已在 Phase 8.1 撤销；现行凭据契约完全由 D019 定义。**
 - 子代理的 `ask` 能力不假设可用：DSH 的 `dsh-user-questions` 对 delegated caller 抛 `DELEGATED_CALLER`，因此「子代理是否真能提问」随 composition 而异。插件的闸门（`includeSubagents`）必须独立于该能力可观测。
 - 本阶段不实现：邮件回复作答、邮件内 action link、一键批准、远程回调。也不构造任何含 DSH Web token 的深链接——`?token=...`、auth token、session secret 一律不得进入邮件。
 

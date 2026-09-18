@@ -14,7 +14,7 @@
 
 - 类型与非空字段用 `@deepseek-ai/schemastery` 的 `Schema.object` 声明，默认值即第 3 节的默认值。schema 抛出的校验异常被 `resolveConfig()` 捕获并转为同形的诊断，因此坏配置表现为一条 `plugin.config-invalid` 日志，而不是未捕获异常。
 - 取值范围（`smtpPort` 1–65535、`maxBodyChars` 1000–1 000 000、`queueSize` 1–10000、`retryAttempts` 0–10、`retryBaseDelayMs` 100–60000、`maxDedupeEntries` 10–100000、`minTurnDurationMs` 0–3600000）以 `.min()` / `.max()` 声明在 schema 上，超范围即拒绝。
-- 「非空」与「含 `@`」这两类判断**不在 schema 内**，而在 `resolveConfig()` 中实现：`smtpHost`（非空、不含空白）、`smtpUser`（非空）、`smtpPasswordCredential`（非空且匹配 `CREDENTIAL_REF_PATTERN`，该模式在 Phase 8 放宽，见下方 Phase 8 补记）、`from`（非空且形如地址）、`to`（逐项校验、去重后仍需 ≥ 1 项）。
+- 「非空」与「含 `@`」这两类判断**不在 schema 内**，而在 `resolveConfig()` 中实现：`smtpHost`（非空、不含空白）、`smtpUser`（非空）、`smtpPasswordCredential`（非空且匹配 `CREDENTIAL_REF_PATTERN`，即 DSH 的 `CredentialRef` 文法；Phase 8 的那次放宽已在 Phase 8.1 撤销，见下方 Phase 8 补记第 3 项）、`from`（非空且形如地址）、`to`（逐项校验、去重后仍需 ≥ 1 项）。
 
 **与第 4 节表逐条对照的结果：**
 
