@@ -18,18 +18,22 @@ import { RETRY_MAX_DELAY_MS } from './retry.ts'
 /**
  * Reference-name grammar accepted for `smtpPasswordCredential` (D010).
  *
- * Two forms are legitimate, so both are accepted. A bare identifier is the
- * environment-layer spelling this project has always shipped — an environment
- * variable name such as `DSH_MAIL_SMTP_PASSWORD`. A `<scope>/<id>` pair is the
- * DSH Credential store's own addressing, where each segment must match
- * `^[a-z][a-z0-9-]*$`.
+ * This is the installed DSH `CredentialRef` grammar, character for character:
+ * a POSIX-style environment-variable name. `dsh-credentials` builds every
+ * reference through `credentialRef()`, which throws unless the candidate
+ * matches `^[A-Za-z_][A-Za-z0-9_]*$`, and the file-backed provider admits only
+ * that grammar into the `refs` section of `.credentials.yaml` — the section its
+ * `resolve()` and `describe()` read.
  *
- * Accepting only the first would reject a profile whose password lives in the
- * store under the only key shape the store accepts; accepting only the second
- * would break every existing deployment. The store, not this pattern, remains
- * the authority on whether a reference resolves.
+ * The `<scope>/<id>` spelling is a different key space, `CredentialKey`, which
+ * addresses the provider-managed `records` section through
+ * `readRecord`/`describeRecord`. It is deliberately **not** accepted here: the
+ * plugin passes this value to `resolve()` and `describe()`, which know nothing
+ * about the record half, so admitting it would validate a reference that can
+ * never resolve and would move the misconfiguration from mount time to send
+ * time. See D019.
  */
-export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(\/[a-z][a-z0-9-]*)?$/
+export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 /** Deliberately permissive address check: the SMTP server is the real judge. */
 const ADDRESS_PATTERN = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/
@@ -206,7 +210,9 @@ export function resolveConfig(raw: unknown): ConfigResolution {
     errors.push('smtpPasswordCredential is required; give the credential reference name, never the password itself')
   } else if (!CREDENTIAL_REF_PATTERN.test(credentialRef)) {
     errors.push(
-      `smtpPasswordCredential "${credentialRef}" is not a valid credential reference name (expected ${CREDENTIAL_REF_PATTERN.source})`,
+      `smtpPasswordCredential "${credentialRef}" is not a valid credential reference name ` +
+        `(expected ${CREDENTIAL_REF_PATTERN.source}, the DSH CredentialRef grammar; ` +
+        'a `<scope>/<id>` CredentialKey addresses the record half of the store and cannot be resolved here)',
     )
   }
 
