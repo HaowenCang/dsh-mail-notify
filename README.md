@@ -178,7 +178,7 @@ Turn:      2
 Duration:  6 min 55 s
 Provider:  command-goat
 Model:     deepseek/deepseek-v4.1-flash
-Workspace: E:\Projects\DSHarness\dsh-mail-notify
+Workspace: C:\Users\you\projects\my-app
 Tool errors reported by DSH: 0
 Telemetry complete: yes
 Token usage (turn aggregate): inputTokens=272069, outputTokens=18151, cacheReadTokens=2430720, cacheWriteTokens=not reported, reasoningTokens=not reported
@@ -200,7 +200,7 @@ Status:    Waiting for a human
 Session:   session-7abf8371-0583-4160-967d-df591b335d66
 Turn:      1
 Step:      1
-Workspace: E:\Projects\DSHarness\dsh-mail-notify
+Workspace: C:\Users\you\projects\my-app
 Observed:  2026-09-18T15:33:11.596Z
 ```
 
@@ -239,11 +239,66 @@ notification plugin should not start emailing you before you have told it where 
 Restart DSH after installing. This profile uses `patchReload: startup`, so a new row takes effect
 on the next boot.
 
-## Configure
+## Configure in the Web UI
+
+`Settings → Plugins → Plugin configuration` shows a **dsh-mail-notify** card. Everything in the
+patch example below can be set there instead; the card needs no YAML editing and takes effect
+without restarting DSH.
+
+The card is registered into the `settings.plugin.item` slot under the key `dsh-mail-notify`, which
+is also the settings namespace the host registers. That key is what pairs the browser half with the
+host half — neither side learns anything else about the other.
+
+How the three layers compose:
+
+```
+schema defaults  →  cordis.patch.yml (composition)  →  settings.yaml (your overrides)  →  what runs
+```
+
+The card shows the **effective** value of every field — what a notification would actually use —
+and marks each one `inherited` (no override) or with a `reset` button (overridden). **Reset removes
+the override**; it does not write the default back, so the field re-inherits the composition layer
+and any later change to the patch is picked up again. `Reset` at the bottom stages that removal for
+every field the plugin owns, and `Save` applies it.
+
+| Card region | Fields |
+| --- | --- |
+| Human attention | `notifyQuestions`, `notifyApprovals` — rendered apart because they are the switches that decide whether you learn an agent is blocked |
+| General | `enabled`, `includeSubagents` |
+| Other notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens` |
+| SMTP | `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, `from`, `to` |
+| Credential | `smtpPasswordCredential` (a reference **name**), and the write-only password control |
+| Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter`, `maxBodyChars` |
+| Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
+
+The status line above the form reports whether the runtime is mounted, whether the credential
+reference is configured, the queue depth and counters, and — prominently — the **effective**
+`notifyQuestions` and `notifyApprovals` values. It is re-read every five seconds while the card is
+on screen. If a saved configuration cannot be applied, the card says so instead of silently doing
+nothing; the previously running configuration stays in effect.
+
+**Send test email** delivers one fixed message through the *same* credential lookup, transport
+construction, and failure classification a real notification uses, so a success there is evidence
+about the notification path rather than merely about connectivity. The message body restates no
+configuration and contains no credential.
+
+### The password
+
+The browser never reads the SMTP password. The only credential operations the card performs are
+`describe` (is a value stored, and is it writable), `set`, and `unset`; the installed DSH
+credentials namespace has no read path at all. The password field starts blank every time the card
+renders, a stored password is reported only as *configured*, typing a replacement is write-only,
+and a successful save clears the local draft. A custom `smtpPasswordCredential` reference is
+preserved as you typed it.
+
+## Configure by patch file
 
 Add a row to the profile's own patch file (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`). A
 patch **replaces** the targeted row's whole `config`, so restate every key you rely on; omitted
 keys fall back to the schema defaults.
+
+This remains fully supported, and the two routes compose: patch values are the *composition* layer,
+and anything set in the card is a user override on top of them.
 
 ```yaml
 - id: dsh-mail-notify

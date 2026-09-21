@@ -28,5 +28,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /**
+   * The browser half is compiled by its own program (`tsconfig.client.json`).
+   * It needs the DOM library and the automatic JSX runtime, neither of which
+   * belongs in the Node program that emits `lib/`; excluding it here is what
+   * keeps the host build from acquiring a DOM dependency it cannot have.
+   */
+  "exclude": ["src/client"]
 }

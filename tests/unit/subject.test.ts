@@ -129,14 +129,14 @@ test('PRIV-07 metadata minimisation removes cwd and session id', () => {
   const minimal = testConfig({ includeMetadata: false })
   const mail = renderMail({
     notification: testTurnNotification(testCandidate({
-      cwd: 'E:\\Projects\\Secret-Client-Name',
+      cwd: 'C:\\Users\\you\\projects\\secret-client-name',
       sessionId: 'session-abcdef-should-not-appear',
       visibleText: 'the answer',
     })),
     render: minimal.render,
     truncated: false,
   })
-  assert.ok(!mail.text.includes('Secret-Client-Name'))
+  assert.ok(!mail.text.includes('secret-client-name'))
   assert.ok(!mail.text.includes('session-abcdef-should-not-appear'))
   assert.ok(!mail.text.includes('Status:'))
   assert.ok(mail.text.includes('the answer'), 'the visible text is the point and stays')
@@ -269,6 +269,6 @@ test('renderFooter states what the message is and what it omits', () => {
 })
 
 test('an unusual cwd is flattened before it reaches the body', () => {
-  const metadata = renderMetadata(testCandidate({ cwd: 'E:\\a\nInjected-Header: yes' }))
+  const metadata = renderMetadata(testCandidate({ cwd: 'C:\\workspace\nInjected-Header: yes' }))
   assert.ok(!metadata.includes('\nInjected-Header'))
 })

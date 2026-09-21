@@ -64,12 +64,41 @@ function oneLine(value: string): string {
 }
 
 /**
- * Build the sink that renders and delivers one job.
+ * One already-rendered message, plus the log scalars identifying what produced it.
+ *
+ * `log` never carries message content: it is the same identifying projection the
+ * notification paths log, and it exists so that the credential, transport, and
+ * failure classification below have one implementation rather than one per
+ * caller.
+ */
+export interface DeliveryRequest {
+  to: readonly string[]
+  subject: string
+  text: string
+  log: Record<string, unknown>
+}
+
+/**
+ * The credential-plus-transport path, without any notification rendering above it.
+ *
+ * This is the seam the Web UI's test-email action sends through. Extracting it
+ * rather than restating it is the point: a test message and a real notification
+ * must differ only in who composed the subject and body, never in how the
+ * password is resolved or how the transport is built.
+ */
+export type Deliverer = (request: DeliveryRequest) => Promise<SendResult>
+
+/**
+ * Extract the credential, transport, and delivery path from {@link createMailer}.
+ *
+ * The credential is resolved inside every call and the transport is built fresh
+ * for every call, so a rotated password reaches the next message and no
+ * long-lived object ever holds the secret.
  *
  * @param options - context, resolved configuration, logger, and test seams.
- * @returns the send function; it never rejects.
+ * @returns the deliverer; it never rejects.
  */
-export function createMailer(options: MailerOptions): MailSink {
+export function createDeliverer(options: MailerOptions): Deliverer {
   const transportFactory = options.transportFactory ?? createSmtpTransport
   const { config, logger } = options
   // A bound provider is what tests use. Otherwise the service is looked up on
@@ -80,31 +109,8 @@ export function createMailer(options: MailerOptions): MailSink {
       ? () => options.credentialProvider
       : (options.credentialProviderResolver ?? (() => getCredentialProvider(options.ctx)))
 
-  return async function send(job: MailJob): Promise<SendResult> {
+  return async function deliver(request: DeliveryRequest): Promise<SendResult> {
     const provider = resolveProvider()
-    // The cap is applied here, once, and its own answer is what marks the job:
-    // rendering the full text while claiming truncation would let an unbounded
-    // model answer through under a marker that says it was bounded.
-    //
-    // Only a turn notification has an unbounded body. A human-attention
-    // notification was already bounded by the parser at the point where its
-    // fields were allowlisted, so applying `maxBodyChars` to it would mean
-    // re-truncating text that is by construction already inside the bound.
-    const notification = renderNotification(job, config)
-    const rendered = renderMail({
-      notification: notification.value,
-      render: config.render,
-      truncated: notification.truncated,
-    })
-
-    logger.debug('mail.render', {
-      ...logFieldsFor(job),
-      subjectLength: Array.from(rendered.subject).length,
-      bodyChars: rendered.bodyTextLength,
-      recipientCount: job.to.length,
-      truncated: notification.truncated,
-    })
-
     const credential = await resolveSmtpPassword(provider, config.smtp.smtpPasswordCredential)
     if (credential.value === undefined) {
       // A reference that does not resolve is permanent by definition: repeating
@@ -112,7 +118,7 @@ export function createMailer(options: MailerOptions): MailSink {
       // names the reference without ever reading its value.
       const failure = permanentFailure('credential-missing', credential.message ?? 'the credential was not resolved')
       logger.warn('mail.credential-missing', {
-        ...logFieldsFor(job),
+        ...request.log,
         credentialRef: config.smtp.smtpPasswordCredential,
         category: failure.category,
         message: failure.message,
@@ -131,20 +137,16 @@ export function createMailer(options: MailerOptions): MailSink {
     try {
       await transport.sendMail({
         from: config.smtp.from,
-        to: job.to,
-        subject: rendered.subject,
-        text: rendered.text,
+        to: request.to,
+        subject: request.subject,
+        text: request.text,
       })
-      logger.info('mail.sent', {
-        ...logFieldsFor(job),
-        bodyChars: rendered.bodyTextLength,
-        recipientCount: job.to.length,
-      })
+      logger.info('mail.sent', { ...request.log, recipientCount: request.to.length })
       return { ok: true }
     } catch (error) {
       const failure = classifyError(error)
       logger.warn('mail.failed', {
-        ...logFieldsFor(job),
+        ...request.log,
         category: failure.category,
         retryClass: failure.retryClass,
         code: failure.code ?? null,
@@ -153,6 +155,50 @@ export function createMailer(options: MailerOptions): MailSink {
       })
       return { ok: false, class: failure.retryClass, category: failure.category, message: oneLine(failure.message) }
     }
+  }
+}
+
+/**
+ * Build the sink that renders and delivers one job.
+ *
+ * @param options - context, resolved configuration, logger, and test seams.
+ * @returns the send function; it never rejects.
+ */
+export function createMailer(options: MailerOptions): MailSink {
+  const deliver = createDeliverer(options)
+  const { config, logger } = options
+
+  return async function send(job: MailJob): Promise<SendResult> {
+    // The cap is applied here, once, and its own answer is what marks the job:
+    // rendering the full text while claiming truncation would let an unbounded
+    // model answer through under a marker that says it was bounded.
+    //
+    // Only a turn notification has an unbounded body. A human-attention
+    // notification was already bounded by the parser at the point where its
+    // fields were allowlisted, so applying `maxBodyChars` to it would mean
+    // re-truncating text that is by construction already inside the bound.
+    const notification = renderNotification(job, config)
+    const rendered = renderMail({
+      notification: notification.value,
+      render: config.render,
+      truncated: notification.truncated,
+    })
+
+    const log = {
+      ...logFieldsFor(job),
+      bodyChars: rendered.bodyTextLength,
+      truncated: notification.truncated,
+    }
+
+    logger.debug('mail.render', {
+      ...logFieldsFor(job),
+      subjectLength: Array.from(rendered.subject).length,
+      bodyChars: rendered.bodyTextLength,
+      recipientCount: job.to.length,
+      truncated: notification.truncated,
+    })
+
+    return deliver({ to: job.to, subject: rendered.subject, text: rendered.text, log })
   }
 }
 

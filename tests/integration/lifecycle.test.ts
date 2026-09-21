@@ -31,6 +31,7 @@ import {
   REASONING_SECRET_SENTINEL,
   SMTP_PASSWORD_SENTINEL,
   USER_PROMPT_SENTINEL,
+  TEST_SESSION_CWD,
 } from '../fixtures/runtime-shapes.ts'
 import {
   controllableSink,
@@ -99,7 +100,7 @@ test('E2E-01 a complete turn produces exactly one job with real telemetry', asyn
   assert.equal(typeof candidate.durationMs, 'number')
   assert.equal(candidate.provider, 'deepseek-official')
   assert.equal(candidate.model, 'deepseek-chat')
-  assert.equal(candidate.cwd, 'E:\\Projects\\DSHarness\\dsh-mail-notify')
+  assert.equal(candidate.cwd, TEST_SESSION_CWD)
   assert.equal(job.truncated, false)
   assert.deepEqual([...job.to], ['recipient@example.com'])
 })

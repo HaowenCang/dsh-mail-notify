@@ -24,6 +24,7 @@ import {
   TOOL_ARGUMENT_SECRET_SENTINEL,
   TOOL_RESULT_SECRET_SENTINEL,
   USER_PROMPT_SENTINEL,
+  TEST_SESSION_CWD,
 } from '../fixtures/runtime-shapes.ts'
 import { testCandidate, testConfig, testTurnNotification } from '../support/harness.ts'
 
@@ -82,7 +83,7 @@ function sentinelJob(): MailJob {
   return {
     notification: testTurnNotification(testCandidate({
       visibleText: 'the final answer',
-      cwd: 'E:\\Projects\\DSHarness\\dsh-mail-notify',
+      cwd: TEST_SESSION_CWD,
       userText: `${USER_PROMPT_SENTINEL} do the thing`,
     })),
     to: ['recipient@example.com'],

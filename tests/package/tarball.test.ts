@@ -99,21 +99,90 @@ test('PKG-01 the archive carries the compiled runtime, the patch, and the docume
   )
 })
 
-test('the packed manifest still declares the DSH bundle and the export map', () => {
+test('the packed manifest declares the DSH bundle, the export map, and the browser half', () => {
   const manifest = JSON.parse(readFileSync(join(extracted, 'package.json'), 'utf8')) as {
     name: string
     version: string
     type: string
     main: string
-    dsh?: { bundle?: { patch?: string } }
+    dsh?: { bundle?: { patch?: string }; client?: { platform?: string; inject?: string[] } }
     exports?: Record<string, unknown>
   }
   assert.equal(manifest.name, 'dsh-mail-notify')
   assert.equal(manifest.type, 'module')
   assert.equal(manifest.main, 'lib/index.js')
-  assert.deepEqual(manifest.dsh, { bundle: { patch: './cordis.patch.yml' } }, 'the bundle manifest is the install entry point')
+  // The whole `dsh` block, not merely its bundle half: a plugin that ships a
+  // browser surface declares it here, and the module system reads `platform`
+  // and `inject` from this exact object. Asserting the complete shape is what
+  // makes a silently dropped `client` block fail here rather than in a browser.
+  assert.deepEqual(
+    manifest.dsh,
+    {
+      bundle: { patch: './cordis.patch.yml' },
+      client: {
+        platform: 'web',
+        inject: [
+          '@deepseek-ai/dsh-client-ui-renderer',
+          '@deepseek-ai/dsh-client-ui-settings',
+          '@deepseek-ai/dsh-client-ui-settings-plugins',
+          '@deepseek-ai/dsh-client-connection',
+          '@deepseek-ai/dsh-api-remotes',
+        ],
+      },
+    },
+    'the bundle manifest is the install entry point and the client manifest is the browser entry point',
+  )
   assert.ok(manifest.exports !== undefined && '.' in manifest.exports)
   assert.ok(existsSync(join(extracted, manifest.dsh?.bundle?.patch ?? 'missing')), 'the declared patch file exists')
+})
+
+test('PKG-01c the declared ./client export resolves to a self-contained loader bundle', () => {
+  // The browser half is served as exactly one classic script and registered
+  // through `window.__ModuleLoader__.load`. Three properties decide whether that
+  // works, and none of them is visible to the package's own TypeScript build:
+  // the export resolves, the file carries the loader envelope, and the bundle
+  // requires nothing outside the shell's seed module table.
+  const manifest = JSON.parse(readFileSync(join(extracted, 'package.json'), 'utf8')) as {
+    exports?: Record<string, unknown>
+  }
+  const entry = manifest.exports?.['./client']
+  assert.ok(entry !== undefined, 'the package must export ./client')
+  // The module system accepts a bare string or a one-level conditional object;
+  // this package uses the conditional form so the declaration file travels with
+  // the bundle.
+  const record = entry as { default?: unknown; types?: unknown }
+  const relative = typeof entry === 'string' ? entry : record.default
+  assert.equal(relative, './lib/client.js', 'the client export must resolve to the emitted bundle')
+  const typesRelative = typeof entry === 'string' ? undefined : record.types
+  assert.equal(typesRelative, './lib/types/client/index.d.ts')
+
+  const bundlePath = join(extracted, relative.slice(2))
+  assert.ok(existsSync(bundlePath), `the declared client bundle ${relative} must be in the archive`)
+  const typesPath = join(extracted, String(typesRelative).slice(2))
+  assert.ok(existsSync(typesPath), `the declared client declarations ${String(typesRelative)} must be in the archive`)
+
+  const source = readFileSync(bundlePath, 'utf8')
+  assert.match(
+    source,
+    /^window\.__ModuleLoader__\.load\(\{\r?\n\tid: "dsh-mail-notify",\r?\n\tfactory: \(require\) => \{/,
+    'the bundle must open the loader envelope with the package id',
+  )
+  assert.ok(
+    source.trimEnd().endsWith('return module.exports;\n\t}\n});'),
+    'the bundle must close the loader envelope',
+  )
+  assert.ok(
+    !/^\s*(import|export)\s/m.test(source),
+    'no top-level ESM statement may survive: the factory form is CommonJS',
+  )
+  const requires = [...source.matchAll(/require\("([^"]+)"\)/g)].map((match) => match[1])
+  assert.deepEqual(
+    [...new Set(requires)].sort(),
+    ['react', 'react/jsx-runtime'],
+    'the bundle must require only shell seed modules, so no second React copy can appear',
+  )
+  assert.match(source, /exports\.apply = apply;/)
+  assert.match(source, /exports\.inject = inject;/)
 })
 
 test('PKG-01b the packed manifest declares exactly one runtime dependency, on a supported Nodemailer', () => {

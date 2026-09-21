@@ -14,6 +14,10 @@
 # specifier through the profile's module root, and the probe deliberately keeps
 # the plugin under test outside that root.
 #
+# They are built from `PROBE_ROOT` — the probe exports the repository root into
+# this process — rather than written out. A literal checkout path here would pin
+# the probe to one machine's directory layout and leak it into the repository.
+#
 # The plugin's settings arrive as one JSON document through the environment
 # rather than as a nested YAML mapping: a mapping written here would have to
 # restate every key, and a silent typo in one of them would change what the run
@@ -56,23 +60,23 @@
 
 - insert:
     - id: probe-timeline
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/timeline.mjs'
+      name: !!js process.env.PROBE_ROOT + '/scripts/probe/timeline.mjs'
 
     - id: probe-credential-contract
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/credential-contract.mjs'
+      name: !!js process.env.PROBE_ROOT + '/scripts/probe/credential-contract.mjs'
 
     - id: probe-scripted-provider
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/scripted-provider.mjs'
+      name: !!js process.env.PROBE_ROOT + '/scripts/probe/scripted-provider.mjs'
 
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
     - id: probe-approval-tool
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/approval-tool.mjs'
+      name: !!js process.env.PROBE_ROOT + '/scripts/probe/approval-tool.mjs'
 
     - id: probe-auto-answer
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/scripts/probe/auto-answer.mjs'
+      name: !!js process.env.PROBE_ROOT + '/scripts/probe/auto-answer.mjs'
 
     - id: dsh-mail-notify
-      name: 'E:/Projects/DSHarness/dsh-mail-notify/lib/index.js'
+      name: !!js process.env.PROBE_ROOT + '/lib/index.js'
       config: !!js 'JSON.parse(process.env.PROBE_MAIL_CONFIG)'

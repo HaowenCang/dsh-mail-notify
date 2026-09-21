@@ -1,0 +1,28 @@
+{
+  /**
+   * The browser half's compilation face: client sources, the shared wire
+   * module, the client tests, and the contract probe.
+   *
+   * `noEmit` on purpose: the client bundle is produced by tsdown, which applies
+   * the lazy-CJS envelope DSH's module loader requires. This program exists to
+   * type-check the client sources against the *published* DSH client
+   * declarations — every one of them pinned to an exact `0.1.5-rc.2` release.
+   *
+   * It is a program of its own rather than a widening of the host program
+   * because `ctx.connection` is typed differently by the connection package's
+   * two entries; see `tsconfig.test.json`.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "declarationDir": null
+  },
+  "include": ["src/client", "src/protocol.ts", "tests/client", "tests/compatibility"],
+  "exclude": []
+}

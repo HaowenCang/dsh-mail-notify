@@ -35,6 +35,7 @@ import {
   turnStart,
   TURN_END_REASONS,
   OBSERVED_USAGE,
+  TEST_SESSION_CWD,
 } from '../fixtures/runtime-shapes.ts'
 
 /* ── Session facts (D003) ─────────────────────────────────────────────── */
@@ -109,7 +110,7 @@ test('SES-07b an empty parentSession string is not a hierarchy signal', () => {
 
 test('session metadata is read when present and omitted when absent', () => {
   const withMeta = toSessionFacts(rootSession())
-  assert.equal(withMeta.cwd, 'E:\\Projects\\DSHarness\\dsh-mail-notify')
+  assert.equal(withMeta.cwd, TEST_SESSION_CWD)
   assert.equal(withMeta.agentPreset, 'standard')
   const bare = toSessionFacts(bareRootSession())
   assert.equal(bare.cwd, undefined)

@@ -35,13 +35,23 @@ export const SYSTEM_PROMPT_SENTINEL = 'SYSTEM_PROMPT_SENTINEL'
 /** Injected into a user message; must not be sent unless explicitly enabled. */
 export const USER_PROMPT_SENTINEL = 'USER_PROMPT_SENTINEL'
 
+/**
+ * The session `cwd` used by every fixture here.
+ *
+ * Synthetic on purpose: a fixture must not pin the machine a test happened to
+ * run on, and a real workspace path in a tracked test is an environment leak
+ * even when it carries no secret. The adapter and the renderer treat `cwd` as
+ * opaque text, so any Windows-shaped absolute path exercises the same code.
+ */
+export const TEST_SESSION_CWD = 'C:\\workspace\\project'
+
 /** Build a `SessionLike` header with the given overrides. */
 export function sessionHeader(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     version: 3,
     id: 'session-3f0c2938-3769-471e-b2bf-12badadde842',
     createdAt: 1_750_000_000_000,
-    cwd: 'E:\\Projects\\DSHarness\\dsh-mail-notify',
+    cwd: TEST_SESSION_CWD,
     isSeeded: false,
     agentPreset: 'standard',
     ...overrides,

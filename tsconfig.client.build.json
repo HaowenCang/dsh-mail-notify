@@ -1,0 +1,23 @@
+{
+  /**
+   * Declaration-only emit for the browser half.
+   *
+   * `tsconfig.client.json` type-checks the client with `noEmit`; this program
+   * emits the `.d.ts` files the package's `./client` export advertises. Both
+   * read the same options, so a declaration cannot describe a shape the
+   * type-check did not accept.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationMap": false,
+    "declarationDir": "lib/types"
+  },
+  "include": ["src/client", "src/protocol.ts"],
+  "exclude": []
+}

@@ -1,4 +1,16 @@
 {
+  /**
+   * The host-side test program: the Node half, its tests, and the scripts.
+   *
+   * The browser half is deliberately OUT of this program. `ctx.connection` is
+   * declared by `@deepseek-ai/dsh-client-connection` as `HostConnectionHandle`
+   * for its host entry and as `ConnectionHandle` for its browser entry; a single
+   * program that contains both halves therefore sees two incompatible
+   * augmentations of the same member and cannot compile either. Checking each
+   * half in its own program is what makes each read the contract it will
+   * actually run against — `tsconfig.client.json` and `tsconfig.client.test.json`
+   * compile the browser half.
+   */
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
@@ -7,5 +19,6 @@
     "declarationMap": false,
     "declarationDir": null
   },
-  "include": ["src", "tests", "scripts"]
+  "include": ["src", "tests", "scripts"],
+  "exclude": ["src/client", "tests/client", "tests/compatibility"]
 }
