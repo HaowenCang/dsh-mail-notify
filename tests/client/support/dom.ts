@@ -27,9 +27,9 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { JSDOM } from 'jsdom'
 import { act, createElement } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 import { MailNotifyCard } from '../../../src/client/controller.ts'
 import type { ClientContext } from '../../../src/client/contracts.ts'
+import type { Root } from 'react-dom/client'
 
 registerHooks({
   load(url, context, nextLoad) {
@@ -47,25 +47,16 @@ registerHooks({
   },
 })
 
-const cardView = await import('../../../src/client/Card.tsx')
-
-/** The card view under test, loaded through the `.tsx` hook above. */
-export const MailNotifyCardView = cardView.MailNotifyCardView
-
 /**
- * Install one jsdom document as the process's DOM globals.
+ * Publish one jsdom document as the process's DOM globals.
  *
- * React DOM reaches for `window`, `document`, `navigator`, and a handful of DOM
- * constructors as globals, so the jsdom window is published the same way a
- * browser would. Each call replaces the previous DOM: tests are isolated even
- * though they share a process.
+ * Node already defines some of these globals with getters (`navigator`), so
+ * every publication goes through `defineProperty`.
  *
+ * @param dom - the jsdom instance to publish.
  * @returns the installed window and document.
  */
-export function installDom(): { window: Window; document: Document } {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true })
-  // Node already defines some of these globals with getters (`navigator`
-  //), so every publication goes through defineProperty.
+function publishDom(dom: JSDOM): { window: Window; document: Document } {
   const publish = (name: string, value: unknown): void => {
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })
   }
@@ -86,6 +77,40 @@ export function installDom(): { window: Window; document: Document } {
   publish('cancelAnimationFrame', dom.window.cancelAnimationFrame.bind(dom.window))
   publish('IS_REACT_ACT_ENVIRONMENT', true)
   return { window: dom.window as unknown as Window, document: dom.window.document as unknown as Document }
+}
+
+/**
+ * The DOM globals must exist before `react-dom` is first loaded.
+ *
+ * `react-dom`'s ChangeEventPlugin picks its change-detection strategy once, at
+ * module evaluation, by feature-testing the ambient `document`; loaded without
+ * one, it silently falls back to the legacy path and `onChange` never fires.
+ * That is why the first DOM is published here and both `react-dom` and the
+ * component are reached through awaited dynamic imports at the end of this
+ * module's body, after it.
+ */
+publishDom(new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true }))
+
+const reactDom = await import('react-dom/client')
+const cardView = await import('../../../src/client/Card.tsx')
+
+const createRoot = reactDom.createRoot
+
+/** The card view under test, loaded through the `.tsx` hook above. */
+export const MailNotifyCardView = cardView.MailNotifyCardView
+
+/**
+ * Install one fresh jsdom document as the process's DOM globals.
+ *
+ * React DOM reaches for `window`, `document`, `navigator`, and a handful of DOM
+ * constructors as globals, so the jsdom window is published the same way a
+ * browser would. Each call replaces the previous DOM: tests are isolated even
+ * though they share a process.
+ *
+ * @returns the installed window and document.
+ */
+export function installDom(): { window: Window; document: Document } {
+  return publishDom(new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true }))
 }
 
 /** One recorded `/api` call. */

@@ -6,17 +6,25 @@
  * chrome, controls, and copy — because the tab that dispatches it knows only
  * the settings namespace it is keyed by.
  *
- * The two human-attention switches render first and apart from the rest. They
- * are the switches that decide whether an operator learns that an agent has
- * stopped and is waiting for a person, and both are off by default because
- * turning one on sends content the operator did not author to a third-party
- * mail system. Burying them in an alphabetical list of nine booleans would make
- * the consequential choice the hardest one to find.
+ * The whole card is a disclosure, collapsed by default. One plugin's complete
+ * configuration form permanently on the page pushes every other settings entry
+ * below a long scroll, so the card shows a compact header — its title and a
+ * one-line operational summary — and renders the form only while expanded. The
+ * expansion state is presentation state: it lives in this component and is
+ * never persisted, and collapsing unmounts nothing the controller owns, so
+ * staged drafts, in-flight saves, and operation results all survive it.
+ *
+ * The two human-attention switches render first inside the form and apart from
+ * the rest. They are the switches that decide whether an operator learns that
+ * an agent has stopped and is waiting for a person, and both are off by default
+ * because turning one on sends content the operator did not author to a
+ * third-party mail system. Burying them in an alphabetical list of nine booleans
+ * would make the consequential choice the hardest one to find.
  *
  * @module dsh-mail-notify/client/Card
  */
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, JSX } from 'react'
 import type { CardState, FieldState, MailNotifyCard, MailNotifyCardFace } from './controller.ts'
 import {
@@ -64,6 +72,43 @@ function useCardState(card: MailNotifyCard): CardState {
   return useSyncExternalStore(subscribe, read, read)
 }
 
+/** The disclosure region's element id, referenced by the header's `aria-controls`. */
+const BODY_ID = 'dsh-mail-notify-config-body'
+
+/**
+ * Read one field's draft text — the staged edit when there is one, and the
+ * effective value otherwise.
+ *
+ * @param state - the card projection.
+ * @param field - the field name.
+ * @returns the control's current text ('' while the field inherits).
+ */
+function draftOf(state: CardState, field: string): string {
+  const found = state.fields.find((entry) => entry.def.field === field)
+  return found === undefined ? '' : found.text
+}
+
+/**
+ * The collapsed summary: one compact line of safe operational facts.
+ *
+ * Deliberately narrow — runtime state, SMTP readiness, and the question
+ * switch's effective state. No address, no username, no draft, and nothing the
+ * credential carries: the summary is the one part of the card readable without
+ * expanding it, and none of the excluded values is safe to leave on a screen
+ * someone walked away from.
+ *
+ * @param state - the card projection.
+ * @returns the summary line.
+ */
+function summaryOf(state: CardState): string {
+  const segments: string[] = []
+  segments.push(state.status === undefined ? 'unknown' : state.status.active ? 'Active' : 'Inactive')
+  segments.push(state.status?.smtpConfigured ? 'SMTP configured' : 'SMTP not configured')
+  segments.push(draftOf(state, 'notifyQuestions') === 'true' ? 'Questions on' : 'Questions off')
+  if (state.saving || state.testing) segments.push('Working…')
+  return segments.join(' · ')
+}
+
 /** The card's outer frame. */
 const FRAME: CSSProperties = {
   border: `1px solid ${COLORS.border}`,
@@ -78,6 +123,28 @@ const FRAME: CSSProperties = {
 const ROW: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2 }
 const HINT: CSSProperties = { color: COLORS.muted, fontSize: 12, lineHeight: 1.4 }
 const GROUP: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 }
+const FORM: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12 }
+/**
+ * The disclosure header: one native button across the card's width.
+ *
+ * The browser's own button styling is kept — in particular the focus ring is
+ * never suppressed, which is what makes the control's focus visible.
+ */
+const DISCLOSURE: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  width: '100%',
+  padding: '2px 4px',
+  border: 'none',
+  borderRadius: 4,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+}
+const CHEVRON: CSSProperties = { width: 12, flex: '0 0 auto', color: COLORS.muted }
 const GROUP_TITLE: CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
@@ -105,6 +172,7 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
         {def.kind === 'boolean' ? (
           <select
             style={{ ...INPUT, maxWidth: 140 }}
+            name={def.field}
             value={state.text}
             disabled={disabled}
             onChange={(event) => {
@@ -123,6 +191,7 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
           <input
             style={INPUT}
             type="text"
+            name={def.field}
             inputMode={def.kind === 'natural' ? 'numeric' : 'text'}
             value={state.text}
             disabled={disabled}
@@ -138,6 +207,8 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
             onClick={onReset}
             style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
             title="Remove this override so the field re-inherits the composition value"
+            data-action="reset-field"
+            data-field={def.field}
           >
             reset
           </button>
@@ -242,6 +313,7 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
         <input
           style={INPUT}
           type="password"
+          name="smtpPasswordSecret"
           autoComplete="new-password"
           placeholder="leave blank to keep the current password"
           value={state.secret.draft}
@@ -256,6 +328,7 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
           onClick={onClear}
           style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
           title="Remove the stored value for this reference"
+          data-action="clear-credential"
         >
           clear stored password
         </button>
@@ -282,6 +355,9 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
 export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | null {
   const card = props.card
   const state = useCardState(card)
+  // Presentation state only: nothing persists the expansion, and collapsing
+  // changes what the view renders — never what the controller holds.
+  const [expanded, setExpanded] = useState(false)
 
   // The status strip reads live host facts — whether the runtime is mounted,
   // how deep the queue is, how many messages have gone out — and none of them
@@ -312,131 +388,164 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
 
   return (
     <section style={FRAME} aria-label="dsh-mail-notify configuration">
-      <header style={ROW}>
+      <button
+        type="button"
+        style={DISCLOSURE}
+        aria-expanded={expanded}
+        aria-controls={BODY_ID}
+        title={expanded ? 'Collapse' : 'Expand'}
+        onClick={() => {
+          setExpanded((open) => !open)
+        }}
+      >
+        <span aria-hidden="true" style={CHEVRON}>
+          {expanded ? '▾' : '▸'}
+        </span>
         <strong style={{ fontSize: 15 }}>dsh-mail-notify</strong>
-        <span style={HINT}>
-          Emails a top-level turn’s final output, its terminal failures, and its mid-turn requests for a person over
-          SMTP.
-        </span>
-      </header>
+      </button>
+      <p data-summary style={{ ...HINT, margin: 0 }}>
+        {summaryOf(state)}
+      </p>
 
-      <StatusStrip state={state} />
+      <div id={BODY_ID} hidden={!expanded}>
+        {expanded ? (
+          <div style={FORM}>
+            <span style={HINT}>
+              Emails a top-level turn’s final output, its terminal failures, and its mid-turn requests for a person over
+              SMTP.
+            </span>
 
-      <div style={{ ...GROUP, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '10px 12px' }}>
-        <span style={{ ...GROUP_TITLE, color: 'inherit' }}>Human attention</span>
-        <span style={HINT}>
-          These two are the reason a notification exists: an agent that has stopped and is waiting for you. Both are
-          off by default.
-        </span>
-        {PRIVACY_FIELDS.map((def) => {
-          const field = state.fields.find((entry) => entry.def.field === def.field)
-          if (field === undefined) return null
-          return (
-            <FieldControl
-              key={def.field}
-              def={def}
-              state={field}
-              disabled={disabled}
+            <StatusStrip state={state} />
+
+            <div style={{ ...GROUP, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '10px 12px' }}>
+              <span style={{ ...GROUP_TITLE, color: 'inherit' }}>Human attention</span>
+              <span style={HINT}>
+                These two are the reason a notification exists: an agent that has stopped and is waiting for you. Both
+                are off by default.
+              </span>
+              {PRIVACY_FIELDS.map((def) => {
+                const field = state.fields.find((entry) => entry.def.field === def.field)
+                if (field === undefined) return null
+                return (
+                  <FieldControl
+                    key={def.field}
+                    def={def}
+                    state={field}
+                    disabled={disabled}
+                    onChange={(text) => {
+                      onChange(def.field, text)
+                    }}
+                    onReset={() => {
+                      onReset(def.field)
+                    }}
+                  />
+                )
+              })}
+            </div>
+
+            <FieldGroup
+              title="General"
+              fields={GENERAL_FIELDS}
+              state={state}
+              onChange={onChange}
+              onReset={onReset}
+            />
+            <FieldGroup
+              title="Other notifications"
+              fields={ORDINARY_NOTIFICATION_FIELDS}
+              state={state}
+              onChange={onChange}
+              onReset={onReset}
+            />
+            <FieldGroup title="SMTP" fields={SMTP_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+            <SecretControl
+              state={state}
               onChange={(text) => {
-                onChange(def.field, text)
+                card.setSecretDraft(text)
               }}
-              onReset={() => {
-                onReset(def.field)
+              onClear={() => {
+                void card.clearCredential()
               }}
             />
-          )
-        })}
-      </div>
+            <FieldGroup
+              title="Credential"
+              fields={[CREDENTIAL_REF_FIELD]}
+              state={state}
+              onChange={onChange}
+              onReset={onReset}
+            />
+            <FieldGroup
+              title="Message content"
+              fields={MESSAGE_FIELDS}
+              state={state}
+              onChange={onChange}
+              onReset={onReset}
+            />
+            <FieldGroup title="Delivery" fields={DELIVERY_FIELDS} state={state} onChange={onChange} onReset={onReset} />
 
-      <FieldGroup
-        title="General"
-        fields={GENERAL_FIELDS}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup
-        title="Other notifications"
-        fields={ORDINARY_NOTIFICATION_FIELDS}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup title="SMTP" fields={SMTP_FIELDS} state={state} onChange={onChange} onReset={onReset} />
-      <SecretControl
-        state={state}
-        onChange={(text) => {
-          card.setSecretDraft(text)
-        }}
-        onClear={() => {
-          void card.clearCredential()
-        }}
-      />
-      <FieldGroup
-        title="Credential"
-        fields={[CREDENTIAL_REF_FIELD]}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup
-        title="Message content"
-        fields={MESSAGE_FIELDS}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup title="Delivery" fields={DELIVERY_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+            {state.testEmail === undefined ? null : (
+              <span
+                data-notice="test-email"
+                style={{ ...HINT, color: state.testEmail.delivered ? COLORS.good : COLORS.bad }}
+              >
+                {state.testEmail.message}
+              </span>
+            )}
+            {state.notice === undefined ? null : (
+              <span data-notice="operation" style={HINT}>
+                {state.notice}
+              </span>
+            )}
 
-      {state.testEmail === undefined ? null : (
-        <span style={{ ...HINT, color: state.testEmail.delivered ? COLORS.good : COLORS.bad }}>
-          {state.testEmail.message}
-        </span>
-      )}
-      {state.notice === undefined ? null : <span style={HINT}>{state.notice}</span>}
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          disabled={disabled || state.testing}
-          onClick={() => {
-            void card.sendTestEmail()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-        >
-          {state.testing ? 'Sending…' : 'Send test email'}
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            card.resetAll()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-          title="Remove every override this plugin owns, so the composition values and schema defaults apply again"
-        >
-          Reset
-        </button>
-        <button
-          type="button"
-          disabled={disabled || !state.dirty}
-          onClick={() => {
-            card.discard()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-        >
-          Discard
-        </button>
-        <button
-          type="button"
-          disabled={disabled || !state.dirty || state.invalid}
-          onClick={() => {
-            void card.save()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer', fontWeight: 600 }}
-        >
-          {state.saving ? 'Saving…' : 'Save'}
-        </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                disabled={disabled || state.testing}
+                onClick={() => {
+                  void card.sendTestEmail()
+                }}
+                style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
+                data-action="send-test"
+              >
+                {state.testing ? 'Sending…' : 'Send test email'}
+              </button>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  card.resetAll()
+                }}
+                style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
+                title="Remove every override this plugin owns, so the composition values and schema defaults apply again"
+                data-action="reset-all"
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                disabled={disabled || !state.dirty}
+                onClick={() => {
+                  card.discard()
+                }}
+                style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
+                data-action="discard"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                disabled={disabled || !state.dirty || state.invalid}
+                onClick={() => {
+                  void card.save()
+                }}
+                style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer', fontWeight: 600 }}
+                data-action="save"
+              >
+                {state.saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   )
