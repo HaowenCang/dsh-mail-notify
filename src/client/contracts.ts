@@ -45,6 +45,12 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 // no read path in this namespace, which is what makes "the browser never reads
 // the password" a property of the contract rather than of this plugin's care.
 import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
+// `ctx.locale` — the DSH locale registry (`LocaleRuntime`) and the
+// `locale/change` event. Its `register`/`bind` entry points are the typed
+// locale boundary this plugin's dictionary pair registers through, and the
+// `LocaleNamespaceMap` merge in `locale.ts` is what makes them type-check
+// against this plugin's own key union.
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'

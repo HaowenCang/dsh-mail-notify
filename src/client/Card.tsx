@@ -14,6 +14,13 @@
  * never persisted, and collapsing unmounts nothing the controller owns, so
  * staged drafts, in-flight saves, and operation results all survive it.
  *
+ * Every visible string comes from the framework-injected `t` seat over the
+ * `dsh-mail-notify` locale namespace (see `locale.ts`), including operation
+ * messages and validation refusals, which the controller stores as semantic
+ * identities and this component translates at render. Nothing here branches on
+ * a language, and a live DSH locale switch re-renders the whole card — the
+ * notice on screen included — in the new language.
+ *
  * The two human-attention switches render first inside the form and apart from
  * the rest. They are the switches that decide whether an operator learns that
  * an agent has stopped and is waiting for a person, and both are off by default
@@ -36,6 +43,13 @@ import {
   SMTP_FIELDS,
   type FieldDef,
 } from './fields.ts'
+import type { MailNotifyTranslate } from './locale.ts'
+
+/**
+ * The composed props the slot machinery hands the card: the registrant's own
+ * face plus the framework-synthesized locale seat for the declared namespace.
+ */
+export type MailNotifyCardProps = MailNotifyCardFace & { t: MailNotifyTranslate }
 
 /** The two switches the card renders as its own block. */
 const PRIVACY_FIELDS = NOTIFICATION_FIELDS.filter((def) => def.privacy === true)
@@ -98,15 +112,36 @@ function draftOf(state: CardState, field: string): string {
  * someone walked away from.
  *
  * @param state - the card projection.
+ * @param t - the locale seat.
  * @returns the summary line.
  */
-function summaryOf(state: CardState): string {
+function summaryOf(state: CardState, t: MailNotifyTranslate): string {
   const segments: string[] = []
-  segments.push(state.status === undefined ? 'unknown' : state.status.active ? 'Active' : 'Inactive')
-  segments.push(state.status?.smtpConfigured ? 'SMTP configured' : 'SMTP not configured')
-  segments.push(draftOf(state, 'notifyQuestions') === 'true' ? 'Questions on' : 'Questions off')
-  if (state.saving || state.testing) segments.push('Working…')
+  segments.push(
+    state.status === undefined
+      ? t('factUnknown')
+      : state.status.active
+        ? t('summaryActive')
+        : t('summaryInactive'),
+  )
+  segments.push(state.status?.smtpConfigured ? t('summarySmtpConfigured') : t('summarySmtpMissing'))
+  segments.push(draftOf(state, 'notifyQuestions') === 'true' ? t('summaryQuestionsOn') : t('summaryQuestionsOff'))
+  if (state.saving || state.testing) segments.push(t('summaryBusy'))
   return segments.join(' · ')
+}
+
+/**
+ * Resolve a hint's term params through the locale seat.
+ *
+ * @param def - the field definition.
+ * @param t - the locale seat.
+ * @returns the template params, or `undefined` for a hint without terms.
+ */
+function hintParams(def: FieldDef, t: MailNotifyTranslate): Record<string, unknown> | undefined {
+  if (def.hintTerms === undefined) return undefined
+  const terms: Record<string, unknown> = {}
+  for (const [name, key] of Object.entries(def.hintTerms)) terms[name] = t(key)
+  return terms
 }
 
 /** The card's outer frame. */
@@ -117,7 +152,7 @@ const FRAME: CSSProperties = {
   margin: '10px 0',
   display: 'flex',
   flexDirection: 'column',
-  gap: 12,
+  gap: 8,
 }
 
 const ROW: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2 }
@@ -163,12 +198,19 @@ const INPUT: CSSProperties = {
 }
 
 /** One field's control, chosen by the field's declared kind. */
-function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boolean; onChange: (text: string) => void; onReset: () => void }): JSX.Element {
-  const { def, state, disabled, onChange, onReset } = props
+function FieldControl(props: {
+  def: FieldDef
+  state: FieldState
+  disabled: boolean
+  t: MailNotifyTranslate
+  onChange: (text: string) => void
+  onReset: () => void
+}): JSX.Element {
+  const { def, state, disabled, t, onChange, onReset } = props
   return (
     <div style={ROW}>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: 220 }}>{def.label}</span>
+        <span style={{ minWidth: 220 }}>{t(def.labelKey)}</span>
         {def.kind === 'boolean' ? (
           <select
             style={{ ...INPUT, maxWidth: 140 }}
@@ -183,9 +225,9 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
                 the field goes back to the composition layer and schema default.
                 It is a distinct choice from "false", and a checkbox could not
                 express it. */}
-            <option value="">inherit</option>
-            <option value="true">on</option>
-            <option value="false">off</option>
+            <option value="">{t('optionInherit')}</option>
+            <option value="true">{t('factOn')}</option>
+            <option value="false">{t('factOff')}</option>
           </select>
         ) : (
           <input
@@ -206,18 +248,24 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
             disabled={disabled}
             onClick={onReset}
             style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-            title="Remove this override so the field re-inherits the composition value"
+            title={t('resetFieldTitle')}
             data-action="reset-field"
             data-field={def.field}
           >
-            reset
+            {t('actionReset')}
           </button>
         ) : (
-          <span style={HINT}>inherited</span>
+          <span style={HINT}>{t('inheritedBadge')}</span>
         )}
       </label>
-      <span style={HINT}>{def.hint}</span>
-      {state.invalid ? <span style={{ ...HINT, color: COLORS.bad }}>This value will block the save.</span> : null}
+      <span style={HINT}>{t(def.hintKey, hintParams(def, t))}</span>
+      {state.invalid ? (
+        <span data-field-invalid={def.field} style={{ ...HINT, color: COLORS.bad }}>
+          {state.issue === undefined
+            ? t('invalidBlocksSave')
+            : `${t(state.issue.key, { field: t(def.labelKey), ...state.issue.params })} ${t('invalidBlocksSave')}`}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -227,6 +275,7 @@ function FieldGroup(props: {
   title: string
   fields: readonly FieldDef[]
   state: CardState
+  t: MailNotifyTranslate
   onChange: (field: string, text: string) => void
   onReset: (field: string) => void
 }): JSX.Element {
@@ -244,6 +293,7 @@ function FieldGroup(props: {
             def={def}
             state={field}
             disabled={disabled}
+            t={props.t}
             onChange={(text) => {
               props.onChange(def.field, text)
             }}
@@ -258,64 +308,83 @@ function FieldGroup(props: {
 }
 
 /** The live status strip. */
-function StatusStrip(props: { state: CardState }): JSX.Element {
-  const { state } = props
+function StatusStrip(props: { state: CardState; t: MailNotifyTranslate }): JSX.Element {
+  const { state, t } = props
   const status = state.status
   const effective = (field: string): string => {
     const found = state.fields.find((entry) => entry.def.field === field)
-    if (found === undefined) return 'unknown'
-    if (found.text === 'true') return 'on'
-    if (found.text === 'false') return 'off'
-    return 'inherit'
+    if (found === undefined) return t('factUnknown')
+    if (found.text === 'true') return t('factOn')
+    if (found.text === 'false') return t('factOff')
+    return t('optionInherit')
   }
   const bits: JSX.Element[] = []
   bits.push(
     <span key="active" style={{ color: status?.active === true ? COLORS.good : COLORS.muted }}>
-      plugin {status === undefined ? 'unknown' : status.active ? 'active' : 'not running'}
+      {t('statusPlugin', {
+        state:
+          status === undefined ? t('factUnknown') : status.active ? t('factActive') : t('factInactive'),
+      })}
     </span>,
   )
   bits.push(
     <span key="cred" style={{ color: state.secret.configured ? COLORS.good : COLORS.warn }}>
-      credential {state.secret.known ? (state.secret.configured ? 'configured' : 'missing') : 'unknown'}
+      {t('statusCredential', {
+        state: state.secret.known
+          ? state.secret.configured
+            ? t('factConfigured')
+            : t('factNotConfigured')
+          : t('factUnknown'),
+      })}
     </span>,
   )
   if (status?.queue !== undefined) {
     bits.push(
       <span key="queue">
-        queue {status.queue.depth}/{status.queue.size} · {status.queue.delivered} delivered · {status.queue.failed} failed
+        {t('statusQueue', {
+          depth: status.queue.depth,
+          size: status.queue.size,
+          delivered: status.queue.delivered,
+          failed: status.queue.failed,
+        })}
       </span>,
     )
   }
   return (
     <div style={GROUP}>
+      <span style={GROUP_TITLE}>{t('groupStatus')}</span>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>{bits}</div>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, fontWeight: 600 }}>
-        <span>Effective question notifications: {effective('notifyQuestions')}</span>
-        <span>Effective approval notifications: {effective('notifyApprovals')}</span>
+        <span>{t('statusEffectiveQuestions', { value: effective('notifyQuestions') })}</span>
+        <span>{t('statusEffectiveApprovals', { value: effective('notifyApprovals') })}</span>
       </div>
       {status?.configError === undefined ? null : (
-        <span style={{ ...HINT, color: COLORS.bad }}>
-          The saved configuration cannot be applied, so the previous settings are still in effect: {status.configError}
-        </span>
+        <span style={{ ...HINT, color: COLORS.bad }}>{t('statusConfigError', { message: status.configError })}</span>
       )}
     </div>
   )
 }
 
 /** The write-only credential control. */
-function SecretControl(props: { state: CardState; onChange: (text: string) => void; onClear: () => void }): JSX.Element {
-  const { state, onChange, onClear } = props
+function SecretControl(props: {
+  state: CardState
+  t: MailNotifyTranslate
+  onChange: (text: string) => void
+  onClear: () => void
+}): JSX.Element {
+  const { state, t, onChange, onClear } = props
   const disabled = state.saving || !state.writable
   return (
     <div style={ROW}>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: 220 }}>SMTP password</span>
+        <span style={{ minWidth: 220 }}>{t(state.secret.configured ? 'passwordChange' : 'passwordSet')}</span>
         <input
           style={INPUT}
           type="password"
           name="smtpPasswordSecret"
           autoComplete="new-password"
-          placeholder="leave blank to keep the current password"
+          aria-label={t('labelSecret')}
+          placeholder={t(state.secret.configured ? 'passwordPlaceholderKeep' : 'passwordPlaceholderNew')}
           value={state.secret.draft}
           disabled={disabled || !state.secret.writable}
           onChange={(event) => {
@@ -327,17 +396,13 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
           disabled={disabled || !state.secret.writable}
           onClick={onClear}
           style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-          title="Remove the stored value for this reference"
+          title={t('passwordClearTitle')}
           data-action="clear-credential"
         >
-          clear stored password
+          {t('passwordClear')}
         </button>
       </label>
-      <span style={HINT}>
-        {state.secret.configured
-          ? 'A password is stored for this reference. It is never sent to the browser; typing a new one replaces it.'
-          : 'No password is stored for this reference yet. Typing one stores it without it ever being read back.'}
-      </span>
+      <span style={HINT}>{t(state.secret.configured ? 'hintSecretStored' : 'hintSecretMissing')}</span>
     </div>
   )
 }
@@ -349,11 +414,11 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
  * that does not compose this plugin should show no trace of it, rather than a
  * disabled card the user cannot act on.
  *
- * @param props - the injected controller face.
+ * @param props - the injected controller face and the locale seat.
  * @returns the card, or `null` while the namespace is unavailable.
  */
-export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | null {
-  const card = props.card
+export function MailNotifyCardView(props: MailNotifyCardProps): JSX.Element | null {
+  const { card, t } = props
   const state = useCardState(card)
   // Presentation state only: nothing persists the expansion, and collapsing
   // changes what the view renders — never what the controller holds.
@@ -387,13 +452,13 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
   }
 
   return (
-    <section style={FRAME} aria-label="dsh-mail-notify configuration">
+    <section style={FRAME} aria-label={t('cardTitle')}>
       <button
         type="button"
         style={DISCLOSURE}
         aria-expanded={expanded}
         aria-controls={BODY_ID}
-        title={expanded ? 'Collapse' : 'Expand'}
+        title={expanded ? t('actionCollapse') : t('actionExpand')}
         onClick={() => {
           setExpanded((open) => !open)
         }}
@@ -401,28 +466,22 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
         <span aria-hidden="true" style={CHEVRON}>
           {expanded ? '▾' : '▸'}
         </span>
-        <strong style={{ fontSize: 15 }}>dsh-mail-notify</strong>
+        <strong style={{ fontSize: 15 }}>{t('cardTitle')}</strong>
       </button>
       <p data-summary style={{ ...HINT, margin: 0 }}>
-        {summaryOf(state)}
+        {summaryOf(state, t)}
       </p>
 
       <div id={BODY_ID} hidden={!expanded}>
         {expanded ? (
           <div style={FORM}>
-            <span style={HINT}>
-              Emails a top-level turn’s final output, its terminal failures, and its mid-turn requests for a person over
-              SMTP.
-            </span>
+            <span style={HINT}>{t('cardSubtitle')}</span>
 
-            <StatusStrip state={state} />
+            <StatusStrip state={state} t={t} />
 
             <div style={{ ...GROUP, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '10px 12px' }}>
-              <span style={{ ...GROUP_TITLE, color: 'inherit' }}>Human attention</span>
-              <span style={HINT}>
-                These two are the reason a notification exists: an agent that has stopped and is waiting for you. Both
-                are off by default.
-              </span>
+              <span style={{ ...GROUP_TITLE, color: 'inherit' }}>{t('groupAttention')}</span>
+              <span style={HINT}>{t('hintAttention')}</span>
               {PRIVACY_FIELDS.map((def) => {
                 const field = state.fields.find((entry) => entry.def.field === def.field)
                 if (field === undefined) return null
@@ -432,6 +491,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                     def={def}
                     state={field}
                     disabled={disabled}
+                    t={t}
                     onChange={(text) => {
                       onChange(def.field, text)
                     }}
@@ -444,22 +504,32 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
             </div>
 
             <FieldGroup
-              title="General"
+              title={t('groupGeneral')}
               fields={GENERAL_FIELDS}
               state={state}
+              t={t}
               onChange={onChange}
               onReset={onReset}
             />
             <FieldGroup
-              title="Other notifications"
+              title={t('groupNotifications')}
               fields={ORDINARY_NOTIFICATION_FIELDS}
               state={state}
+              t={t}
               onChange={onChange}
               onReset={onReset}
             />
-            <FieldGroup title="SMTP" fields={SMTP_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+            <FieldGroup
+              title={t('groupSmtp')}
+              fields={SMTP_FIELDS}
+              state={state}
+              t={t}
+              onChange={onChange}
+              onReset={onReset}
+            />
             <SecretControl
               state={state}
+              t={t}
               onChange={(text) => {
                 card.setSecretDraft(text)
               }}
@@ -468,32 +538,41 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
               }}
             />
             <FieldGroup
-              title="Credential"
+              title={t('groupCredential')}
               fields={[CREDENTIAL_REF_FIELD]}
               state={state}
+              t={t}
               onChange={onChange}
               onReset={onReset}
             />
             <FieldGroup
-              title="Message content"
+              title={t('groupMessage')}
               fields={MESSAGE_FIELDS}
               state={state}
+              t={t}
               onChange={onChange}
               onReset={onReset}
             />
-            <FieldGroup title="Delivery" fields={DELIVERY_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+            <FieldGroup
+              title={t('groupDelivery')}
+              fields={DELIVERY_FIELDS}
+              state={state}
+              t={t}
+              onChange={onChange}
+              onReset={onReset}
+            />
 
             {state.testEmail === undefined ? null : (
               <span
                 data-notice="test-email"
                 style={{ ...HINT, color: state.testEmail.delivered ? COLORS.good : COLORS.bad }}
               >
-                {state.testEmail.message}
+                {t(state.testEmail.message.key, state.testEmail.message.params)}
               </span>
             )}
             {state.notice === undefined ? null : (
               <span data-notice="operation" style={HINT}>
-                {state.notice}
+                {t(state.notice.key, state.notice.params)}
               </span>
             )}
 
@@ -507,7 +586,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                 style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
                 data-action="send-test"
               >
-                {state.testing ? 'Sending…' : 'Send test email'}
+                {state.testing ? t('actionSending') : t('actionSendTest')}
               </button>
               <button
                 type="button"
@@ -516,10 +595,10 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                   card.resetAll()
                 }}
                 style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-                title="Remove every override this plugin owns, so the composition values and schema defaults apply again"
+                title={t('actionResetAllTitle')}
                 data-action="reset-all"
               >
-                Reset
+                {t('actionReset')}
               </button>
               <button
                 type="button"
@@ -530,7 +609,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                 style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
                 data-action="discard"
               >
-                Discard
+                {t('actionDiscard')}
               </button>
               <button
                 type="button"
@@ -541,7 +620,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                 style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer', fontWeight: 600 }}
                 data-action="save"
               >
-                {state.saving ? 'Saving…' : 'Save'}
+                {state.saving ? t('actionSaving') : t('actionSave')}
               </button>
             </div>
           </div>

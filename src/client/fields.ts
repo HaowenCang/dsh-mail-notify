@@ -8,12 +8,21 @@
  * against the same table the card renders from, rather than against a second
  * copy of the rules embedded in a component.
  *
+ * Labels and hints are locale keys, not text: the card resolves them at render
+ * time through the DSH translate seat, so the same table serves both shipped
+ * languages without a branch. A refusal carries both its semantic identity
+ * ({@link FieldIssue}, translated at render) and its English rendering
+ * (`message`, for callers outside the render path) — never a pre-translated
+ * string alone, which would freeze the language at edit time.
+ *
  * The numeric bounds mirror the host schema in `src/config.ts`. They are a
  * preview, not a boundary: the host re-validates every write, and a bound that
  * drifted here would produce a rejected save rather than an accepted bad value.
  *
  * @module dsh-mail-notify/client/fields
  */
+
+import { en, formatMailText, type MailNotifyLocaleKey } from './locale.ts'
 
 /** How one control converts between its stored value and its draft text. */
 export type FieldKind = 'boolean' | 'natural' | 'text' | 'addresses'
@@ -23,10 +32,15 @@ export interface FieldDef {
   /** Key inside the `dsh-mail-notify` settings section. */
   readonly field: string
   readonly kind: FieldKind
-  /** Control label. */
-  readonly label: string
-  /** One line of guidance under the control. */
-  readonly hint: string
+  /** Locale key of the control label. */
+  readonly labelKey: MailNotifyLocaleKey
+  /** Locale key of the one line of guidance under the control. */
+  readonly hintKey: MailNotifyLocaleKey
+  /**
+   * Template params for the hint whose values are other locale keys, resolved
+   * through the same translate seat at render time.
+   */
+  readonly hintTerms?: Readonly<Record<string, MailNotifyLocaleKey>>
   /** Inclusive numeric bounds; `natural` only. */
   readonly min?: number
   readonly max?: number
@@ -47,14 +61,14 @@ export const GENERAL_FIELDS: readonly FieldDef[] = [
   {
     field: 'enabled',
     kind: 'boolean',
-    label: 'Plugin enabled',
-    hint: 'While off, the plugin registers no listener and reads no credential.',
+    labelKey: 'labelEnable',
+    hintKey: 'hintEnable',
   },
   {
     field: 'includeSubagents',
     kind: 'boolean',
-    label: 'Include subagent turns',
-    hint: 'Whether delegated subagent turns are notified as well as top-level turns.',
+    labelKey: 'labelIncludeSubagents',
+    hintKey: 'hintIncludeSubagents',
   },
 ]
 
@@ -69,66 +83,67 @@ export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
   {
     field: 'notifyQuestions',
     kind: 'boolean',
-    label: 'Notify when the agent asks a question',
-    hint: 'Sends the question text and its options. Off by default; the text may quote your task.',
+    labelKey: 'labelQuestions',
+    hintKey: 'hintQuestions',
     privacy: true,
   },
   {
     field: 'notifyApprovals',
     kind: 'boolean',
-    label: 'Notify when the agent needs an approval',
-    hint: 'Sends the tool name and the asker’s reason, never the tool’s arguments. Off by default.',
+    labelKey: 'labelApprovals',
+    hintKey: 'hintApprovals',
     privacy: true,
   },
   {
     field: 'notifyCompleted',
     kind: 'boolean',
-    label: 'Notify on completed turns',
-    hint: 'A top-level turn that finished normally.',
+    labelKey: 'labelCompleted',
+    hintKey: 'hintCompleted',
   },
   {
     field: 'notifyErrors',
     kind: 'boolean',
-    label: 'Notify on failed turns',
-    hint: 'A turn that ended with a terminal error, including one that produced no visible output.',
+    labelKey: 'labelErrors',
+    hintKey: 'hintErrors',
   },
   {
     field: 'notifyMaxTokens',
     kind: 'boolean',
-    label: 'Notify on truncated turns',
-    hint: 'A turn that stopped because it reached the token limit.',
+    labelKey: 'labelMaxTokens',
+    hintKey: 'hintMaxTokens',
   },
 ]
 
 /** SMTP delivery settings. */
 export const SMTP_FIELDS: readonly FieldDef[] = [
-  { field: 'smtpHost', kind: 'text', label: 'SMTP host', hint: 'Host name of the SMTP server.' },
+  { field: 'smtpHost', kind: 'text', labelKey: 'labelSmtpHost', hintKey: 'hintSmtpHost' },
   {
     field: 'smtpPort',
     kind: 'natural',
     min: 1,
     max: 65535,
-    label: 'SMTP port',
-    hint: '587 for STARTTLS, 465 for implicit TLS.',
+    labelKey: 'labelSmtpPort',
+    hintKey: 'hintSmtpPort',
   },
   {
     field: 'smtpSecure',
     kind: 'boolean',
-    label: 'Implicit TLS',
-    hint: 'On selects implicit TLS (normally port 465); off allows a STARTTLS upgrade (normally 587).',
+    labelKey: 'labelSecure',
+    hintKey: 'hintSecure',
+    hintTerms: { implicit: 'termImplicitTls', starttls: 'termStartTls' },
   },
-  { field: 'smtpUser', kind: 'text', label: 'SMTP user', hint: 'Authentication user name.' },
+  { field: 'smtpUser', kind: 'text', labelKey: 'labelSmtpUser', hintKey: 'hintSmtpUser' },
   {
     field: 'from',
     kind: 'text',
-    label: 'From address',
-    hint: 'Envelope sender. Some servers require this to match the authenticated account.',
+    labelKey: 'labelFrom',
+    hintKey: 'hintFrom',
   },
   {
     field: 'to',
     kind: 'addresses',
-    label: 'Recipients',
-    hint: 'One or more addresses, separated by commas or new lines.',
+    labelKey: 'labelRecipients',
+    hintKey: 'hintRecipients',
   },
 ]
 
@@ -143,8 +158,8 @@ export const SMTP_FIELDS: readonly FieldDef[] = [
 export const CREDENTIAL_REF_FIELD: FieldDef = {
   field: 'smtpPasswordCredential',
   kind: 'text',
-  label: 'Credential reference',
-  hint: 'Name of the credential the password is read from. A name, never the password itself.',
+  labelKey: 'labelCredentialRef',
+  hintKey: 'hintCredentialRef',
 }
 
 /** Message composition. */
@@ -152,28 +167,28 @@ export const MESSAGE_FIELDS: readonly FieldDef[] = [
   {
     field: 'includeMetadata',
     kind: 'boolean',
-    label: 'Include the metadata block',
-    hint: 'Session, workspace, model, and timing.',
+    labelKey: 'labelIncludeMetadata',
+    hintKey: 'hintIncludeMetadata',
   },
   {
     field: 'includeUserPrompt',
     kind: 'boolean',
-    label: 'Include the last user message',
-    hint: 'Off by default: the prompt may carry content you did not intend to mail.',
+    labelKey: 'labelIncludeUserPrompt',
+    hintKey: 'hintIncludeUserPrompt',
   },
   {
     field: 'includeFooter',
     kind: 'boolean',
-    label: 'Include the footer',
-    hint: 'The generator footer and the truncation marker.',
+    labelKey: 'labelIncludeFooter',
+    hintKey: 'hintIncludeFooter',
   },
   {
     field: 'maxBodyChars',
     kind: 'natural',
     min: 1000,
     max: 1000000,
-    label: 'Body length cap',
-    hint: 'Maximum visible-text length, counted in code points.',
+    labelKey: 'labelMaxBody',
+    hintKey: 'hintMaxBody',
   },
 ]
 
@@ -184,32 +199,32 @@ export const DELIVERY_FIELDS: readonly FieldDef[] = [
     kind: 'natural',
     min: 1,
     max: 10000,
-    label: 'Queue size',
-    hint: 'Waiting-job cap; the worker holds one more.',
+    labelKey: 'labelQueueSize',
+    hintKey: 'hintQueueSize',
   },
   {
     field: 'retryAttempts',
     kind: 'natural',
     min: 0,
     max: 10,
-    label: 'Retry attempts',
-    hint: 'Total attempts are one plus this.',
+    labelKey: 'labelRetryAttempts',
+    hintKey: 'hintRetryAttempts',
   },
   {
     field: 'retryBaseDelayMs',
     kind: 'natural',
     min: 100,
     max: 60000,
-    label: 'Retry base delay (ms)',
-    hint: 'Retry n waits base × 3^(n−1), capped at 30 s.',
+    labelKey: 'labelRetryBaseDelay',
+    hintKey: 'hintRetryBaseDelay',
   },
   {
     field: 'maxDedupeEntries',
     kind: 'natural',
     min: 10,
     max: 100000,
-    label: 'Dedupe cache size',
-    hint: 'How many recently notified events are remembered.',
+    labelKey: 'labelDedupe',
+    hintKey: 'hintDedupe',
   },
 ]
 
@@ -234,14 +249,45 @@ export interface ParsedClear {
   kind: 'clear'
 }
 
+/**
+ * Why a draft is refused, as semantic identity.
+ *
+ * Rendered through the translate seat as `t(issue.key, { field, ...params })`;
+ * the `field` param is supplied at render so the label follows the active
+ * language too.
+ */
+export interface FieldIssue {
+  readonly key: MailNotifyLocaleKey
+  readonly params: Readonly<Record<string, unknown>>
+}
+
 /** A draft that is not a value this field accepts. */
 export interface ParsedInvalid {
   kind: 'invalid'
+  /** English rendering, for callers outside the localized render path. */
   message: string
+  /** Semantic identity, translated at render time. */
+  issue: FieldIssue
 }
 
 /** The outcome of reading one draft. */
 export type ParsedField = ParsedValue | ParsedClear | ParsedInvalid
+
+/**
+ * Build one refusal: its English rendering and its semantic identity.
+ *
+ * @param def - the refused field.
+ * @param key - the refusal's locale key.
+ * @param params - template values beyond the field label.
+ * @returns the refusal.
+ */
+function invalid(def: FieldDef, key: MailNotifyLocaleKey, params: Readonly<Record<string, unknown>> = {}): ParsedInvalid {
+  return {
+    kind: 'invalid',
+    message: formatMailText(en[key], { field: en[def.labelKey], ...params }),
+    issue: { key, params },
+  }
+}
 
 /** Key used by the credential reference when no section value is present. */
 const DEFAULT_CREDENTIAL_REF = 'DSH_MAIL_SMTP_PASSWORD'
@@ -304,21 +350,21 @@ export function parseField(def: FieldDef, text: string): ParsedField {
     case 'boolean':
       if (trimmed === 'true') return { kind: 'value', value: true }
       if (trimmed === 'false') return { kind: 'value', value: false }
-      return { kind: 'invalid', message: `${def.label} must be true or false` }
+      return invalid(def, 'invalidTrueFalse')
 
     case 'natural': {
       if (!/^\d+$/.test(trimmed)) {
-        return { kind: 'invalid', message: `${def.label} must be a whole number` }
+        return invalid(def, 'invalidWholeNumber')
       }
       const value = Number(trimmed)
       if (!Number.isSafeInteger(value)) {
-        return { kind: 'invalid', message: `${def.label} is out of range` }
+        return invalid(def, 'invalidNumberRange')
       }
       if (def.min !== undefined && value < def.min) {
-        return { kind: 'invalid', message: `${def.label} must be at least ${String(def.min)}` }
+        return invalid(def, 'invalidMin', { min: def.min })
       }
       if (def.max !== undefined && value > def.max) {
-        return { kind: 'invalid', message: `${def.label} must be at most ${String(def.max)}` }
+        return invalid(def, 'invalidMax', { max: def.max })
       }
       return { kind: 'value', value }
     }
@@ -334,7 +380,7 @@ export function parseField(def: FieldDef, text: string): ParsedField {
       if (addresses.length === 0) return { kind: 'clear' }
       const malformed = addresses.filter((entry) => !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(entry))
       if (malformed.length > 0) {
-        return { kind: 'invalid', message: `not a plausible email address: ${malformed.join(', ')}` }
+        return invalid(def, 'invalidAddress', { entries: malformed.join(', ') })
       }
       return { kind: 'value', value: addresses }
     }

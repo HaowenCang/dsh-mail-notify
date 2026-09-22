@@ -21,6 +21,7 @@ import { SETTINGS_NAMESPACE } from '../protocol.ts'
 import { MailNotifyCard, type MailNotifyCardFace } from './controller.ts'
 import { MailNotifyCardView } from './Card.tsx'
 import { SETTINGS_PLUGIN_ITEM_SLOT, type ClientContext } from './contracts.ts'
+import { MAIL_NOTIFY_NS, mailNotifyDictionaries } from './locale.ts'
 
 /**
  * Client services this plugin's browser half requires before `apply` runs.
@@ -31,25 +32,30 @@ import { SETTINGS_PLUGIN_ITEM_SLOT, type ClientContext } from './contracts.ts'
  * `connection` carries the `/api` channel the delivery test and the status read
  * travel over. `remote.credentials` is the write-only credential namespace —
  * listed with its parent so the card cannot activate and then discover that the
- * one surface it writes secrets through is absent.
+ * one surface it writes secrets through is absent. `locale` is the DSH locale
+ * registry the card's dictionaries register into and its `t` seat derives from.
  *
  * The list is explicit rather than wildcard on purpose: a package dependency
  * edge in `package.json` puts the module on the boot graph, and having the
  * module on the graph does not make the service available.
  */
-export const inject: string[] = ['slots', 'settingsScope', 'connection', 'remote', 'remote.credentials']
+export const inject: string[] = ['slots', 'settingsScope', 'connection', 'remote', 'remote.credentials', 'locale']
 
 /**
  * Client plugin body invoked by the DSH web boot.
  *
- * One effect owns the whole browser half: the controller, the slot
- * contribution, and the credential-invalidation subscription are all released
- * by the same disposer, so the Cordis fiber has exactly one thing to unwind.
+ * One effect owns the whole browser half: the locale registration, the
+ * controller, the slot contribution, and the credential-invalidation
+ * subscription are all released by the same disposer, so the Cordis fiber has
+ * exactly one thing to unwind. The dictionaries register before the card does:
+ * the slot entry declares `locale: MAIL_NOTIFY_NS`, and rendering it requires
+ * the namespace to be present in the registry.
  *
  * @param ctx - the client root context.
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
+    const unregisterDictionaries = ctx.locale.register(MAIL_NOTIFY_NS, mailNotifyDictionaries)
     const card = new MailNotifyCard(ctx)
     const unregister = ctx.slots.inject(SETTINGS_PLUGIN_ITEM_SLOT, () =>
       ctx.slots.register(
@@ -60,6 +66,10 @@ export function apply(ctx: ClientContext): void {
           // registered under that same key, and a key outside the served set is
           // never dispatched.
           key: SETTINGS_NAMESPACE,
+          // Declaring the dictionary namespace is what puts the framework's
+          // typed `t` seat on the card's props, re-derived per locale revision
+          // so a language switch re-renders the mounted card.
+          locale: MAIL_NOTIFY_NS,
           inject: (): MailNotifyCardFace => ({ card }),
         },
         MailNotifyCardView,
@@ -68,6 +78,7 @@ export function apply(ctx: ClientContext): void {
 
     return () => {
       unregister()
+      unregisterDictionaries()
       card.dispose()
     }
   }, 'dsh-mail-notify: settings card')

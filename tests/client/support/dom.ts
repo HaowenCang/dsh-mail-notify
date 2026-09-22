@@ -30,6 +30,7 @@ import { act, createElement } from 'react'
 import { MailNotifyCard } from '../../../src/client/controller.ts'
 import type { ClientContext } from '../../../src/client/contracts.ts'
 import type { Root } from 'react-dom/client'
+import { createLocaleSeat, type LocaleSeat } from './seat.ts'
 
 registerHooks({
   load(url, context, nextLoad) {
@@ -305,6 +306,8 @@ export interface Mounted {
   card: MailNotifyCard
   container: HTMLElement
   root: Root
+  /** The locale seat the card renders through. */
+  seat: LocaleSeat
   /** The disclosure control. */
   toggle(): HTMLButtonElement
   /** The disclosure region, by the id `aria-controls` names. */
@@ -334,23 +337,28 @@ function assertPresent<T>(value: T | null | undefined, message: string): T {
  * creates it once — it is never recreated because of anything the view does,
  * which is the property the draft-retention tests rest on. The constructor's
  * first status read is flushed inside an `act` scope, so its render lands where
- * a test can observe it.
+ * a test can observe it. The locale seat is wired the way the renderer wires
+ * its own: the card renders through `seat.current()`, and every seat revision
+ * re-renders it with a new translate identity.
  *
  * @param host - the fake host.
+ * @param seat - the locale seat; a fresh English one when omitted.
  * @returns the mounted card and its DOM handles.
  */
-export async function mountCard(host: FakeHost): Promise<Mounted> {
+export async function mountCard(host: FakeHost, seat: LocaleSeat = createLocaleSeat('en')): Promise<Mounted> {
   installDom()
   const card = new MailNotifyCard(host.ctx)
   const container = document.createElement('div')
   document.body.appendChild(container)
   let root: Root = createRoot(container)
+  let releaseSeat: (() => void) | undefined
   const render = (): void => {
     void act(() => {
-      root.render(createElement(MailNotifyCardView, { card }))
+      root.render(createElement(MailNotifyCardView, { card, t: seat.current() }))
     })
   }
   render()
+  releaseSeat = seat.subscribe(render)
   await settleRender()
 
   const queryToggle = (): HTMLButtonElement =>
@@ -359,6 +367,7 @@ export async function mountCard(host: FakeHost): Promise<Mounted> {
   const mounted: Mounted = {
     card,
     container,
+    seat,
     get root(): Root {
       return root
     },
@@ -376,14 +385,18 @@ export async function mountCard(host: FakeHost): Promise<Mounted> {
       assertPresent(container.querySelector<HTMLButtonElement>(`[data-action="${name}"]`), `the form must render a "${name}" action`),
     rerender: render,
     remount: async () => {
+      releaseSeat?.()
       void act(() => {
         root.unmount()
       })
       root = createRoot(container)
       render()
+      releaseSeat = seat.subscribe(render)
       await settleRender()
     },
     unmount: () => {
+      releaseSeat?.()
+      releaseSeat = undefined
       void act(() => {
         root.unmount()
       })
