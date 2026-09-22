@@ -38,7 +38,7 @@ import { SETTINGS_PLUGIN_ITEM_SLOT, type ClientContext } from './contracts.ts'
  * edge in `package.json` puts the module on the boot graph, and having the
  * module on the graph does not make the service available.
  */
-export const inject: string[] = ['slots', 'settingsScope', 'connection', 'remote', 'remote.credentials']
+export const inject: string[] = ['slots', 'settingsScope', 'connection', 'remote', 'remote.credentials', 'locale']
 
 /**
  * Client plugin body invoked by the DSH web boot.
