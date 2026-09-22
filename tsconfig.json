@@ -6,6 +6,15 @@
     "moduleResolution": "nodenext",
     "types": ["node"],
 
+    /**
+     * The automatic JSX runtime, needed by the Node program for one reason
+     * only: `tests/support/dom.ts` mounts real React trees, and its `.tsx`
+     * callers are stripped by the test loader rather than by `tsc`. The Node
+     * *build* emits no JSX — `src/client` is excluded below — so this option
+     * widens no production output.
+     */
+    "jsx": "react-jsx",
+
     "rootDir": "src",
     "outDir": "lib",
     "declaration": true,

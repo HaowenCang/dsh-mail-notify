@@ -1,7 +1,7 @@
 {
   /**
    * The browser half's compilation face: client sources, the shared wire
-   * module, the client tests, and the contract probe.
+   * module, the client tests and their DOM harness, and the contract probe.
    *
    * `noEmit` on purpose: the client bundle is produced by tsdown, which applies
    * the lazy-CJS envelope DSH's module loader requires. This program exists to
@@ -10,7 +10,11 @@
    *
    * It is a program of its own rather than a widening of the host program
    * because `ctx.connection` is typed differently by the connection package's
-   * two entries; see `tsconfig.test.json`.
+   * two entries; see `tsconfig.test.json`. The DOM harness lives under
+   * `tests/client/` for the same reason: it mounts a React tree and therefore
+   * needs the DOM library, which the host program must not acquire. The
+   * directory split between `tests/support/` and `tests/client/support/` is
+   * exactly this boundary, not a filing preference.
    */
   "extends": "./tsconfig.json",
   "compilerOptions": {
