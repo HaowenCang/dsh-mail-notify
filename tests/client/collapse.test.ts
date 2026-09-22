@@ -268,7 +268,7 @@ test('COL-13 the collapsed summary exposes no sensitive fields', async () => {
   // What it does show: the three safe operational facts.
   assert.ok(text.includes('Active'))
   assert.ok(text.includes('SMTP configured'))
-  assert.ok(text.includes('Questions off'))
+  assert.ok(text.includes('Questions Off'))
   // What it must not show: recipients, the SMTP user, the host, queue detail,
   // or any credential material.
   assert.ok(!text.includes('alice@example.test'))

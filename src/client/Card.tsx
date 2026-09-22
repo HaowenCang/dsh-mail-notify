@@ -16,6 +16,13 @@
  * does not unmount the controller, so staged drafts and in-flight operations
  * survive a collapse exactly as they survive a tab switch.
  *
+ * Every string this file renders comes through the `t` seat the slot
+ * registration's `locale:` option provides — typed to this plugin's dictionary
+ * namespace, reading the active DSH locale at call time, with English as the
+ * fallback chain's terminus. There is no locale branching in the JSX: the copy
+ * lives in `locales.ts`, and a mounted card follows a DSH language switch
+ * because the renderer re-renders outlets on every locale revision.
+ *
  * The two human-attention switches render first and apart from the rest. They
  * are the switches that decide whether an operator learns that an agent has
  * stopped and is waiting for a person, and both are off by default because
@@ -28,7 +35,8 @@
 
 import { useCallback, useEffect, useId, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, JSX } from 'react'
-import type { CardState, FieldState, MailNotifyCard, MailNotifyCardFace } from './controller.ts'
+import type { InjectFace, PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { CardNotice, CardState, FieldState, MailNotifyCard, MailNotifyCardFace } from './controller.ts'
 import {
   CREDENTIAL_REF_FIELD,
   DELIVERY_FIELDS,
@@ -38,6 +46,19 @@ import {
   SMTP_FIELDS,
   type FieldDef,
 } from './fields.ts'
+import { MAIL_LOCALE_NS } from './locales.ts'
+
+/**
+ * The composed props this card renders from: the slot's owner/standard share,
+ * the framework's typed `t` seat for this plugin's dictionary namespace, and
+ * the registrant's injected controller face.
+ */
+export type MailNotifyCardProps = PropsRuntime<'settings.plugin.item'> &
+  PropsLocale<typeof MAIL_LOCALE_NS> &
+  InjectFace<MailNotifyCardFace>
+
+/** The translate function the `t` seat carries. */
+type Translate = TranslateNS<typeof MAIL_LOCALE_NS>
 
 /** The two switches the card renders as its own block. */
 const PRIVACY_FIELDS = NOTIFICATION_FIELDS.filter((def) => def.privacy === true)
@@ -54,9 +75,6 @@ const STATUS_POLL_MS = 5000
 
 /** The notification switches rendered under the privacy block. */
 const ORDINARY_NOTIFICATION_FIELDS = NOTIFICATION_FIELDS.filter((def) => def.privacy !== true)
-
-/** The card's visible title, as the settings vocabulary names it. */
-const TITLE = 'Mail notifications'
 
 const COLORS = {
   border: 'var(--dsh-border, rgba(127,127,127,0.28))',
@@ -190,6 +208,16 @@ function effectiveOf(state: CardState, field: string): 'on' | 'off' | 'inherited
   return 'inherited'
 }
 
+/** Resolve one tri-state to its locale key. */
+function stateKeyOf(tri: 'on' | 'off' | 'inherited'): 'state.on' | 'state.off' | 'state.inherited' {
+  return tri === 'on' ? 'state.on' : tri === 'off' ? 'state.off' : 'state.inherited'
+}
+
+/** Render one controller notice: localized copy, or the host's own wording. */
+function noticeOf(t: Translate, notice: CardNotice): string {
+  return notice.kind === 'raw' ? notice.text : t(notice.key, notice.params)
+}
+
 /**
  * The collapsed header's one-line operational summary.
  *
@@ -199,30 +227,37 @@ function effectiveOf(state: CardState, field: string): 'on' | 'off' | 'inherited
  * detail; those stay in the expanded Status block.
  *
  * @param state - the card projection.
+ * @param t - the locale-bound translate function.
  * @returns the summary line.
  */
-function summaryText(state: CardState): string {
+function summaryText(state: CardState, t: Translate): string {
   const bits: string[] = []
   if (state.status === undefined) {
-    bits.push('Status unknown', 'SMTP unknown')
+    bits.push(t('summary.unknownStatus'), t('summary.smtpUnknown'))
   } else {
-    bits.push(state.status.active ? 'Active' : 'Inactive')
-    bits.push(state.status.smtpConfigured ? 'SMTP configured' : 'SMTP not configured')
+    bits.push(t(state.status.active ? 'summary.active' : 'summary.inactive'))
+    bits.push(t(state.status.smtpConfigured ? 'summary.smtpConfigured' : 'summary.smtpUnconfigured'))
   }
-  const questions = effectiveOf(state, 'notifyQuestions')
-  bits.push(`Questions ${questions === 'inherited' ? 'inherited' : questions}`)
-  if (state.saving) bits.push('Saving…')
-  if (state.testing) bits.push('Sending…')
+  bits.push(t('summary.questions', { state: t(stateKeyOf(effectiveOf(state, 'notifyQuestions'))) }))
+  if (state.saving) bits.push(t('action.saving'))
+  if (state.testing) bits.push(t('action.sending'))
   return bits.join(' · ')
 }
 
 /** One field's control, chosen by the field's declared kind. */
-function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boolean; onChange: (text: string) => void; onReset: () => void }): JSX.Element {
-  const { def, state, disabled, onChange, onReset } = props
+function FieldControl(props: {
+  def: FieldDef
+  state: FieldState
+  disabled: boolean
+  t: Translate
+  onChange: (text: string) => void
+  onReset: () => void
+}): JSX.Element {
+  const { def, state, disabled, t, onChange, onReset } = props
   return (
     <div style={ROW}>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: 220 }}>{def.label}</span>
+        <span style={{ minWidth: 220 }}>{t(def.labelKey)}</span>
         {def.kind === 'boolean' ? (
           <select
             style={{ ...INPUT, maxWidth: 140 }}
@@ -236,9 +271,9 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
                 the field goes back to the composition layer and schema default.
                 It is a distinct choice from "false", and a checkbox could not
                 express it. */}
-            <option value="">inherit</option>
-            <option value="true">on</option>
-            <option value="false">off</option>
+            <option value="">{t('option.inherit')}</option>
+            <option value="true">{t('state.on')}</option>
+            <option value="false">{t('state.off')}</option>
           </select>
         ) : (
           <input
@@ -258,16 +293,23 @@ function FieldControl(props: { def: FieldDef; state: FieldState; disabled: boole
             disabled={disabled}
             onClick={onReset}
             style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-            title="Remove this override so the field re-inherits the composition value"
+            title={t('action.resetFieldTitle')}
           >
-            reset
+            {t('action.resetField')}
           </button>
         ) : (
-          <span style={HINT}>inherited</span>
+          <span style={HINT}>{t('state.inherited')}</span>
         )}
       </label>
-      <span style={HINT}>{def.hint}</span>
-      {state.invalid ? <span style={{ ...HINT, color: COLORS.bad }}>This value will block the save.</span> : null}
+      <span style={HINT}>{t(def.hintKey)}</span>
+      {state.invalid && state.validation !== undefined ? (
+        <>
+          <span style={{ ...HINT, color: COLORS.bad }}>
+            {t(state.validation.key, { field: t(def.labelKey), ...state.validation.params })}
+          </span>
+          <span style={{ ...HINT, color: COLORS.bad }}>{t('validation.blocking')}</span>
+        </>
+      ) : null}
     </div>
   )
 }
@@ -277,6 +319,7 @@ function FieldGroup(props: {
   title: string
   fields: readonly FieldDef[]
   state: CardState
+  t: Translate
   onChange: (field: string, text: string) => void
   onReset: (field: string) => void
 }): JSX.Element {
@@ -294,6 +337,7 @@ function FieldGroup(props: {
             def={def}
             state={field}
             disabled={disabled}
+            t={props.t}
             onChange={(text) => {
               props.onChange(def.field, text)
             }}
@@ -308,24 +352,41 @@ function FieldGroup(props: {
 }
 
 /** The live status strip. */
-function StatusStrip(props: { state: CardState }): JSX.Element {
-  const { state } = props
+function StatusStrip(props: { state: CardState; t: Translate }): JSX.Element {
+  const { state, t } = props
   const status = state.status
   const bits: JSX.Element[] = []
   bits.push(
     <span key="active" style={{ color: status?.active === true ? COLORS.good : COLORS.muted }}>
-      plugin {status === undefined ? 'unknown' : status.active ? 'active' : 'not running'}
+      {t(
+        status === undefined
+          ? 'status.pluginUnknown'
+          : status.active
+            ? 'status.pluginActive'
+            : 'status.pluginInactive',
+      )}
     </span>,
   )
   bits.push(
     <span key="cred" style={{ color: state.secret.configured ? COLORS.good : COLORS.warn }}>
-      credential {state.secret.known ? (state.secret.configured ? 'configured' : 'missing') : 'unknown'}
+      {t('status.credential', {
+        state: !state.secret.known
+          ? t('status.unknown')
+          : state.secret.configured
+            ? t('status.configured')
+            : t('status.notConfigured'),
+      })}
     </span>,
   )
   if (status?.queue !== undefined) {
     bits.push(
       <span key="queue">
-        queue {status.queue.depth}/{status.queue.size} · {status.queue.delivered} delivered · {status.queue.failed} failed
+        {t('status.queue', {
+          depth: status.queue.depth,
+          size: status.queue.size,
+          delivered: status.queue.delivered,
+          failed: status.queue.failed,
+        })}
       </span>,
     )
   }
@@ -333,31 +394,34 @@ function StatusStrip(props: { state: CardState }): JSX.Element {
     <div style={GROUP}>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>{bits}</div>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, fontWeight: 600 }}>
-        <span>Effective question notifications: {effectiveOf(state, 'notifyQuestions')}</span>
-        <span>Effective approval notifications: {effectiveOf(state, 'notifyApprovals')}</span>
+        <span>{t('status.effectiveQuestions', { state: t(stateKeyOf(effectiveOf(state, 'notifyQuestions'))) })}</span>
+        <span>{t('status.effectiveApprovals', { state: t(stateKeyOf(effectiveOf(state, 'notifyApprovals'))) })}</span>
       </div>
       {status?.configError === undefined ? null : (
-        <span style={{ ...HINT, color: COLORS.bad }}>
-          The saved configuration cannot be applied, so the previous settings are still in effect: {status.configError}
-        </span>
+        <span style={{ ...HINT, color: COLORS.bad }}>{t('status.configError', { detail: status.configError })}</span>
       )}
     </div>
   )
 }
 
 /** The write-only credential control. */
-function SecretControl(props: { state: CardState; onChange: (text: string) => void; onClear: () => void }): JSX.Element {
-  const { state, onChange, onClear } = props
+function SecretControl(props: {
+  state: CardState
+  t: Translate
+  onChange: (text: string) => void
+  onClear: () => void
+}): JSX.Element {
+  const { state, t, onChange, onClear } = props
   const disabled = state.saving || !state.writable
   return (
     <div style={ROW}>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ minWidth: 220 }}>SMTP password</span>
+        <span style={{ minWidth: 220 }}>{t('secret.label')}</span>
         <input
           style={INPUT}
           type="password"
           autoComplete="new-password"
-          placeholder="leave blank to keep the current password"
+          placeholder={state.secret.configured ? t('secret.placeholderChange') : t('secret.placeholderSet')}
           value={state.secret.draft}
           disabled={disabled || !state.secret.writable}
           onChange={(event) => {
@@ -369,16 +433,12 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
           disabled={disabled || !state.secret.writable}
           onClick={onClear}
           style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-          title="Remove the stored value for this reference"
+          title={t('secret.clearTitle')}
         >
-          clear stored password
+          {t('secret.clear')}
         </button>
       </label>
-      <span style={HINT}>
-        {state.secret.configured
-          ? 'A password is stored for this reference. It is never sent to the browser; typing a new one replaces it.'
-          : 'No password is stored for this reference yet. Typing one stores it without it ever being read back.'}
-      </span>
+      <span style={HINT}>{t(state.secret.configured ? 'secret.hintConfigured' : 'secret.hintUnconfigured')}</span>
     </div>
   )
 }
@@ -390,11 +450,11 @@ function SecretControl(props: { state: CardState; onChange: (text: string) => vo
  * that does not compose this plugin should show no trace of it, rather than a
  * disabled card the user cannot act on.
  *
- * @param props - the injected controller face.
+ * @param props - the injected controller face plus the framework's `t` seat.
  * @returns the card, or `null` while the namespace is unavailable.
  */
-export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | null {
-  const card = props.card
+export function MailNotifyCardView(props: MailNotifyCardProps): JSX.Element | null {
+  const { card, t } = props
   const state = useCardState(card)
 
   // Presentation state, component-local: collapsed is the default, nothing
@@ -433,21 +493,21 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
   }
 
   return (
-    <section style={FRAME} aria-label="dsh-mail-notify configuration">
+    <section style={FRAME} aria-label={t('card.aria')}>
       <button
         type="button"
         className="dsh-mail-notify__header"
         style={HEADER}
         aria-expanded={open}
         aria-controls={bodyId}
-        aria-label={`${open ? 'Hide' : 'Show'} ${TITLE} settings`}
+        aria-label={`${t(open ? 'header.collapse' : 'header.expand')}: ${t('card.title')}`}
         onClick={() => {
           setOpen(!open)
         }}
       >
         <span style={HEAD_TEXT}>
-          <strong style={{ fontSize: 15, lineHeight: 1.4 }}>{TITLE}</strong>
-          <span style={HINT}>{summaryText(state)}</span>
+          <strong style={{ fontSize: 15, lineHeight: 1.4 }}>{t('card.title')}</strong>
+          <span style={HINT}>{summaryText(state, t)}</span>
         </span>
         <span style={CHEVRON} aria-hidden="true">
           {open ? '▾' : '▸'}
@@ -457,11 +517,8 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
       {open ? (
         <div id={bodyId} style={BODY}>
           <div style={{ ...GROUP, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '10px 12px' }}>
-            <span style={{ ...GROUP_TITLE, color: 'inherit' }}>Human attention</span>
-            <span style={HINT}>
-              These two are the reason a notification exists: an agent that has stopped and is waiting for you. Both are
-              off by default.
-            </span>
+            <span style={{ ...GROUP_TITLE, color: 'inherit' }}>{t('group.humanAttention')}</span>
+            <span style={HINT}>{t('hint.humanAttention')}</span>
             {PRIVACY_FIELDS.map((def) => {
               const field = state.fields.find((entry) => entry.def.field === def.field)
               if (field === undefined) return null
@@ -471,6 +528,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                   def={def}
                   state={field}
                   disabled={disabled}
+                  t={t}
                   onChange={(text) => {
                     onChange(def.field, text)
                   }}
@@ -483,22 +541,32 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
           </div>
 
           <FieldGroup
-            title="General"
+            title={t('group.general')}
             fields={GENERAL_FIELDS}
             state={state}
+            t={t}
             onChange={onChange}
             onReset={onReset}
           />
           <FieldGroup
-            title="Other notifications"
+            title={t('group.notifications')}
             fields={ORDINARY_NOTIFICATION_FIELDS}
             state={state}
+            t={t}
             onChange={onChange}
             onReset={onReset}
           />
-          <FieldGroup title="SMTP" fields={SMTP_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+          <FieldGroup
+            title={t('group.smtp')}
+            fields={SMTP_FIELDS}
+            state={state}
+            t={t}
+            onChange={onChange}
+            onReset={onReset}
+          />
           <SecretControl
             state={state}
+            t={t}
             onChange={(text) => {
               card.setSecretDraft(text)
             }}
@@ -507,32 +575,41 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
             }}
           />
           <FieldGroup
-            title="Credential"
+            title={t('group.credential')}
             fields={[CREDENTIAL_REF_FIELD]}
             state={state}
+            t={t}
             onChange={onChange}
             onReset={onReset}
           />
           <FieldGroup
-            title="Message content"
+            title={t('group.message')}
             fields={MESSAGE_FIELDS}
             state={state}
+            t={t}
             onChange={onChange}
             onReset={onReset}
           />
-          <FieldGroup title="Delivery" fields={DELIVERY_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+          <FieldGroup
+            title={t('group.delivery')}
+            fields={DELIVERY_FIELDS}
+            state={state}
+            t={t}
+            onChange={onChange}
+            onReset={onReset}
+          />
 
           <div style={GROUP}>
-            <span style={GROUP_TITLE}>Status</span>
-            <StatusStrip state={state} />
+            <span style={GROUP_TITLE}>{t('group.status')}</span>
+            <StatusStrip state={state} t={t} />
           </div>
 
           {state.testEmail === undefined ? null : (
             <span style={{ ...HINT, color: state.testEmail.delivered ? COLORS.good : COLORS.bad }}>
-              {state.testEmail.message}
+              {noticeOf(t, state.testEmail.notice)}
             </span>
           )}
-          {state.notice === undefined ? null : <span style={HINT}>{state.notice}</span>}
+          {state.notice === undefined ? null : <span style={HINT}>{noticeOf(t, state.notice)}</span>}
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
@@ -543,7 +620,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
               }}
               style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
             >
-              {state.testing ? 'Sending…' : 'Send test email'}
+              {state.testing ? t('action.sending') : t('action.test')}
             </button>
             <button
               type="button"
@@ -552,9 +629,9 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
                 card.resetAll()
               }}
               style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-              title="Remove every override this plugin owns, so the composition values and schema defaults apply again"
+              title={t('action.resetTitle')}
             >
-              Reset
+              {t('action.reset')}
             </button>
             <button
               type="button"
@@ -564,7 +641,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
               }}
               style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
             >
-              Discard
+              {t('action.discard')}
             </button>
             <button
               type="button"
@@ -574,7 +651,7 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
               }}
               style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer', fontWeight: 600 }}
             >
-              {state.saving ? 'Saving…' : 'Save'}
+              {state.saving ? t('action.saving') : t('action.save')}
             </button>
           </div>
         </div>

@@ -45,11 +45,17 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 // no read path in this namespace, which is what makes "the browser never reads
 // the password" a property of the contract rather than of this plugin's care.
 import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
+// `ctx.locale` — the browser locale registry the card registers its bilingual
+// dictionaries through — plus that package's own `LocaleNamespaceMap` merges
+// (`common`, `settings.locale`), which are what make the shared vocabulary
+// visible to a namespace-bound `t`.
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { MailNotifyLocaleKey } from './locales.ts'
 
 /**
  * The client root context DSH hands to a plugin's browser `apply`.
@@ -66,6 +72,22 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** The browser wire client, including the generic `/api` RPC channel. */
     connection: ConnectionHandle
+  }
+}
+
+/**
+ * This plugin's dictionary namespace, declared into the shared locale table.
+ *
+ * The merge is what makes both typed sites compile-checkable: `ctx.locale
+ * .register(MAIL_LOCALE_NS, { zh, en })` demands exactly the shipped locales
+ * with exactly this key domain, and the registration's `locale:` option types
+ * the framework-injected `t` seat to the same union. A renamed or dropped key
+ * breaks this file rather than rendering as a raw key in the browser.
+ */
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    /** Locale keys of the `dsh-mail-notify` settings card's copy. */
+    'dsh-mail-notify': MailNotifyLocaleKey
   }
 }
 

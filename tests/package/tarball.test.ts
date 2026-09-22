@@ -122,6 +122,7 @@ test('the packed manifest declares the DSH bundle, the export map, and the brows
       client: {
         platform: 'web',
         inject: [
+          '@deepseek-ai/dsh-client-locale',
           '@deepseek-ai/dsh-client-ui-renderer',
           '@deepseek-ai/dsh-client-ui-settings',
           '@deepseek-ai/dsh-client-ui-settings-plugins',
@@ -134,6 +135,20 @@ test('the packed manifest declares the DSH bundle, the export map, and the brows
   )
   assert.ok(manifest.exports !== undefined && '.' in manifest.exports)
   assert.ok(existsSync(join(extracted, manifest.dsh?.bundle?.patch ?? 'missing')), 'the declared patch file exists')
+})
+
+test('the packed client bundle carries the bilingual card dictionaries', () => {
+  // Localization is part of the shipping contract, not build-time trivia: the
+  // browser resolves copy from THIS file, so a bundle without the dictionaries
+  // would render raw keys the moment the card mounts — no type check can see
+  // that, but reading the artefact back can.
+  const source = readFileSync(join(extracted, 'lib', 'client.js'), 'utf8')
+  for (const needle of ['Mail notifications', '邮件通知', '需要用户回答', '需要用户批准', '发送测试邮件', '恢复继承值']) {
+    assert.ok(source.includes(needle), `the packed bundle must carry the string "${needle}"`)
+  }
+  // The dictionaries ride the bundle as data, behind the same two seed-module
+  // requires as before: registering them talks to `ctx.locale`, not to a
+  // module the shell would have to seed. PKG-01c pins the require set.
 })
 
 test('PKG-01c the declared ./client export resolves to a self-contained loader bundle', () => {
