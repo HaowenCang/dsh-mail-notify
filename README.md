@@ -241,13 +241,37 @@ on the next boot.
 
 ## Configure in the Web UI
 
-`Settings → Plugins → Plugin configuration` shows a **dsh-mail-notify** card. Everything in the
+`Settings → Plugins → Plugin configuration` shows a **Mail notifications** card. Everything in the
 patch example below can be set there instead; the card needs no YAML editing and takes effect
 without restarting DSH.
 
 The card is registered into the `settings.plugin.item` slot under the key `dsh-mail-notify`, which
 is also the settings namespace the host registers. That key is what pairs the browser half with the
 host half — neither side learns anything else about the other.
+
+### The card collapses
+
+Since v0.3.1 the whole card is one disclosure, and it **starts collapsed**. The header states three
+facts and nothing else — whether the runtime is mounted, whether the effective configuration
+carries a usable SMTP section, and whether question notifications are on — so a plugin nobody is
+configuring costs about one line of the Plugins page rather than a full screen of scrolling.
+
+The header is a native `<button>` with `aria-expanded` and `aria-controls`, so a pointer, Enter, and
+Space all work and the state is announced. Collapsing is **presentation only**: it writes nothing to
+`settings.yaml`, the composition patch, or the credential store — it is not persisted anywhere. It
+also does not disturb the form: staged edits, an in-flight save, the last test-email outcome, and a
+typed password all survive collapse and re-expansion, because they live in the card's controller
+rather than in the DOM. Only `Discard` drops staged edits, and only `Save` writes them.
+
+### Language
+
+The card follows the DSH interface language. Its copy is registered into DSH's own locale service
+under the `dsh-mail-notify` namespace, so it renders in **English** when the DSH UI is English and in
+**简体中文** when it is Chinese, and it re-renders in place when the language changes — including a
+refusal or a save result already on screen. A language for which the plugin ships no dictionary
+falls back to English. `DSH`, `SMTP`, `TLS`, and `STARTTLS` stay verbatim in both languages, and a
+diagnostic composed by the host — an SMTP error, a settings refusal — is quoted unchanged rather
+than machine-translated.
 
 How the three layers compose:
 
@@ -263,19 +287,20 @@ every field the plugin owns, and `Save` applies it.
 
 | Card region | Fields |
 | --- | --- |
-| Human attention | `notifyQuestions`, `notifyApprovals` — rendered apart because they are the switches that decide whether you learn an agent is blocked |
+| Status | The live facts: runtime, credential reference, queue depth and counters, and the **effective** `notifyQuestions` / `notifyApprovals` |
+| Questions and approvals | `notifyQuestions`, `notifyApprovals` — rendered first and apart because they are the switches that decide whether you learn an agent is blocked |
 | General | `enabled`, `includeSubagents` |
-| Other notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens` |
+| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens` |
 | SMTP | `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, `from`, `to` |
-| Credential | `smtpPasswordCredential` (a reference **name**), and the write-only password control |
+| Credential | the write-only password control, then `smtpPasswordCredential` (a reference **name**) |
 | Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter`, `maxBodyChars` |
 | Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
 
-The status line above the form reports whether the runtime is mounted, whether the credential
+The status strip reports whether the runtime is mounted, whether the credential
 reference is configured, the queue depth and counters, and — prominently — the **effective**
 `notifyQuestions` and `notifyApprovals` values. It is re-read every five seconds while the card is
-on screen. If a saved configuration cannot be applied, the card says so instead of silently doing
-nothing; the previously running configuration stays in effect.
+on screen, whether or not the card is expanded. If a saved configuration cannot be applied, the card
+says so instead of silently doing nothing; the previously running configuration stays in effect.
 
 **Send test email** delivers one fixed message through the *same* credential lookup, transport
 construction, and failure classification a real notification uses, so a success there is evidence
@@ -287,9 +312,12 @@ configuration and contains no credential.
 The browser never reads the SMTP password. The only credential operations the card performs are
 `describe` (is a value stored, and is it writable), `set`, and `unset`; the installed DSH
 credentials namespace has no read path at all. The password field starts blank every time the card
-renders, a stored password is reported only as *configured*, typing a replacement is write-only,
-and a successful save clears the local draft. A custom `smtpPasswordCredential` reference is
-preserved as you typed it.
+renders — including after a collapse, where the draft is held by the controller and the input is not
+in the document at all — a stored password is reported only as *configured*, typing a replacement is
+write-only, and a successful save clears the local draft. The control's label tracks what the
+reference holds (`Set password` when nothing is stored, `Change password` when something is), and
+`Clear stored password` appears only when there is something to remove. A custom
+`smtpPasswordCredential` reference is preserved as you typed it.
 
 ## Configure by patch file
 

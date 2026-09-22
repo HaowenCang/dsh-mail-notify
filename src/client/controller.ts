@@ -17,6 +17,20 @@
  * field re-inherits the composition layer rather than being written to a copy
  * of it.
  *
+ * ## What the controller deliberately does not own
+ *
+ * The card's expansion state is not here. It is presentation, not
+ * configuration: it must not reach `settings.yaml`, the bundle patch,
+ * credentials, or this projection, and nothing outside the component has any
+ * use for it. Because it lives in the component while the drafts live here,
+ * collapse and re-expand are free — the drafts, the in-flight save, the test
+ * outcome, and the credential draft are never touched by the disclosure.
+ *
+ * The projection also carries no finished sentences. Every plugin-authored
+ * message is a locale key plus its parameters (see `./message.ts`), so a
+ * notice already on screen follows a language switch instead of freezing the
+ * language it was produced in.
+ *
  * @module dsh-mail-notify/client/card
  */
 
@@ -30,7 +44,9 @@ import {
   formatField,
   parseField,
   type FieldDef,
+  type ValidationReason,
 } from './fields.ts'
+import { MSG, TEXT, type ControllerMessage } from './message.ts'
 import {
   describeCredential,
   onCredentialUpdated,
@@ -53,6 +69,8 @@ export interface FieldState {
   readonly overridden: boolean
   /** Whether the draft is not a value this field accepts. */
   readonly invalid: boolean
+  /** The refusal's copy key and parameters, when the draft is refused. */
+  readonly reason: ValidationReason | undefined
 }
 
 /** The write-only credential control's state. */
@@ -71,7 +89,8 @@ export interface SecretState {
 export interface TestEmailState {
   readonly delivered: boolean
   readonly recipientCount: number
-  readonly message: string
+  /** The outcome sentence, as copy for the card to render in the live locale. */
+  readonly message: ControllerMessage
 }
 
 /** Everything the card renders, as one immutable projection. */
@@ -96,7 +115,15 @@ export interface CardState {
   /** Live host facts, once the first read has answered. */
   readonly status: StatusValue | undefined
   /** A refusal or confirmation from the last action. */
-  readonly notice: string | undefined
+  readonly notice: ControllerMessage | undefined
+  /**
+   * A plugin-authored refusal that accompanies {@link notice} as its frame.
+   *
+   * A host diagnostic is passed through unchanged, and this frame is what says
+   * whose message it is: without it the card would print a bare SMTP error with
+   * no statement of what failed.
+   */
+  readonly noticeDetail: ControllerMessage | undefined
   /** Whether a delivery test is in flight. */
   readonly testing: boolean
   /** The last delivery test's outcome. */
@@ -129,7 +156,8 @@ export class MailNotifyCard {
   private credential: CredentialFacts = { configured: false, writable: false }
   private credentialKnown = false
   private status: StatusValue | undefined
-  private notice: string | undefined
+  private notice: ControllerMessage | undefined
+  private noticeDetail: ControllerMessage | undefined
   private saving = false
   private failed = false
   private testing = false
@@ -189,6 +217,7 @@ export class MailNotifyCard {
   edit(field: string, text: string): void {
     this.staged.set(field, text)
     this.notice = undefined
+    this.noticeDetail = undefined
     this.publish()
   }
 
@@ -199,6 +228,7 @@ export class MailNotifyCard {
   resetField(field: string): void {
     this.staged.set(field, null)
     this.notice = undefined
+    this.noticeDetail = undefined
     this.publish()
   }
 
@@ -212,7 +242,8 @@ export class MailNotifyCard {
    */
   resetAll(): void {
     for (const def of ALL_FIELDS) this.staged.set(def.field, null)
-    this.notice = 'Reset staged: every field will go back to the composition values when you save.'
+    this.notice = MSG('notice.resetStaged')
+    this.noticeDetail = undefined
     this.publish()
   }
 
@@ -221,6 +252,7 @@ export class MailNotifyCard {
     this.staged.clear()
     this.secretDraft = ''
     this.notice = undefined
+    this.noticeDetail = undefined
     this.failed = false
     this.publish()
   }
@@ -237,6 +269,7 @@ export class MailNotifyCard {
   setSecretDraft(text: string): void {
     this.secretDraft = text
     this.notice = undefined
+    this.noticeDetail = undefined
     this.publish()
   }
 
@@ -253,12 +286,14 @@ export class MailNotifyCard {
     if (this.saving) return
     const current = this.snapshot
     if (current.invalid) {
-      this.notice = 'Fix the highlighted fields before saving.'
+      this.notice = MSG('notice.fixInvalid')
+      this.noticeDetail = undefined
       this.publish()
       return
     }
     if (!current.dirty) {
-      this.notice = 'Nothing to save.'
+      this.notice = MSG('notice.nothingToSave')
+      this.noticeDetail = undefined
       this.publish()
       return
     }
@@ -266,6 +301,7 @@ export class MailNotifyCard {
     this.saving = true
     this.failed = false
     this.notice = undefined
+    this.noticeDetail = undefined
     this.publish()
 
     const ops = this.planOps()
@@ -299,8 +335,11 @@ export class MailNotifyCard {
     if (ok) this.staged.clear()
     this.saving = false
     this.failed = !ok
-    if (!ok) this.notice = message ?? 'The host did not accept the save.'
-    else if (this.secretDraft === '') this.notice = 'Saved.'
+    // A host diagnostic is quoted, not replaced: the notice names the operation
+    // that failed, the detail says why. Both render through the live `t`.
+    this.notice = ok ? undefined : MSG('notice.saveRefused')
+    this.noticeDetail = ok || message === undefined ? undefined : TEXT(message)
+    if (ok && this.secretDraft === '') this.notice = MSG('notice.saved')
 
     await this.refresh()
     this.publish()
@@ -317,6 +356,7 @@ export class MailNotifyCard {
     if (this.testing) return
     this.testing = true
     this.notice = undefined
+    this.noticeDetail = undefined
     this.publish()
 
     const outcome = await requestTestEmail(this.ctx)
@@ -326,10 +366,12 @@ export class MailNotifyCard {
           delivered: outcome.value.delivered,
           recipientCount: outcome.value.recipientCount,
           message: outcome.value.delivered
-            ? `The SMTP server accepted the message for ${String(outcome.value.recipientCount)} recipient(s).`
-            : (outcome.value.message ?? 'The SMTP server refused the message.'),
+            ? MSG('notice.testAccepted', { count: outcome.value.recipientCount })
+            : outcome.value.message === undefined
+              ? MSG('action.testRefused')
+              : TEXT(outcome.value.message),
         }
-      : { delivered: false, recipientCount: 0, message: outcome.message }
+      : { delivered: false, recipientCount: 0, message: TEXT(outcome.message) }
     await this.refresh()
     this.publish()
   }
@@ -346,15 +388,19 @@ export class MailNotifyCard {
     if (this.saving) return
     this.saving = true
     this.notice = undefined
+    this.noticeDetail = undefined
     this.publish()
 
     const outcome = await unsetCredential(this.ctx, this.credentialRef())
     this.saving = false
     this.failed = !outcome.ok
-    if (!outcome.ok) this.notice = outcome.message
-    else {
+    if (outcome.ok) {
       this.secretDraft = ''
-      this.notice = 'The stored password was removed.'
+      this.notice = MSG('notice.passwordRemoved')
+      this.noticeDetail = undefined
+    } else {
+      this.notice = MSG('notice.saveRefused')
+      this.noticeDetail = TEXT(outcome.message)
     }
 
     await this.refresh()
@@ -434,19 +480,26 @@ export class MailNotifyCard {
       const overriddenByUser = user !== undefined && Object.prototype.hasOwnProperty.call(user, def.field)
       if (staged === null) {
         // A staged clear answers for itself: the badge previews the save.
-        return { def, text: '', overridden: false, invalid: false }
+        return { def, text: '', overridden: false, invalid: false, reason: undefined }
       }
       if (staged !== undefined) {
         const parsed = parseField(def, staged)
         const bad = parsed.kind === 'invalid'
         if (bad) invalid = true
-        return { def, text: staged, overridden: true, invalid: bad }
+        return {
+          def,
+          text: staged,
+          overridden: true,
+          invalid: bad,
+          reason: parsed.kind === 'invalid' ? parsed.reason : undefined,
+        }
       }
       return {
         def,
         text: formatField(def, section[def.field]),
         overridden: overriddenByUser,
         invalid: false,
+        reason: undefined,
       }
     })
 
@@ -469,6 +522,7 @@ export class MailNotifyCard {
       },
       status: this.status,
       notice: this.notice,
+      noticeDetail: this.noticeDetail,
       testing: this.testing,
       testEmail: this.testEmail,
     }

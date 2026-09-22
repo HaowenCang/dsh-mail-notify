@@ -126,6 +126,10 @@ test('the packed manifest declares the DSH bundle, the export map, and the brows
           '@deepseek-ai/dsh-client-ui-settings',
           '@deepseek-ai/dsh-client-ui-settings-plugins',
           '@deepseek-ai/dsh-client-connection',
+          // Since v0.3.1 the card's copy lives in the DSH locale service, so the
+          // module graph edge that guarantees the locale plugin is loaded joins
+          // the four service edges this surface already declared.
+          '@deepseek-ai/dsh-client-locale',
           '@deepseek-ai/dsh-api-remotes',
         ],
       },

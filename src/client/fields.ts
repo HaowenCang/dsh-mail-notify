@@ -8,12 +8,19 @@
  * against the same table the card renders from, rather than against a second
  * copy of the rules embedded in a component.
  *
+ * The table is also free of *language*. Every user-visible string it used to
+ * carry is now a locale key, resolved by the card through the live `t` — a
+ * table holding English labels could not follow a language switch, and two
+ * tables (one per language) would be two key sets that can drift.
+ *
  * The numeric bounds mirror the host schema in `src/config.ts`. They are a
  * preview, not a boundary: the host re-validates every write, and a bound that
  * drifted here would produce a rejected save rather than an accepted bad value.
  *
  * @module dsh-mail-notify/client/fields
  */
+
+import type { LocaleKey } from './locales/index.ts'
 
 /** How one control converts between its stored value and its draft text. */
 export type FieldKind = 'boolean' | 'natural' | 'text' | 'addresses'
@@ -23,10 +30,10 @@ export interface FieldDef {
   /** Key inside the `dsh-mail-notify` settings section. */
   readonly field: string
   readonly kind: FieldKind
-  /** Control label. */
-  readonly label: string
-  /** One line of guidance under the control. */
-  readonly hint: string
+  /** Locale key of the control's label. */
+  readonly labelKey: LocaleKey
+  /** Locale key of the one line of guidance under the control. */
+  readonly hintKey: LocaleKey
   /** Inclusive numeric bounds; `natural` only. */
   readonly min?: number
   readonly max?: number
@@ -47,14 +54,14 @@ export const GENERAL_FIELDS: readonly FieldDef[] = [
   {
     field: 'enabled',
     kind: 'boolean',
-    label: 'Plugin enabled',
-    hint: 'While off, the plugin registers no listener and reads no credential.',
+    labelKey: 'field.enabled',
+    hintKey: 'hint.enabled',
   },
   {
     field: 'includeSubagents',
     kind: 'boolean',
-    label: 'Include subagent turns',
-    hint: 'Whether delegated subagent turns are notified as well as top-level turns.',
+    labelKey: 'field.includeSubagents',
+    hintKey: 'hint.includeSubagents',
   },
 ]
 
@@ -69,66 +76,66 @@ export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
   {
     field: 'notifyQuestions',
     kind: 'boolean',
-    label: 'Notify when the agent asks a question',
-    hint: 'Sends the question text and its options. Off by default; the text may quote your task.',
+    labelKey: 'field.notifyQuestions',
+    hintKey: 'hint.notifyQuestions',
     privacy: true,
   },
   {
     field: 'notifyApprovals',
     kind: 'boolean',
-    label: 'Notify when the agent needs an approval',
-    hint: 'Sends the tool name and the asker’s reason, never the tool’s arguments. Off by default.',
+    labelKey: 'field.notifyApprovals',
+    hintKey: 'hint.notifyApprovals',
     privacy: true,
   },
   {
     field: 'notifyCompleted',
     kind: 'boolean',
-    label: 'Notify on completed turns',
-    hint: 'A top-level turn that finished normally.',
+    labelKey: 'field.notifyCompleted',
+    hintKey: 'hint.notifyCompleted',
   },
   {
     field: 'notifyErrors',
     kind: 'boolean',
-    label: 'Notify on failed turns',
-    hint: 'A turn that ended with a terminal error, including one that produced no visible output.',
+    labelKey: 'field.notifyErrors',
+    hintKey: 'hint.notifyErrors',
   },
   {
     field: 'notifyMaxTokens',
     kind: 'boolean',
-    label: 'Notify on truncated turns',
-    hint: 'A turn that stopped because it reached the token limit.',
+    labelKey: 'field.notifyMaxTokens',
+    hintKey: 'hint.notifyMaxTokens',
   },
 ]
 
 /** SMTP delivery settings. */
 export const SMTP_FIELDS: readonly FieldDef[] = [
-  { field: 'smtpHost', kind: 'text', label: 'SMTP host', hint: 'Host name of the SMTP server.' },
+  { field: 'smtpHost', kind: 'text', labelKey: 'field.smtpHost', hintKey: 'hint.smtpHost' },
   {
     field: 'smtpPort',
     kind: 'natural',
     min: 1,
     max: 65535,
-    label: 'SMTP port',
-    hint: '587 for STARTTLS, 465 for implicit TLS.',
+    labelKey: 'field.smtpPort',
+    hintKey: 'hint.smtpPort',
   },
   {
     field: 'smtpSecure',
     kind: 'boolean',
-    label: 'Implicit TLS',
-    hint: 'On selects implicit TLS (normally port 465); off allows a STARTTLS upgrade (normally 587).',
+    labelKey: 'field.smtpSecure',
+    hintKey: 'hint.smtpSecure',
   },
-  { field: 'smtpUser', kind: 'text', label: 'SMTP user', hint: 'Authentication user name.' },
+  { field: 'smtpUser', kind: 'text', labelKey: 'field.smtpUser', hintKey: 'hint.smtpUser' },
   {
     field: 'from',
     kind: 'text',
-    label: 'From address',
-    hint: 'Envelope sender. Some servers require this to match the authenticated account.',
+    labelKey: 'field.from',
+    hintKey: 'hint.from',
   },
   {
     field: 'to',
     kind: 'addresses',
-    label: 'Recipients',
-    hint: 'One or more addresses, separated by commas or new lines.',
+    labelKey: 'field.to',
+    hintKey: 'hint.to',
   },
 ]
 
@@ -143,8 +150,8 @@ export const SMTP_FIELDS: readonly FieldDef[] = [
 export const CREDENTIAL_REF_FIELD: FieldDef = {
   field: 'smtpPasswordCredential',
   kind: 'text',
-  label: 'Credential reference',
-  hint: 'Name of the credential the password is read from. A name, never the password itself.',
+  labelKey: 'field.credentialRef',
+  hintKey: 'hint.credentialRef',
 }
 
 /** Message composition. */
@@ -152,28 +159,28 @@ export const MESSAGE_FIELDS: readonly FieldDef[] = [
   {
     field: 'includeMetadata',
     kind: 'boolean',
-    label: 'Include the metadata block',
-    hint: 'Session, workspace, model, and timing.',
+    labelKey: 'field.includeMetadata',
+    hintKey: 'hint.includeMetadata',
   },
   {
     field: 'includeUserPrompt',
     kind: 'boolean',
-    label: 'Include the last user message',
-    hint: 'Off by default: the prompt may carry content you did not intend to mail.',
+    labelKey: 'field.includeUserPrompt',
+    hintKey: 'hint.includeUserPrompt',
   },
   {
     field: 'includeFooter',
     kind: 'boolean',
-    label: 'Include the footer',
-    hint: 'The generator footer and the truncation marker.',
+    labelKey: 'field.includeFooter',
+    hintKey: 'hint.includeFooter',
   },
   {
     field: 'maxBodyChars',
     kind: 'natural',
     min: 1000,
     max: 1000000,
-    label: 'Body length cap',
-    hint: 'Maximum visible-text length, counted in code points.',
+    labelKey: 'field.maxBodyChars',
+    hintKey: 'hint.maxBodyChars',
   },
 ]
 
@@ -184,32 +191,32 @@ export const DELIVERY_FIELDS: readonly FieldDef[] = [
     kind: 'natural',
     min: 1,
     max: 10000,
-    label: 'Queue size',
-    hint: 'Waiting-job cap; the worker holds one more.',
+    labelKey: 'field.queueSize',
+    hintKey: 'hint.queueSize',
   },
   {
     field: 'retryAttempts',
     kind: 'natural',
     min: 0,
     max: 10,
-    label: 'Retry attempts',
-    hint: 'Total attempts are one plus this.',
+    labelKey: 'field.retryAttempts',
+    hintKey: 'hint.retryAttempts',
   },
   {
     field: 'retryBaseDelayMs',
     kind: 'natural',
     min: 100,
     max: 60000,
-    label: 'Retry base delay (ms)',
-    hint: 'Retry n waits base × 3^(n−1), capped at 30 s.',
+    labelKey: 'field.retryBaseDelayMs',
+    hintKey: 'hint.retryBaseDelayMs',
   },
   {
     field: 'maxDedupeEntries',
     kind: 'natural',
     min: 10,
     max: 100000,
-    label: 'Dedupe cache size',
-    hint: 'How many recently notified events are remembered.',
+    labelKey: 'field.maxDedupeEntries',
+    hintKey: 'hint.maxDedupeEntries',
   },
 ]
 
@@ -234,10 +241,23 @@ export interface ParsedClear {
   kind: 'clear'
 }
 
-/** A draft that is not a value this field accepts. */
+/**
+ * A draft that is not a value this field accepts.
+ *
+ * The refusal is recorded as a locale key plus its parameters rather than as a
+ * finished sentence: the label it names is itself localized, and the control
+ * renders the sentence through the live `t`, so a refusal already on screen
+ * follows a language switch like every other string.
+ */
 export interface ParsedInvalid {
   kind: 'invalid'
-  message: string
+  reason: ValidationReason
+}
+
+/** One refusal, as the copy key that renders it and the values it interpolates. */
+export interface ValidationReason {
+  readonly key: LocaleKey
+  readonly params: Record<string, string | number>
 }
 
 /** The outcome of reading one draft. */
@@ -292,6 +312,10 @@ export function formatField(def: FieldDef, value: unknown): string {
  * saving is the same gesture as resetting the field, and the host removes the
  * user-layer entry so the field re-inherits the composition layer.
  *
+ * A refusal is returned as its copy key and parameters; the label it names is
+ * supplied by the same locale layer the control's label came from, so the two
+ * cannot disagree about which field was refused.
+ *
  * @param def - the field definition.
  * @param text - the control's draft text.
  * @returns the staged write, a clear, or the reason the draft is refused.
@@ -304,21 +328,27 @@ export function parseField(def: FieldDef, text: string): ParsedField {
     case 'boolean':
       if (trimmed === 'true') return { kind: 'value', value: true }
       if (trimmed === 'false') return { kind: 'value', value: false }
-      return { kind: 'invalid', message: `${def.label} must be true or false` }
+      return { kind: 'invalid', reason: { key: 'validation.boolean', params: { label: def.labelKey } } }
 
     case 'natural': {
       if (!/^\d+$/.test(trimmed)) {
-        return { kind: 'invalid', message: `${def.label} must be a whole number` }
+        return { kind: 'invalid', reason: { key: 'validation.wholeNumber', params: { label: def.labelKey } } }
       }
       const value = Number(trimmed)
       if (!Number.isSafeInteger(value)) {
-        return { kind: 'invalid', message: `${def.label} is out of range` }
+        return { kind: 'invalid', reason: { key: 'validation.outOfRange', params: { label: def.labelKey } } }
       }
       if (def.min !== undefined && value < def.min) {
-        return { kind: 'invalid', message: `${def.label} must be at least ${String(def.min)}` }
+        return {
+          kind: 'invalid',
+          reason: { key: 'validation.atLeast', params: { label: def.labelKey, min: def.min } },
+        }
       }
       if (def.max !== undefined && value > def.max) {
-        return { kind: 'invalid', message: `${def.label} must be at most ${String(def.max)}` }
+        return {
+          kind: 'invalid',
+          reason: { key: 'validation.atMost', params: { label: def.labelKey, max: def.max } },
+        }
       }
       return { kind: 'value', value }
     }
@@ -334,9 +364,30 @@ export function parseField(def: FieldDef, text: string): ParsedField {
       if (addresses.length === 0) return { kind: 'clear' }
       const malformed = addresses.filter((entry) => !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(entry))
       if (malformed.length > 0) {
-        return { kind: 'invalid', message: `not a plausible email address: ${malformed.join(', ')}` }
+        return {
+          kind: 'invalid',
+          reason: { key: 'validation.badAddress', params: { addresses: malformed.join(', ') } },
+        }
       }
       return { kind: 'value', value: addresses }
     }
   }
+}
+
+/**
+ * Render one refusal through a translate function.
+ *
+ * @param t - the live translate function for this namespace.
+ * @param reason - the refusal's copy key and parameters.
+ * @returns the refusal sentence.
+ */
+export function composeValidation(t: (key: LocaleKey, params?: Record<string, unknown>) => string, reason: ValidationReason): string {
+  const params = reason.params
+  // The label parameter is a *key*, resolved here rather than at the parse
+  // site: `parseField` runs without a locale, and interpolating the raw key
+  // into the sentence would print `field.smtpPort` at the user.
+  const resolved: Record<string, unknown> = { ...params }
+  const label = resolved.label
+  if (typeof label === 'string') resolved.label = t(label as LocaleKey)
+  return t(reason.key, resolved)
 }

@@ -147,7 +147,42 @@ test('FLD-09 a recipient draft splits on commas, semicolons, and new lines', () 
 test('FLD-10 a malformed recipient is refused with the offending entry named', () => {
   const parsed = parseField(field('to'), 'a@b.co, nonsense')
   assert.equal(parsed.kind, 'invalid')
-  assert.ok(parsed.kind === 'invalid' && parsed.message.includes('nonsense'))
+  // The refusal is carried as copy plus parameters, not as a finished sentence:
+  // the sentence is composed at render time so it follows the active locale.
+  assert.ok(parsed.kind === 'invalid')
+  assert.equal(parsed.reason.key, 'validation.badAddress')
+  assert.ok(String(parsed.reason.params.addresses).includes('nonsense'))
+})
+
+test('FLD-10b every refusal names the field by locale key, never by English text', () => {
+  // A refusal that baked in the English label would stay English after a
+  // language switch, and would print a stale label if the field were renamed.
+  for (const name of ['smtpPort', 'notifyQuestions', 'maxBodyChars']) {
+    const def = field(name)
+    const parsed = parseField(def, 'not-a-value')
+    assert.equal(parsed.kind, 'invalid')
+    assert.ok(parsed.kind === 'invalid')
+    assert.equal(parsed.reason.params.label, def.labelKey)
+  }
+})
+
+test('FLD-10c the numeric refusals distinguish unparsable and out-of-bounds', () => {
+  // A draft that is not a number at all and a draft that is a number outside
+  // the declared range are different mistakes, and the copy says which.
+  const port = field('smtpPort')
+  const notANumber = parseField(port, 'abc')
+  assert.ok(notANumber.kind === 'invalid')
+  assert.equal(notANumber.reason.key, 'validation.wholeNumber')
+
+  const tooSmall = parseField(port, '0')
+  assert.ok(tooSmall.kind === 'invalid')
+  assert.equal(tooSmall.reason.key, 'validation.atLeast')
+  assert.equal(tooSmall.reason.params.min, 1)
+
+  const tooLarge = parseField(port, '65536')
+  assert.ok(tooLarge.kind === 'invalid')
+  assert.equal(tooLarge.reason.key, 'validation.atMost')
+  assert.equal(tooLarge.reason.params.max, 65535)
 })
 
 test('FLD-11 the credential reference falls back to the documented default', () => {
