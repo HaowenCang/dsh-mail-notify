@@ -317,8 +317,17 @@ Result:      PASS
 Model:       deepseek-v4.1-flash
 Base:        v0.3.0 / b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
 Branch:      eval/deepseek-v4.1-flash-v0.3.1-ui
-Final HEAD:  2853b3738f3456787e06f1a0770e62146802b8d4
+Final HEAD:  119c4e357d6e6af380ef11ab027fd5bbf262e6d8
 ```
+
+### A note on the self-referential final commit
+
+`Final HEAD` above is the commit that **first** recorded this report together with its corrections.
+Any commit made after it — including one carrying this sentence — necessarily has a different SHA,
+because a commit cannot contain its own hash. The branch tip is therefore one or more commits ahead
+of the value printed here, and the authoritative answer is `git rev-parse HEAD` on the branch. This
+is stated rather than chased: rewriting history to hide the extra commit would break the
+"no rebase, no amend" rule the experiment runs under.
 
 ### Timing
 
@@ -460,14 +469,15 @@ $ git status --short
 (clean)
 
 $ git log --oneline --decorate v0.3.0..HEAD
-2853b37 (HEAD -> eval/deepseek-v4.1-flash-v0.3.1-ui) docs: record the deepseek-v4.1-flash v0.3.1 evaluation
+119c4e3 (HEAD -> eval/deepseek-v4.1-flash-v0.3.1-ui) docs: correct the final git state in the evaluation record
+2853b37 docs: record the deepseek-v4.1-flash v0.3.1 evaluation
 9e3fe46 chore: bump version to 0.3.1 and prepare release notes
 47ab4ef feat(client): make the settings card collapsible and fully localized
 245407c feat: add a typed English and Simplified Chinese locale layer
 d80051a test: establish the browser test harness for the v0.3.1 UI work
 
 $ git diff --stat v0.3.0..HEAD
-24 files changed, 4386 insertions(+), 263 deletions(-)
+24 files changed, 4406 insertions(+), 263 deletions(-)
 
 $ git rev-parse "v0.3.0^{commit}"
 b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
@@ -478,6 +488,8 @@ b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
 b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
 $ git tag -l "v0.3.1"
 (empty — no tag exists)
+$ git merge-base HEAD v0.3.0
+b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
 ```
 
 Commit SHAs:
@@ -488,6 +500,7 @@ d80051ad2aee468c5bf21041e68a4b6d917ca4c5  test: establish the browser test harne
 47ab4efcfdc0c451293fdc71313c546080045262  feat(client): make the settings card collapsible and fully localized
 9e3fe46145b53bfa62a10f10a98ae2a1256c6f55  chore: bump version to 0.3.1 and prepare release notes
 2853b3738f3456787e06f1a0770e62146802b8d4  docs: record the deepseek-v4.1-flash v0.3.1 evaluation
+119c4e357d6e6af380ef11ab027fd5bbf262e6d8  docs: correct the final git state in the evaluation record
 ```
 
 The packed `dsh-mail-notify-0.3.1.tgz` is present in the worktree but untracked (`*.tgz` is
