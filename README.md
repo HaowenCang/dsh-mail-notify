@@ -241,9 +241,20 @@ on the next boot.
 
 ## Configure in the Web UI
 
-`Settings → Plugins → Plugin configuration` shows a **dsh-mail-notify** card. Everything in the
-patch example below can be set there instead; the card needs no YAML editing and takes effect
-without restarting DSH.
+`Settings → Plugins → Plugin configuration` shows a **dsh-mail-notify** card, titled **Mail
+notifications** (邮件通知). Everything in the patch example below can be set there instead; the card
+needs no YAML editing and takes effect without restarting DSH.
+
+The card is one collapsible disclosure, collapsed by default so a single plugin cannot push the rest
+of Settings off the screen. Collapsed, it occupies one compact row: its title, and one line of safe
+operational facts — runtime state, SMTP readiness, and the question switch's effective state.
+Expanding reveals the full form; collapsing again discards nothing — staged edits, a password draft,
+an in-flight save, and operation results all stay until you save or discard them. The expansion is
+presentation state only and is never persisted.
+
+The card follows the DSH interface language (Settings → General → Language) and is fully translated
+into English and Simplified Chinese; a language the plugin ships no copy for falls back to English.
+A language switch retranslates the mounted card immediately, notices already on screen included.
 
 The card is registered into the `settings.plugin.item` slot under the key `dsh-mail-notify`, which
 is also the settings namespace the host registers. That key is what pairs the browser half with the
@@ -256,7 +267,7 @@ schema defaults  →  cordis.patch.yml (composition)  →  settings.yaml (your o
 ```
 
 The card shows the **effective** value of every field — what a notification would actually use —
-and marks each one `inherited` (no override) or with a `reset` button (overridden). **Reset removes
+and marks each one `inherited` (no override) or with a `Reset` button (overridden). **Reset removes
 the override**; it does not write the default back, so the field re-inherits the composition layer
 and any later change to the patch is picked up again. `Reset` at the bottom stages that removal for
 every field the plugin owns, and `Save` applies it.
@@ -265,17 +276,16 @@ every field the plugin owns, and `Save` applies it.
 | --- | --- |
 | Human attention | `notifyQuestions`, `notifyApprovals` — rendered apart because they are the switches that decide whether you learn an agent is blocked |
 | General | `enabled`, `includeSubagents` |
-| Other notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens` |
+| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens` |
 | SMTP | `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, `from`, `to` |
 | Credential | `smtpPasswordCredential` (a reference **name**), and the write-only password control |
 | Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter`, `maxBodyChars` |
 | Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
+| Status | live host facts: whether the runtime is mounted, whether the credential reference is configured, the queue depth and counters, and — prominently — the **effective** `notifyQuestions` and `notifyApprovals` values |
 
-The status line above the form reports whether the runtime is mounted, whether the credential
-reference is configured, the queue depth and counters, and — prominently — the **effective**
-`notifyQuestions` and `notifyApprovals` values. It is re-read every five seconds while the card is
-on screen. If a saved configuration cannot be applied, the card says so instead of silently doing
-nothing; the previously running configuration stays in effect.
+The status facts are re-read every five seconds while the card is on screen. If a saved
+configuration cannot be applied, the card says so instead of silently doing nothing; the previously
+running configuration stays in effect.
 
 **Send test email** delivers one fixed message through the *same* credential lookup, transport
 construction, and failure classification a real notification uses, so a success there is evidence
@@ -608,6 +618,7 @@ prints before booting, so what took effect and what was reported cannot diverge.
 
 | File | Contents |
 | --- | --- |
+| [`RELEASE_NOTES_V0.3.1.md`](RELEASE_NOTES_V0.3.1.md) | v0.3.1 release notes: the collapsible settings card and the English/Simplified Chinese localization |
 | [`PHASE1_RUNTIME_CONTRACT.md`](PHASE1_RUNTIME_CONTRACT.md) | Runtime contract: the DSH services, events, and field paths confirmed by Inspect and by a live prototype |
 | [`PHASE1_REPORT.md`](PHASE1_REPORT.md) | Phase 1 report: verification results, evidence levels, confirmed event flow, risks |
 | [`PHASE2_REPORT.md`](PHASE2_REPORT.md) | Phase 2 report: the design freeze |
