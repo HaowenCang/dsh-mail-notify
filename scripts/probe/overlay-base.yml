@@ -1,28 +1,27 @@
-# The Phase 8 end-to-end probe overlay.
+# The Phase 8 end-to-end probe overlay — config patches only.
 #
 # Applied on top of the shipped `headless` profile by `scripts/probe-e2e.mjs`,
-# which boots `dsh --profile headless --patch <this file> "<task>"` against a
-# disposable probe home and a loopback SMTP server.
+# which boots `dsh --profile headless --patch <this file> --patch <generated
+# inserts> "<task>"` against a disposable probe home and a loopback SMTP
+# server. The INSERT rows live in the generated second layer, not here:
 #
-# It adds the rows the product tree does not carry for this test: a scripted
-# model provider (so the run needs no external credential and consumes no real
-# quota), the model-facing `ask_user_question` tool, an approval-requesting
-# tool, the human stand-in, the credential-contract checker, and
-# `dsh-mail-notify` itself pointed at the loopback server.
+# - The inserted plugins' `name` values are absolute paths into this checkout,
+#   and the pinned `0.1.5-rc.2` loader evaluates `!!js` expressions for
+#   `disabled` and for config values but NEVER for an entry `name` — a
+#   `!!js`-named insert reaches `import()` as an unevaluated `{ __jsExpr }`
+#   node and the boot dies with `name.startsWith is not a function`. Plain
+#   string names are the supported form (the overlay parser anchors absolute
+#   paths to file URLs), and generating the rows keeps machine paths out of
+#   the repository regardless.
+# - The plugin's settings are serializable data, so the generated layer carries
+#   them as an object instead of routing a JSON document through the
+#   environment; there is one copy, produced by the same call that prints it.
 #
-# The plugin specifiers are absolute paths because a loader row resolves a bare
-# specifier through the profile's module root, and the probe deliberately keeps
-# the plugin under test outside that root.
-#
-# They are built from `PROBE_ROOT` — the probe exports the repository root into
-# this process — rather than written out. A literal checkout path here would pin
-# the probe to one machine's directory layout and leak it into the repository.
-#
-# The plugin's settings arrive as one JSON document through the environment
-# rather than as a nested YAML mapping: a mapping written here would have to
-# restate every key, and a silent typo in one of them would change what the run
-# proves. The JSON is produced by the probe itself, so the settings that took
-# effect are exactly the settings it printed.
+# This file keeps the id-targeted config patches: a scripted model provider
+# (so the run needs no external credential and consumes no real quota), the
+# effective approval policy, and the shipped file-backed credential store
+# retargeted at the disposable probe home. The `!!js` values here are CONFIG
+# values, which the loader's config read interpolates.
 #
 # No secret appears here. The SMTP password is referenced by name through
 # `smtpPasswordCredential` and resolved per send, and the value the probe
@@ -57,26 +56,3 @@
   config:
     path: !!js process.env.PROBE_CREDENTIALS_FILE
     watch: true
-
-- insert:
-    - id: probe-timeline
-      name: !!js process.env.PROBE_ROOT + '/scripts/probe/timeline.mjs'
-
-    - id: probe-credential-contract
-      name: !!js process.env.PROBE_ROOT + '/scripts/probe/credential-contract.mjs'
-
-    - id: probe-scripted-provider
-      name: !!js process.env.PROBE_ROOT + '/scripts/probe/scripted-provider.mjs'
-
-    - id: tool-ask-user
-      name: '@deepseek-ai/dsh-tool-ask-user'
-
-    - id: probe-approval-tool
-      name: !!js process.env.PROBE_ROOT + '/scripts/probe/approval-tool.mjs'
-
-    - id: probe-auto-answer
-      name: !!js process.env.PROBE_ROOT + '/scripts/probe/auto-answer.mjs'
-
-    - id: dsh-mail-notify
-      name: !!js process.env.PROBE_ROOT + '/lib/index.js'
-      config: !!js 'JSON.parse(process.env.PROBE_MAIL_CONFIG)'

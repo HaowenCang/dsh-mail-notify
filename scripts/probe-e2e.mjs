@@ -103,6 +103,16 @@ const paths = {
   stderr: join(outDir, `stderr-${scenario}.log`),
   sentinel: join(statusDir, `approval-mail-${scenario}.ready`),
   timeline: join(outDir, `timeline-${scenario}.log`),
+  // The insert rows are generated per run rather than kept in the committed
+  // overlay: their `name` values are absolute paths into this checkout, and
+  // the pinned `0.1.5-rc.2` loader evaluates `!!js` expressions only for
+  // `disabled` and for config values — never for an entry `name` — so a
+  // `!!js`-named insert reaches `import()` as an unevaluated expression node
+  // and the boot dies with `name.startsWith is not a function`. Plain string
+  // names are the supported form: `anchorInsertedPluginNames` converts them
+  // to file URLs at overlay parse time. Generated content with a machine path
+  // stays out of the repository either way.
+  insertOverlay: join(outDir, 'overlay-inserts.yml'),
 }
 
 for (const path of Object.values(paths)) {
@@ -210,11 +220,10 @@ function startSmtp(onMessage) {
  *
  * @param patches - overlay files, applied in order after the profile layer.
  * @param scriptPath - the scripted model's turn list for this scenario.
- * @param mailConfig - the plugin settings this run applies, as one JSON document.
  * @param extraEnv - scenario-specific environment the probe plugins read.
  * @returns the child's exit code and its captured stdio.
  */
-function runProfile(patches, scriptPath, mailConfig, extraEnv) {
+function runProfile(patches, scriptPath, extraEnv) {
   const args = ['--profile', 'headless']
   for (const patch of patches) args.push('--patch', patch)
 
@@ -251,10 +260,6 @@ function runProfile(patches, scriptPath, mailConfig, extraEnv) {
         // The scripted model's turn list travels in the environment because the
         // loader row receives no custom invocation surface of its own.
         PROBE_SCRIPT: scriptPath,
-        // The plugin's settings, as the JSON document the overlay row reads. The
-        // probe prints the same document before booting, so what took effect and
-        // what was reported cannot diverge.
-        PROBE_MAIL_CONFIG: JSON.stringify(mailConfig),
         ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -651,10 +656,39 @@ const smtp = await startSmtp((index) => {
 })
 process.stdout.write(`[probe] loopback SMTP listening on 127.0.0.1:${smtp.port}\n`)
 
-const patches = [join(here, 'probe', 'overlay-base.yml')]
+/**
+ * Write the per-run insert overlay and return it as the second patch layer.
+ *
+ * The rows are the committed overlay's insert list, materialized with absolute
+ * string names (see the `insertOverlay` path comment for why `!!js` names do
+ * not survive this loader). JSON is emitted because it is valid YAML for the
+ * patch dialect's top-level array, which keeps this free of a YAML writer.
+ *
+ * @param mailConfig - the plugin settings this scenario applies.
+ * @returns the generated overlay's path.
+ */
+function writeInsertOverlay(mailConfig) {
+  const rows = [
+    { id: 'probe-timeline', name: join(here, 'probe', 'timeline.mjs') },
+    { id: 'probe-credential-contract', name: join(here, 'probe', 'credential-contract.mjs') },
+    { id: 'probe-scripted-provider', name: join(here, 'probe', 'scripted-provider.mjs') },
+    // A bare specifier is neither absolute nor relative, so the anchoring pass
+    // leaves it alone and the loader resolves it through the profile's module
+    // root — which is where the shipped `headless` template declares it.
+    { id: 'tool-ask-user', name: '@deepseek-ai/dsh-tool-ask-user' },
+    { id: 'probe-approval-tool', name: join(here, 'probe', 'approval-tool.mjs') },
+    { id: 'probe-auto-answer', name: join(here, 'probe', 'auto-answer.mjs') },
+    { id: 'dsh-mail-notify', name: join(projectRoot, 'lib', 'index.js'), config: mailConfig },
+  ]
+  writeFileSync(paths.insertOverlay, `${JSON.stringify([{ insert: rows }], null, 2)}\n`, 'utf8')
+  return paths.insertOverlay
+}
+
+const mailConfig = mailConfigFor(scenario, smtp.port)
+const patches = [join(here, 'probe', 'overlay-base.yml'), writeInsertOverlay(mailConfig)]
 writeFileSync(paths.script, `${JSON.stringify(scriptFor(scenario), null, 2)}\n`, 'utf8')
 const startedAt = Date.now()
-const result = await runProfile(patches, paths.script, mailConfigFor(scenario, smtp.port), extraEnvFor(scenario))
+const result = await runProfile(patches, paths.script, extraEnvFor(scenario))
 const finishedAt = Date.now()
 
 // The notification queue is asynchronous: the run may print its answer before
