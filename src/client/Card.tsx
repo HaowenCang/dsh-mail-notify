@@ -6,6 +6,16 @@
  * chrome, controls, and copy — because the tab that dispatches it knows only
  * the settings namespace it is keyed by.
  *
+ * The whole card is a disclosure, collapsed by default. The header is a
+ * semantic `<button>` carrying `aria-expanded` and `aria-controls`; Enter and
+ * Space activation therefore come from the platform, not from a key handler,
+ * and the body — the entire form — is absent from the layout while collapsed,
+ * which is what keeps the card to roughly one settings row so the rest of the
+ * Settings page stays reachable. Disclosure state is presentation state: it
+ * lives in this component, is never written to any store, and hiding the body
+ * does not unmount the controller, so staged drafts and in-flight operations
+ * survive a collapse exactly as they survive a tab switch.
+ *
  * The two human-attention switches render first and apart from the rest. They
  * are the switches that decide whether an operator learns that an agent has
  * stopped and is waiting for a person, and both are off by default because
@@ -16,7 +26,7 @@
  * @module dsh-mail-notify/client/Card
  */
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useId, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, JSX } from 'react'
 import type { CardState, FieldState, MailNotifyCard, MailNotifyCardFace } from './controller.ts'
 import {
@@ -37,12 +47,16 @@ const PRIVACY_FIELDS = NOTIFICATION_FIELDS.filter((def) => def.privacy === true)
  *
  * Slow on purpose: these are counters and a queue depth, not a live feed, and a
  * faster poll would put a request on the wire every few seconds without telling
- * the user anything sooner.
+ * the user anything sooner. The poll deliberately continues while the card is
+ * collapsed, because the collapsed header summarizes those same facts.
  */
 const STATUS_POLL_MS = 5000
 
 /** The notification switches rendered under the privacy block. */
 const ORDINARY_NOTIFICATION_FIELDS = NOTIFICATION_FIELDS.filter((def) => def.privacy !== true)
+
+/** The card's visible title, as the settings vocabulary names it. */
+const TITLE = 'Mail notifications'
 
 const COLORS = {
   border: 'var(--dsh-border, rgba(127,127,127,0.28))',
@@ -93,6 +107,113 @@ const INPUT: CSSProperties = {
   color: 'inherit',
   font: 'inherit',
   maxWidth: 420,
+}
+
+/** The disclosure header: one full-width semantic button over the summary. */
+const HEADER: CSSProperties = {
+  appearance: 'none',
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 12,
+  padding: '2px 0',
+  margin: 0,
+  border: 'none',
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+  borderRadius: 6,
+}
+
+const HEAD_TEXT: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  flex: 1,
+  minWidth: 0,
+}
+
+const CHEVRON: CSSProperties = {
+  flex: 'none',
+  fontSize: 13,
+  lineHeight: 1,
+  color: COLORS.muted,
+  transition: 'transform 0.16s',
+}
+
+/** The revealed form: a divided region below the header. */
+const BODY: CSSProperties = {
+  borderTop: `1px solid ${COLORS.border}`,
+  paddingTop: 10,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+}
+
+/** Identity of the one stylesheet this card injects (focus and hover states). */
+const STYLE_ID = 'dsh-mail-notify-card-style'
+
+/**
+ * Styles that inline style attributes cannot express.
+ *
+ * The visible focus ring is the accessibility requirement that forced this:
+ * `:focus-visible` is a pseudo-class, so it needs a real stylesheet. The tag is
+ * injected once per document, guarded by id, following the pattern the shell's
+ * own client packages use for their module styles.
+ */
+const STYLE_CSS = [
+  '.dsh-mail-notify__header:focus-visible{',
+  'outline:2px solid var(--dsw-alias-brand-primary, var(--dsh-accent, #4c8dff));',
+  'outline-offset:-2px;}',
+  '.dsh-mail-notify__header:hover{',
+  'background:var(--dsw-alias-bg-hover, rgba(127,127,127,0.08));}',
+].join('')
+
+/** Inject the card's stylesheet once per document. */
+function ensureCardStyles(): void {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(STYLE_ID) !== null) return
+  const tag = document.createElement('style')
+  tag.id = STYLE_ID
+  tag.textContent = STYLE_CSS
+  document.head.appendChild(tag)
+}
+
+/** Read a boolean field's effective tri-state from the projection. */
+function effectiveOf(state: CardState, field: string): 'on' | 'off' | 'inherited' {
+  const found = state.fields.find((entry) => entry.def.field === field)
+  if (found === undefined) return 'inherited'
+  if (found.text === 'true') return 'on'
+  if (found.text === 'false') return 'off'
+  return 'inherited'
+}
+
+/**
+ * The collapsed header's one-line operational summary.
+ *
+ * Deliberately narrow: runtime liveness, SMTP readiness, the effective question
+ * switch, and — while one crosses the wire — the busy state. It renders no
+ * recipient, no user name, no credential fact beyond readiness, and no queue
+ * detail; those stay in the expanded Status block.
+ *
+ * @param state - the card projection.
+ * @returns the summary line.
+ */
+function summaryText(state: CardState): string {
+  const bits: string[] = []
+  if (state.status === undefined) {
+    bits.push('Status unknown', 'SMTP unknown')
+  } else {
+    bits.push(state.status.active ? 'Active' : 'Inactive')
+    bits.push(state.status.smtpConfigured ? 'SMTP configured' : 'SMTP not configured')
+  }
+  const questions = effectiveOf(state, 'notifyQuestions')
+  bits.push(`Questions ${questions === 'inherited' ? 'inherited' : questions}`)
+  if (state.saving) bits.push('Saving…')
+  if (state.testing) bits.push('Sending…')
+  return bits.join(' · ')
 }
 
 /** One field's control, chosen by the field's declared kind. */
@@ -190,13 +311,6 @@ function FieldGroup(props: {
 function StatusStrip(props: { state: CardState }): JSX.Element {
   const { state } = props
   const status = state.status
-  const effective = (field: string): string => {
-    const found = state.fields.find((entry) => entry.def.field === field)
-    if (found === undefined) return 'unknown'
-    if (found.text === 'true') return 'on'
-    if (found.text === 'false') return 'off'
-    return 'inherit'
-  }
   const bits: JSX.Element[] = []
   bits.push(
     <span key="active" style={{ color: status?.active === true ? COLORS.good : COLORS.muted }}>
@@ -219,8 +333,8 @@ function StatusStrip(props: { state: CardState }): JSX.Element {
     <div style={GROUP}>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>{bits}</div>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, fontWeight: 600 }}>
-        <span>Effective question notifications: {effective('notifyQuestions')}</span>
-        <span>Effective approval notifications: {effective('notifyApprovals')}</span>
+        <span>Effective question notifications: {effectiveOf(state, 'notifyQuestions')}</span>
+        <span>Effective approval notifications: {effectiveOf(state, 'notifyApprovals')}</span>
       </div>
       {status?.configError === undefined ? null : (
         <span style={{ ...HINT, color: COLORS.bad }}>
@@ -283,14 +397,22 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
   const card = props.card
   const state = useCardState(card)
 
+  // Presentation state, component-local: collapsed is the default, nothing
+  // persists it, and it never reaches the controller — which is why drafts and
+  // in-flight operations outlive a collapse.
+  const [open, setOpen] = useState(false)
+  const bodyId = useId()
+
   // The status strip reads live host facts — whether the runtime is mounted,
   // how deep the queue is, how many messages have gone out — and none of them
   // is pushed to the browser. They are therefore pulled: once when the card
-  // appears, and then on a slow poll for as long as it stays mounted. The tab
+  // appears, and then on a slow poll for as long as it stays mounted —
+  // collapsed included, since the header summarizes the same facts. The tab
   // keeps a selected tab mounted, so a one-shot read at mount would leave the
   // strip describing the moment Settings was opened rather than the moment the
   // user is reading it.
   useEffect(() => {
+    ensureCardStyles()
     void card.refresh()
     const timer = setInterval(() => {
       void card.refresh()
@@ -312,132 +434,151 @@ export function MailNotifyCardView(props: MailNotifyCardFace): JSX.Element | nul
 
   return (
     <section style={FRAME} aria-label="dsh-mail-notify configuration">
-      <header style={ROW}>
-        <strong style={{ fontSize: 15 }}>dsh-mail-notify</strong>
-        <span style={HINT}>
-          Emails a top-level turn’s final output, its terminal failures, and its mid-turn requests for a person over
-          SMTP.
+      <button
+        type="button"
+        className="dsh-mail-notify__header"
+        style={HEADER}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        aria-label={`${open ? 'Hide' : 'Show'} ${TITLE} settings`}
+        onClick={() => {
+          setOpen(!open)
+        }}
+      >
+        <span style={HEAD_TEXT}>
+          <strong style={{ fontSize: 15, lineHeight: 1.4 }}>{TITLE}</strong>
+          <span style={HINT}>{summaryText(state)}</span>
         </span>
-      </header>
-
-      <StatusStrip state={state} />
-
-      <div style={{ ...GROUP, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '10px 12px' }}>
-        <span style={{ ...GROUP_TITLE, color: 'inherit' }}>Human attention</span>
-        <span style={HINT}>
-          These two are the reason a notification exists: an agent that has stopped and is waiting for you. Both are
-          off by default.
+        <span style={CHEVRON} aria-hidden="true">
+          {open ? '▾' : '▸'}
         </span>
-        {PRIVACY_FIELDS.map((def) => {
-          const field = state.fields.find((entry) => entry.def.field === def.field)
-          if (field === undefined) return null
-          return (
-            <FieldControl
-              key={def.field}
-              def={def}
-              state={field}
+      </button>
+
+      {open ? (
+        <div id={bodyId} style={BODY}>
+          <div style={{ ...GROUP, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '10px 12px' }}>
+            <span style={{ ...GROUP_TITLE, color: 'inherit' }}>Human attention</span>
+            <span style={HINT}>
+              These two are the reason a notification exists: an agent that has stopped and is waiting for you. Both are
+              off by default.
+            </span>
+            {PRIVACY_FIELDS.map((def) => {
+              const field = state.fields.find((entry) => entry.def.field === def.field)
+              if (field === undefined) return null
+              return (
+                <FieldControl
+                  key={def.field}
+                  def={def}
+                  state={field}
+                  disabled={disabled}
+                  onChange={(text) => {
+                    onChange(def.field, text)
+                  }}
+                  onReset={() => {
+                    onReset(def.field)
+                  }}
+                />
+              )
+            })}
+          </div>
+
+          <FieldGroup
+            title="General"
+            fields={GENERAL_FIELDS}
+            state={state}
+            onChange={onChange}
+            onReset={onReset}
+          />
+          <FieldGroup
+            title="Other notifications"
+            fields={ORDINARY_NOTIFICATION_FIELDS}
+            state={state}
+            onChange={onChange}
+            onReset={onReset}
+          />
+          <FieldGroup title="SMTP" fields={SMTP_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+          <SecretControl
+            state={state}
+            onChange={(text) => {
+              card.setSecretDraft(text)
+            }}
+            onClear={() => {
+              void card.clearCredential()
+            }}
+          />
+          <FieldGroup
+            title="Credential"
+            fields={[CREDENTIAL_REF_FIELD]}
+            state={state}
+            onChange={onChange}
+            onReset={onReset}
+          />
+          <FieldGroup
+            title="Message content"
+            fields={MESSAGE_FIELDS}
+            state={state}
+            onChange={onChange}
+            onReset={onReset}
+          />
+          <FieldGroup title="Delivery" fields={DELIVERY_FIELDS} state={state} onChange={onChange} onReset={onReset} />
+
+          <div style={GROUP}>
+            <span style={GROUP_TITLE}>Status</span>
+            <StatusStrip state={state} />
+          </div>
+
+          {state.testEmail === undefined ? null : (
+            <span style={{ ...HINT, color: state.testEmail.delivered ? COLORS.good : COLORS.bad }}>
+              {state.testEmail.message}
+            </span>
+          )}
+          {state.notice === undefined ? null : <span style={HINT}>{state.notice}</span>}
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              disabled={disabled || state.testing}
+              onClick={() => {
+                void card.sendTestEmail()
+              }}
+              style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
+            >
+              {state.testing ? 'Sending…' : 'Send test email'}
+            </button>
+            <button
+              type="button"
               disabled={disabled}
-              onChange={(text) => {
-                onChange(def.field, text)
+              onClick={() => {
+                card.resetAll()
               }}
-              onReset={() => {
-                onReset(def.field)
+              style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
+              title="Remove every override this plugin owns, so the composition values and schema defaults apply again"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !state.dirty}
+              onClick={() => {
+                card.discard()
               }}
-            />
-          )
-        })}
-      </div>
-
-      <FieldGroup
-        title="General"
-        fields={GENERAL_FIELDS}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup
-        title="Other notifications"
-        fields={ORDINARY_NOTIFICATION_FIELDS}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup title="SMTP" fields={SMTP_FIELDS} state={state} onChange={onChange} onReset={onReset} />
-      <SecretControl
-        state={state}
-        onChange={(text) => {
-          card.setSecretDraft(text)
-        }}
-        onClear={() => {
-          void card.clearCredential()
-        }}
-      />
-      <FieldGroup
-        title="Credential"
-        fields={[CREDENTIAL_REF_FIELD]}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup
-        title="Message content"
-        fields={MESSAGE_FIELDS}
-        state={state}
-        onChange={onChange}
-        onReset={onReset}
-      />
-      <FieldGroup title="Delivery" fields={DELIVERY_FIELDS} state={state} onChange={onChange} onReset={onReset} />
-
-      {state.testEmail === undefined ? null : (
-        <span style={{ ...HINT, color: state.testEmail.delivered ? COLORS.good : COLORS.bad }}>
-          {state.testEmail.message}
-        </span>
-      )}
-      {state.notice === undefined ? null : <span style={HINT}>{state.notice}</span>}
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          disabled={disabled || state.testing}
-          onClick={() => {
-            void card.sendTestEmail()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-        >
-          {state.testing ? 'Sending…' : 'Send test email'}
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            card.resetAll()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-          title="Remove every override this plugin owns, so the composition values and schema defaults apply again"
-        >
-          Reset
-        </button>
-        <button
-          type="button"
-          disabled={disabled || !state.dirty}
-          onClick={() => {
-            card.discard()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
-        >
-          Discard
-        </button>
-        <button
-          type="button"
-          disabled={disabled || !state.dirty || state.invalid}
-          onClick={() => {
-            void card.save()
-          }}
-          style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer', fontWeight: 600 }}
-        >
-          {state.saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+              style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer' }}
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              disabled={disabled || !state.dirty || state.invalid}
+              onClick={() => {
+                void card.save()
+              }}
+              style={{ ...INPUT, maxWidth: 'none', cursor: 'pointer', fontWeight: 600 }}
+            >
+              {state.saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
