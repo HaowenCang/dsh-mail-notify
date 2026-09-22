@@ -32,6 +32,13 @@ import {
   type FieldDef,
 } from './fields.ts'
 import {
+  EN_DICT,
+  ZH_DICT,
+  translate,
+  type LocaleKey,
+  type SupportedLocale,
+} from './l10n.ts'
+import {
   describeCredential,
   onCredentialUpdated,
   readRuntimeStatus,
@@ -135,6 +142,8 @@ export class MailNotifyCard {
   private testing = false
   private testEmail: TestEmailState | undefined
 
+  private testLocale: string | undefined
+
   /**
    * @param ctx - the client root context.
    */
@@ -155,7 +164,47 @@ export class MailNotifyCard {
     })
     this.disposers.push(offScope, offCredentials)
 
+    if (this.ctx.locale?.register) {
+      try {
+        const unregister = this.ctx.locale.register(SETTINGS_NAMESPACE, {
+          en: EN_DICT as unknown as Record<string, string>,
+          zh: ZH_DICT as unknown as Record<string, string>,
+        })
+        if (typeof unregister === 'function') this.disposers.push(unregister)
+      } catch {
+        // Namespace already registered or registration refused
+      }
+    }
+
+    if (this.ctx.locale?.subscribe) {
+      const offLocale = this.ctx.locale.subscribe(() => {
+        this.publish()
+      })
+      this.disposers.push(offLocale)
+    }
+
     void this.refresh()
+  }
+
+  /** Set an explicit locale for testing or overrides. */
+  setLocaleForTest(locale: string | undefined): void {
+    this.testLocale = locale
+    this.publish()
+  }
+
+  /** Read the active locale: 'zh' if Chinese is active, otherwise 'en' (fallback). */
+  getLocale(): SupportedLocale {
+    if (this.testLocale !== undefined) {
+      return this.testLocale.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+    }
+    const snap = this.ctx.locale?.getSnapshot?.() ?? this.ctx.locale?.getLocale?.()
+    const active = snap?.active
+    return typeof active === 'string' && active.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  }
+
+  /** Translate a dictionary key in the active locale. */
+  t(key: LocaleKey, params?: Record<string, unknown>): string {
+    return translate(this.getLocale(), key, params)
   }
 
   /** @returns the current projection (stable reference until the next change). */
@@ -212,7 +261,7 @@ export class MailNotifyCard {
    */
   resetAll(): void {
     for (const def of ALL_FIELDS) this.staged.set(def.field, null)
-    this.notice = 'Reset staged: every field will go back to the composition values when you save.'
+    this.notice = this.t('noticeResetStaged')
     this.publish()
   }
 
@@ -253,12 +302,12 @@ export class MailNotifyCard {
     if (this.saving) return
     const current = this.snapshot
     if (current.invalid) {
-      this.notice = 'Fix the highlighted fields before saving.'
+      this.notice = this.t('noticeFixHighlighted')
       this.publish()
       return
     }
     if (!current.dirty) {
-      this.notice = 'Nothing to save.'
+      this.notice = this.t('noticeNothingToSave')
       this.publish()
       return
     }
@@ -299,8 +348,8 @@ export class MailNotifyCard {
     if (ok) this.staged.clear()
     this.saving = false
     this.failed = !ok
-    if (!ok) this.notice = message ?? 'The host did not accept the save.'
-    else if (this.secretDraft === '') this.notice = 'Saved.'
+    if (!ok) this.notice = message ?? this.t('noticeSaveFailed')
+    else if (this.secretDraft === '') this.notice = this.t('noticeSaved')
 
     await this.refresh()
     this.publish()
@@ -326,8 +375,8 @@ export class MailNotifyCard {
           delivered: outcome.value.delivered,
           recipientCount: outcome.value.recipientCount,
           message: outcome.value.delivered
-            ? `The SMTP server accepted the message for ${String(outcome.value.recipientCount)} recipient(s).`
-            : (outcome.value.message ?? 'The SMTP server refused the message.'),
+            ? this.t('testEmailAccepted', { count: outcome.value.recipientCount })
+            : (outcome.value.message ?? this.t('testEmailRefused')),
         }
       : { delivered: false, recipientCount: 0, message: outcome.message }
     await this.refresh()
@@ -354,7 +403,7 @@ export class MailNotifyCard {
     if (!outcome.ok) this.notice = outcome.message
     else {
       this.secretDraft = ''
-      this.notice = 'The stored password was removed.'
+      this.notice = this.t('noticePasswordRemoved')
     }
 
     await this.refresh()
@@ -429,6 +478,7 @@ export class MailNotifyCard {
     const user = (scope.user ?? undefined) as Section | undefined
 
     let invalid = false
+    const t = this.t.bind(this)
     const fields = ALL_FIELDS.map((def): FieldState => {
       const staged = this.staged.get(def.field)
       const overriddenByUser = user !== undefined && Object.prototype.hasOwnProperty.call(user, def.field)
@@ -437,7 +487,7 @@ export class MailNotifyCard {
         return { def, text: '', overridden: false, invalid: false }
       }
       if (staged !== undefined) {
-        const parsed = parseField(def, staged)
+        const parsed = parseField(def, staged, t)
         const bad = parsed.kind === 'invalid'
         if (bad) invalid = true
         return { def, text: staged, overridden: true, invalid: bad }

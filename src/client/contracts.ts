@@ -62,10 +62,27 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
  * a restatement: a renamed method must break this file, not silently keep
  * compiling against a stale local copy.
  */
+/** The minimal observable snapshot shape of the locale runtime. */
+export interface LocaleSnapshotLike {
+  readonly active: string
+  readonly revision: number
+}
+
+/** The minimal shape of the DSH browser locale runtime consumed by this plugin. */
+export interface LocaleRuntimeLike {
+  getLocale?(): LocaleSnapshotLike
+  getSnapshot?(): LocaleSnapshotLike
+  subscribe?(fn: () => void): () => void
+  register?(ns: string, dicts: Record<string, Record<string, string>>): () => void
+  bind?(ns: string): (key: string, params?: Record<string, unknown>) => string
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** The browser wire client, including the generic `/api` RPC channel. */
     connection: ConnectionHandle
+    /** The optional browser locale service. */
+    locale?: LocaleRuntimeLike
   }
 }
 
