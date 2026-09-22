@@ -123,6 +123,17 @@ test('L10N-02 the Simplified Chinese dictionary has exact key parity', () => {
     ['noticeSaved', 'Saved', '已保存'],
     ['actionSending', 'Sending…', '正在发送…'],
     ['testEmailSent', 'Test email sent. The SMTP server accepted the message for {count} recipient(s).', '测试邮件已发送。SMTP 服务器已接受该邮件，共 {count} 个收件人。'],
+    ['noticeResetStaged', 'Reset staged: every field will go back to the composition values when you save.', '已暂存重置：保存后所有字段将恢复为组合配置值。'],
+    ['statusPlugin', 'Plugin: {state}', '插件：{state}'],
+    ['statusCredential', 'Credential: {state}', '凭据：{state}'],
+    ['statusEffectiveQuestions', 'Effective question notifications: {value}', '提问通知实际生效：{value}'],
+    ['statusEffectiveApprovals', 'Effective approval notifications: {value}', '批准通知实际生效：{value}'],
+    ['invalidAddress', 'Not a plausible email address: {entries}', '不是有效的邮件地址：{entries}'],
+    ['noticeSaveRefused', 'The host did not accept the save: {message}', '宿主未接受本次保存：{message}'],
+    ['noticeCredentialRefused', 'The password change was refused: {message}', '密码更改被拒绝：{message}'],
+    ['testEmailServerMessage', 'The SMTP server refused the message: {message}', 'SMTP 服务器拒绝了该邮件：{message}'],
+    ['testEmailFailed', 'The delivery test failed: {message}', '测试邮件发送失败：{message}'],
+    ['statusConfigError', 'The saved configuration cannot be applied, so the previous settings are still in effect: {message}', '已保存的配置无法应用，之前的设置仍然生效：{message}'],
   ]
   for (const [key, english, chinese] of mandated) {
     assert.equal(en[key], english, `the English copy of ${key} is mandated`)
