@@ -317,7 +317,7 @@ Result:      PASS
 Model:       deepseek-v4.1-flash
 Base:        v0.3.0 / b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
 Branch:      eval/deepseek-v4.1-flash-v0.3.1-ui
-Final HEAD:  9e3fe46145b53bfa62a10f10a98ae2a1256c6f55
+Final HEAD:  2853b3738f3456787e06f1a0770e62146802b8d4
 ```
 
 ### Timing
@@ -394,8 +394,8 @@ human interventions:              1 (mail-arrival confirmation, §8)
 
 ```
 production files changed:        10
-test/harness/docs files changed: 13
-total insertions:                3860
+test/harness/docs files changed: 14
+total insertions:                4386
 total deletions:                 263
 production-code insertions:      1215
 production-code deletions:       245
@@ -403,10 +403,14 @@ production-code deletions:       245
 
 Production: `src/client/{Card.tsx, contracts.ts, controller.ts, fields.ts, index.tsx, message.ts,
 locales/{index,en,zh,vocabulary}.ts}`.
-Test/harness: `tests/client/{card-render,collapse,localization,fields}.test.ts`,
-`tests/client/support/{dom,client-context}.ts`, `tests/package/tarball.test.ts`.
-Other: `README.md`, `RELEASE_NOTES_V0.3.1.md`, `package.json`, `package-lock.json`,
-`tsconfig.json`, `tsconfig.client.json`.
+Test/harness/docs: `tests/client/{card-render,collapse,localization,fields}.test.ts`,
+`tests/client/support/{dom,client-context}.ts`, `tests/package/tarball.test.ts`,
+`RELEASE_NOTES_V0.3.1.md`, `DEEPSEEK_V4_1_FLASH_EVAL.md`, `README.md`.
+Other: `package.json`, `package-lock.json`, `tsconfig.json`, `tsconfig.client.json`.
+
+Test-count arithmetic, verified rather than assumed: the baseline is 451 tests; the new suites add
+1 (`card-render`) + 18 (`collapse`) + 22 (`localization`) + 2 net new assertions in
+`fields.test.ts` = **43**, and 451 + 43 = **494**, which is the observed total.
 
 ### Functional
 
@@ -456,13 +460,24 @@ $ git status --short
 (clean)
 
 $ git log --oneline --decorate v0.3.0..HEAD
-9e3fe46 (HEAD -> eval/deepseek-v4.1-flash-v0.3.1-ui) chore: bump version to 0.3.1 and prepare release notes
+2853b37 (HEAD -> eval/deepseek-v4.1-flash-v0.3.1-ui) docs: record the deepseek-v4.1-flash v0.3.1 evaluation
+9e3fe46 chore: bump version to 0.3.1 and prepare release notes
 47ab4ef feat(client): make the settings card collapsible and fully localized
 245407c feat: add a typed English and Simplified Chinese locale layer
 d80051a test: establish the browser test harness for the v0.3.1 UI work
 
 $ git diff --stat v0.3.0..HEAD
-23 files changed, 3860 insertions(+), 263 deletions(-)
+24 files changed, 4386 insertions(+), 263 deletions(-)
+
+$ git rev-parse "v0.3.0^{commit}"
+b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
+$ git cat-file -p v0.3.0 | head -1
+object b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
+$ git rev-parse main origin/main
+b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
+b352c91193ad1cfcb22e551e5dbcc425dcc2e9e4
+$ git tag -l "v0.3.1"
+(empty — no tag exists)
 ```
 
 Commit SHAs:
@@ -472,7 +487,12 @@ d80051ad2aee468c5bf21041e68a4b6d917ca4c5  test: establish the browser test harne
 245407c52826313efb1214f5e669f288c33250ea  feat: add a typed English and Simplified Chinese locale layer
 47ab4efcfdc0c451293fdc71313c546080045262  feat(client): make the settings card collapsible and fully localized
 9e3fe46145b53bfa62a10f10a98ae2a1256c6f55  chore: bump version to 0.3.1 and prepare release notes
+2853b3738f3456787e06f1a0770e62146802b8d4  docs: record the deepseek-v4.1-flash v0.3.1 evaluation
 ```
+
+The packed `dsh-mail-notify-0.3.1.tgz` is present in the worktree but untracked (`*.tgz` is
+gitignored) and reproducible: two consecutive `npm pack` runs produced the identical shasum
+`ff6806cfbf98b8a60e7e95a72bd16a9dd2e5ba61`.
 
 ---
 
