@@ -311,7 +311,7 @@ function SecretControl(props: {
           style: { ...INPUT, maxWidth: 'none', cursor: 'pointer' },
           title: card.t('clearPasswordTitle'),
         },
-        card.t('clearStoredPassword'),
+        card.t('clearStoredSecret'),
       ),
     ),
     h(

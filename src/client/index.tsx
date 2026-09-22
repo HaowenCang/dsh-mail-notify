@@ -17,6 +17,7 @@
  * @module dsh-mail-notify/client
  */
 
+import 'react/jsx-runtime'
 import { SETTINGS_NAMESPACE } from '../protocol.ts'
 import { MailNotifyCard, type MailNotifyCardFace } from './controller.ts'
 import { MailNotifyCardView } from './Card.ts'

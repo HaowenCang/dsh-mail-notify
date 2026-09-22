@@ -87,7 +87,7 @@ export type LocaleKey =
   | 'invalidFieldHint'
   | 'passwordLabel'
   | 'passwordPlaceholder'
-  | 'clearStoredPassword'
+  | 'clearStoredSecret'
   | 'clearPasswordTitle'
   | 'passwordConfiguredHint'
   | 'passwordEmptyHint'
@@ -209,7 +209,7 @@ export const EN_DICT: LocalizationDict = {
 
   passwordLabel: 'Password',
   passwordPlaceholder: 'leave blank to keep the current password',
-  clearStoredPassword: 'clear stored password',
+  clearStoredSecret: 'clear stored password',
   clearPasswordTitle: 'Remove the stored value for this reference',
   passwordConfiguredHint: 'A password is stored for this reference. It is never sent to the browser; typing a new one replaces it.',
   passwordEmptyHint: 'No password is stored for this reference yet. Typing one stores it without it ever being read back.',
@@ -334,7 +334,7 @@ export const ZH_DICT: LocalizationDict = {
 
   passwordLabel: '密码',
   passwordPlaceholder: '留空以保留当前密码',
-  clearStoredPassword: '清除已存密码',
+  clearStoredSecret: '清除已存密码',
   clearPasswordTitle: '移除此引用对应的存储值',
   passwordConfiguredHint: '该引用已存储密码。密码绝不会发送到浏览器；输入新密码将直接替换。',
   passwordEmptyHint: '该引用尚未存储密码。输入密码即可保存，且绝不会被反向读取。',
