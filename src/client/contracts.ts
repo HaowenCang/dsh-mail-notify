@@ -34,6 +34,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 // `ctx.settingsScope` — the per-namespace settings transport — and the
 // `SettingsScope` / `SettingsScopeSnapshot` contracts the card reads through.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+// `ctx.locale` — the browser locale registry — and the `LocaleNamespaceMap`
+// merge point. This import is load-bearing twice over: it declares the service
+// member the plugin's `inject` edge waits for, and it brings the merge table
+// this file extends below into the program.
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 // The `settings.plugin.item` SlotMap entry. Registering into a slot the program
 // does not know is a compile error, so this import is what makes the card's
 // registration site checkable rather than merely plausible.
@@ -50,6 +55,24 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { MailNotifyLocaleKey } from './locales/vocabulary.ts'
+
+/**
+ * The card's dictionary namespace, declared into the locale merge table.
+ *
+ * Declaring it is what authorizes `locale: LOCALE_NAMESPACE` at the slot
+ * registration site, which is in turn what makes the renderer synthesize the
+ * `t` seat on the card's props. The seat and this declaration therefore cannot
+ * disagree: `MailNotifyCardView` reads its translate function from its props,
+ * and a registration that failed to declare this namespace would not compile
+ * against that component.
+ */
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    /** Copy owned by the `dsh-mail-notify` plugin card. */
+    'dsh-mail-notify': MailNotifyLocaleKey
+  }
+}
 
 /**
  * The client root context DSH hands to a plugin's browser `apply`.
