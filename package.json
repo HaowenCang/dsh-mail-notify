@@ -56,7 +56,7 @@
     "probe:approvals-rejected": "node scripts/probe-e2e.mjs approvals-rejected \"probe: approval rejected\"",
     "probe:credentials": "node scripts/probe-e2e.mjs credentials \"probe: credential contract\"",
     "smoke": "node scripts/smtp-smoke-test.ts",
-    "verify": "npm run check:text && npm run typecheck && npm test && npm run build"
+    "verify": "npm run check:text && npm run typecheck && npm run build && npm test"
   },
   "keywords": [
     "deepseek-harness",
