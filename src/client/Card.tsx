@@ -31,7 +31,7 @@
  * @module dsh-mail-notify/client/Card
  */
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useId, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, JSX } from 'react'
 import type { CardState, FieldState, MailNotifyCard, MailNotifyCardFace } from './controller.ts'
 import {
@@ -85,9 +85,6 @@ function useCardState(card: MailNotifyCard): CardState {
   const read = useCallback(() => card.getSnapshot(), [card])
   return useSyncExternalStore(subscribe, read, read)
 }
-
-/** The disclosure region's element id, referenced by the header's `aria-controls`. */
-const BODY_ID = 'dsh-mail-notify-config-body'
 
 /**
  * Read one field's draft text — the staged edit when there is one, and the
@@ -423,6 +420,11 @@ export function MailNotifyCardView(props: MailNotifyCardProps): JSX.Element | nu
   // Presentation state only: nothing persists the expansion, and collapsing
   // changes what the view renders — never what the controller holds.
   const [expanded, setExpanded] = useState(false)
+  // The disclosure region's element id, referenced by the header's
+  // `aria-controls`. Per-instance via `useId()`: two cards mounted on one page
+  // must never claim each other's region, and each button must resolve to the
+  // body it actually controls.
+  const bodyId = useId()
 
   // The status strip reads live host facts — whether the runtime is mounted,
   // how deep the queue is, how many messages have gone out — and none of them
@@ -457,7 +459,7 @@ export function MailNotifyCardView(props: MailNotifyCardProps): JSX.Element | nu
         type="button"
         style={DISCLOSURE}
         aria-expanded={expanded}
-        aria-controls={BODY_ID}
+        aria-controls={bodyId}
         title={expanded ? t('actionCollapse') : t('actionExpand')}
         onClick={() => {
           setExpanded((open) => !open)
@@ -472,7 +474,7 @@ export function MailNotifyCardView(props: MailNotifyCardProps): JSX.Element | nu
         {summaryOf(state, t)}
       </p>
 
-      <div id={BODY_ID} hidden={!expanded}>
+      <div id={bodyId} hidden={!expanded}>
         {expanded ? (
           <div style={FORM}>
             <span style={HINT}>{t('cardSubtitle')}</span>

@@ -343,10 +343,17 @@ function assertPresent<T>(value: T | null | undefined, message: string): T {
  *
  * @param host - the fake host.
  * @param seat - the locale seat; a fresh English one when omitted.
+ * @param options - `reuseDom: true` mounts into the already-installed document
+ *   instead of replacing it, so a second instance can share one document with
+ *   the first (the multi-instance id tests need exactly that).
  * @returns the mounted card and its DOM handles.
  */
-export async function mountCard(host: FakeHost, seat: LocaleSeat = createLocaleSeat('en')): Promise<Mounted> {
-  installDom()
+export async function mountCard(
+  host: FakeHost,
+  seat: LocaleSeat = createLocaleSeat('en'),
+  options: { reuseDom?: boolean } = {},
+): Promise<Mounted> {
+  if (options.reuseDom !== true) installDom()
   const card = new MailNotifyCard(host.ctx)
   const container = document.createElement('div')
   document.body.appendChild(container)

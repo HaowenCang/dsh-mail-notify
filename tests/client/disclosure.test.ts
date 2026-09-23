@@ -283,3 +283,44 @@ test('COL-14 an actual component unmount keeps the existing discard semantics', 
   assert.equal((mounted.field('smtpHost') as HTMLInputElement).value, '', 'discard is what drops staged edits')
   assert.equal(mounted.card.getSnapshot().dirty, false)
 })
+
+test('per-instance disclosure ids: two mounted cards never duplicate a region id', async (t) => {
+  // Two independent instances in one document — the case a fixed region id
+  // breaks: both headers would claim the same region, and one card's
+  // aria-controls would resolve to the other card's body.
+  const first = await mountCard(fakeHost())
+  t.after(() => {
+    first.unmount()
+    first.card.dispose()
+  })
+  await settle(first)
+  const second = await mountCard(fakeHost(), undefined, { reuseDom: true })
+  t.after(() => {
+    second.unmount()
+    second.card.dispose()
+  })
+  await settle(second)
+
+  const firstId = first.toggle().getAttribute('aria-controls')
+  const secondId = second.toggle().getAttribute('aria-controls')
+  assert.ok(firstId, 'the first disclosure control must carry aria-controls')
+  assert.ok(secondId, 'the second disclosure control must carry aria-controls')
+  assert.notEqual(firstId, secondId, 'two instances must not share a disclosure region id')
+
+  // Each button resolves to its own instance's region, and only that one.
+  const firstRegion = document.getElementById(firstId)
+  const secondRegion = document.getElementById(secondId)
+  assert.ok(firstRegion, `aria-controls must name an existing region (${firstId})`)
+  assert.ok(secondRegion, `aria-controls must name an existing region (${secondId})`)
+  assert.equal(firstRegion, first.region())
+  assert.equal(secondRegion, second.region())
+  assert.ok(first.container.contains(firstRegion), "the first button's region must live inside the first card")
+  assert.ok(second.container.contains(secondRegion), "the second button's region must live inside the second card")
+  assert.equal(first.container.contains(secondRegion), false, "the first card must not contain the second card's region")
+  assert.equal(second.container.contains(firstRegion), false, "the second card must not contain the first card's region")
+
+  // Document-wide uniqueness: each id names exactly one element.
+  for (const id of [firstId, secondId]) {
+    assert.equal(document.querySelectorAll(`[id="${id}"]`).length, 1, `id ${id} must occur exactly once`)
+  }
+})
