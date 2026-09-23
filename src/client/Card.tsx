@@ -295,13 +295,11 @@ function FieldGroup(props: {
 function StatusStrip(props: { state: CardState; t: MailNotifyTranslate }): JSX.Element {
   const { state, t } = props
   const status = state.status
-  const effective = (field: string): string => {
-    const found = state.fields.find((entry) => entry.def.field === field)
-    if (found === undefined) return t('factUnknown')
-    if (found.text === 'true') return t('factOn')
-    if (found.text === 'false') return t('factOff')
-    return t('optionInherit')
-  }
+  // The "Effective …" lines document the running configuration, not the form's
+  // draft: they read the controller's composed-section projection — the same
+  // fact the collapsed summary reports — so an unsaved staged edit can move a
+  // control without moving the line that claims to be in effect.
+  const effective = (on: boolean): string => (on ? t('factOn') : t('factOff'))
   const bits: JSX.Element[] = []
   bits.push(
     <span key="active" style={{ color: status?.active === true ? COLORS.good : COLORS.muted }}>
@@ -339,8 +337,8 @@ function StatusStrip(props: { state: CardState; t: MailNotifyTranslate }): JSX.E
       <span style={GROUP_TITLE}>{t('groupStatus')}</span>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>{bits}</div>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, fontWeight: 600 }}>
-        <span>{t('statusEffectiveQuestions', { value: effective('notifyQuestions') })}</span>
-        <span>{t('statusEffectiveApprovals', { value: effective('notifyApprovals') })}</span>
+        <span>{t('statusEffectiveQuestions', { value: effective(state.questionsOn) })}</span>
+        <span>{t('statusEffectiveApprovals', { value: effective(state.approvalsOn) })}</span>
       </div>
       {status?.configError === undefined ? null : (
         <span style={{ ...HINT, color: COLORS.bad }}>{t('statusConfigError', { message: status.configError })}</span>

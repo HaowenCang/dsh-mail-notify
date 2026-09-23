@@ -98,10 +98,18 @@ export interface CardState {
   /**
    * The effective question-notification switch, as the running configuration
    * reads it: the composed section, never a staged draft. Staged edits move it
-   * only when a save lands — the collapsed summary reports this fact, so an
-   * unsaved Reset/Clear can never claim questions are off while they run.
+   * only when a save lands — the collapsed summary and the expanded status
+   * strip both report this fact, so an unsaved Reset/Clear can never claim
+   * questions are off while they run.
    */
   readonly questionsOn: boolean
+  /**
+   * The effective approval-notification switch, under the same contract as
+   * {@link CardState.questionsOn}: the composed section, never a staged draft,
+   * so the expanded status strip's "Effective approval notifications" line
+   * obeys the save boundary too.
+   */
+  readonly approvalsOn: boolean
   /** The credential reference in effect. A name, never a value. */
   readonly credentialRef: string
   readonly secret: SecretState
@@ -129,6 +137,9 @@ type Draft = string | null
 
 /** The question-notification switch — the one field the collapsed summary reports. */
 const QUESTIONS_FIELD = ALL_FIELDS.find((entry) => entry.field === 'notifyQuestions')
+
+/** The approval-notification switch — the expanded status strip's second effective line. */
+const APPROVALS_FIELD = ALL_FIELDS.find((entry) => entry.field === 'notifyApprovals')
 
 /**
  * The card's controller.
@@ -494,6 +505,8 @@ export class MailNotifyCard {
       fields,
       questionsOn:
         QUESTIONS_FIELD !== undefined && formatField(QUESTIONS_FIELD, section[QUESTIONS_FIELD.field]) === 'true',
+      approvalsOn:
+        APPROVALS_FIELD !== undefined && formatField(APPROVALS_FIELD, section[APPROVALS_FIELD.field]) === 'true',
       credentialRef: credentialRefFrom(section[CREDENTIAL_REF_FIELD.field]),
       secret: {
         draft: this.secretDraft,

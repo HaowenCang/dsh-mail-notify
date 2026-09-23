@@ -26,6 +26,7 @@ import assert from 'node:assert/strict'
 import { test, type TestContext } from 'node:test'
 import { act } from 'react'
 import { choose, click, fakeHost, mountCard, settle, type, type FakeHost, type Mounted } from './support/dom.ts'
+import { createLocaleSeat } from './support/seat.ts'
 
 /**
  * Stage a fresh mounted card with its host facts settled, released when the
@@ -45,6 +46,48 @@ async function mountedCard(t: TestContext): Promise<{ host: FakeHost; mounted: M
 /** The number of form controls currently in the layout. */
 function formControls(mounted: Mounted): number {
   return mounted.container.querySelectorAll('input, select, textarea').length
+}
+
+/** The label prefixes of the expanded status strip's two effective lines. */
+const EFFECTIVE_QUESTION_LABEL = 'Effective question notifications'
+const EFFECTIVE_APPROVAL_LABEL = 'Effective approval notifications'
+
+/**
+ * Read one expanded status strip's "Effective …" line by its label prefix.
+ *
+ * The strip renders no data hook, so the line is located the way an operator
+ * reads it: by the locale's own label. An absent line fails loudly — a status
+ * strip that dropped the line must not pass by silence.
+ *
+ * @param mounted - the mounted, expanded card.
+ * @param prefix - the line's label prefix, in the active language.
+ * @returns the full line text.
+ */
+function effectiveLine(mounted: Mounted, prefix: string): string {
+  const line = Array.from(mounted.container.querySelectorAll('span'))
+    .map((element) => element.textContent ?? '')
+    .find((text) => text.startsWith(prefix))
+  assert.ok(line !== undefined, `the expanded status strip must render the "${prefix}" line`)
+  return line
+}
+
+/**
+ * Expand the card and save both privacy switches on, so the running
+ * configuration and the user layer carry `true` for questions and approvals —
+ * the starting point every effective-status case requires.
+ *
+ * @param host - the fake host, for the mutation and layer assertions.
+ * @param mounted - the mounted card.
+ */
+async function saveBothSwitchesOn(host: FakeHost, mounted: Mounted): Promise<void> {
+  await click(mounted.toggle())
+  await choose(mounted.field('notifyQuestions') as HTMLSelectElement, 'true')
+  await choose(mounted.field('notifyApprovals') as HTMLSelectElement, 'true')
+  await click(mounted.action('save'))
+  await settle(mounted)
+  assert.equal(host.mutations.length, 1, 'the switch-on save must land')
+  assert.equal(host.user.notifyQuestions, true, 'the effective document carries the question override')
+  assert.equal(host.user.notifyApprovals, true, 'the effective document carries the approval override')
 }
 
 test('COL-01 the card starts collapsed', async (t) => {
@@ -372,4 +415,126 @@ test('summary semantics: an unsaved staged Reset/Clear must not claim questions 
     summaryText().includes('Questions on'),
     `the collapsed summary must report the effective state while "false" is only staged (got "${summaryText()}")`,
   )
+})
+
+test('EFF-01/04 an unsaved staged "false" never moves the expanded effective status lines', async (t) => {
+  // The expanded strip labels its two lines "Effective …". Effective means the
+  // running configuration, which only a Save can move — the same boundary the
+  // collapsed summary already obeys. The editable controls are staged state
+  // and must show the draft; the lines must not.
+  const { host, mounted } = await mountedCard(t)
+  await saveBothSwitchesOn(host, mounted)
+  assert.equal(effectiveLine(mounted, EFFECTIVE_QUESTION_LABEL), 'Effective question notifications: On')
+  assert.equal(effectiveLine(mounted, EFFECTIVE_APPROVAL_LABEL), 'Effective approval notifications: On')
+
+  await choose(mounted.field('notifyQuestions') as HTMLSelectElement, 'false')
+  await choose(mounted.field('notifyApprovals') as HTMLSelectElement, 'false')
+  await settle(mounted)
+
+  // The controls reflect the staged drafts…
+  assert.equal((mounted.field('notifyQuestions') as HTMLSelectElement).value, 'false')
+  assert.equal((mounted.field('notifyApprovals') as HTMLSelectElement).value, 'false')
+  assert.equal(mounted.card.getSnapshot().dirty, true, 'the drafts are staged, not saved')
+
+  // …the "Effective …" lines still report the running configuration.
+  assert.equal(
+    effectiveLine(mounted, EFFECTIVE_QUESTION_LABEL),
+    'Effective question notifications: On',
+    'an unsaved staged "false" must not claim question notifications are off',
+  )
+  assert.equal(
+    effectiveLine(mounted, EFFECTIVE_APPROVAL_LABEL),
+    'Effective approval notifications: On',
+    'an unsaved staged "false" must not claim approval notifications are off',
+  )
+
+  // Staging is never a settings mutation (EFF-08).
+  assert.equal(host.mutations.length, 1, 'staging edits must not mutate settings before Save')
+  assert.equal(host.user.notifyQuestions, true, 'the running configuration is unchanged')
+  assert.equal(host.user.notifyApprovals, true, 'the running configuration is unchanged')
+})
+
+test('EFF-02/05 an unsaved staged Reset/Clear never moves the expanded effective status lines', async (t) => {
+  const { host, mounted } = await mountedCard(t)
+  await saveBothSwitchesOn(host, mounted)
+
+  for (const field of ['notifyQuestions', 'notifyApprovals']) {
+    const reset = mounted.container.querySelector<HTMLButtonElement>(
+      `button[data-action="reset-field"][data-field="${field}"]`,
+    )
+    assert.ok(reset !== null, `an overridden ${field} must offer Reset`)
+    await click(reset)
+  }
+  await settle(mounted)
+
+  // The controls preview the staged clear…
+  assert.equal((mounted.field('notifyQuestions') as HTMLSelectElement).value, '')
+  assert.equal((mounted.field('notifyApprovals') as HTMLSelectElement).value, '')
+
+  // …the "Effective …" lines still report the running configuration.
+  assert.equal(
+    effectiveLine(mounted, EFFECTIVE_QUESTION_LABEL),
+    'Effective question notifications: On',
+    'an unsaved staged Reset must not claim question notifications changed',
+  )
+  assert.equal(
+    effectiveLine(mounted, EFFECTIVE_APPROVAL_LABEL),
+    'Effective approval notifications: On',
+    'an unsaved staged Reset must not claim approval notifications changed',
+  )
+
+  assert.equal(host.mutations.length, 1, 'the staged resets must never have been saved')
+  assert.equal(host.user.notifyQuestions, true, 'the running configuration still carries the override')
+  assert.equal(host.user.notifyApprovals, true, 'the running configuration still carries the override')
+})
+
+test('EFF-03/06 once a staged "false" is saved, the effective status lines follow to Off', async (t) => {
+  const { host, mounted } = await mountedCard(t)
+  await saveBothSwitchesOn(host, mounted)
+  await choose(mounted.field('notifyQuestions') as HTMLSelectElement, 'false')
+  await choose(mounted.field('notifyApprovals') as HTMLSelectElement, 'false')
+  await click(mounted.action('save'))
+  await settle(mounted)
+
+  assert.equal(host.mutations.length, 2, 'the staged "false" save must land')
+  assert.equal(host.user.notifyQuestions, false, 'the running configuration moved on Save')
+  assert.equal(host.user.notifyApprovals, false, 'the running configuration moved on Save')
+
+  // After Save the boundary closes: control and effective line agree again.
+  assert.equal((mounted.field('notifyQuestions') as HTMLSelectElement).value, 'false')
+  assert.equal((mounted.field('notifyApprovals') as HTMLSelectElement).value, 'false')
+  assert.equal(effectiveLine(mounted, EFFECTIVE_QUESTION_LABEL), 'Effective question notifications: Off')
+  assert.equal(effectiveLine(mounted, EFFECTIVE_APPROVAL_LABEL), 'Effective approval notifications: Off')
+})
+
+test('EFF-07 the Chinese effective status lines follow the same save boundary (已启用 / 已关闭)', async (t) => {
+  const host = fakeHost()
+  const mounted = await mountCard(host, createLocaleSeat('zh'))
+  t.after(() => {
+    mounted.unmount()
+    mounted.card.dispose()
+  })
+  await settle(mounted)
+  await saveBothSwitchesOn(host, mounted)
+
+  assert.equal(effectiveLine(mounted, '提问通知实际生效'), '提问通知实际生效：已启用')
+  assert.equal(effectiveLine(mounted, '批准通知实际生效'), '批准通知实际生效：已启用')
+
+  await choose(mounted.field('notifyQuestions') as HTMLSelectElement, 'false')
+  await choose(mounted.field('notifyApprovals') as HTMLSelectElement, 'false')
+  await settle(mounted)
+
+  assert.equal(
+    effectiveLine(mounted, '提问通知实际生效'),
+    '提问通知实际生效：已启用',
+    'an unsaved staged "false" must not move the Chinese effective line',
+  )
+  assert.equal(effectiveLine(mounted, '批准通知实际生效'), '批准通知实际生效：已启用')
+  assert.equal(host.mutations.length, 1, 'staging must never write')
+
+  await click(mounted.action('save'))
+  await settle(mounted)
+  assert.equal(host.mutations.length, 2, 'the save must land')
+  assert.equal(effectiveLine(mounted, '提问通知实际生效'), '提问通知实际生效：已关闭')
+  assert.equal(effectiveLine(mounted, '批准通知实际生效'), '批准通知实际生效：已关闭')
 })
