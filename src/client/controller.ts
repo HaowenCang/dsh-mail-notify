@@ -95,6 +95,13 @@ export interface CardState {
   readonly failed: boolean
   /** The staged, effective, or composed value of every field, in render order. */
   readonly fields: readonly FieldState[]
+  /**
+   * The effective question-notification switch, as the running configuration
+   * reads it: the composed section, never a staged draft. Staged edits move it
+   * only when a save lands — the collapsed summary reports this fact, so an
+   * unsaved Reset/Clear can never claim questions are off while they run.
+   */
+  readonly questionsOn: boolean
   /** The credential reference in effect. A name, never a value. */
   readonly credentialRef: string
   readonly secret: SecretState
@@ -119,6 +126,9 @@ export interface MailNotifyCardFace {
 
 /** A staged draft: text, or `null` for a staged clear. */
 type Draft = string | null
+
+/** The question-notification switch — the one field the collapsed summary reports. */
+const QUESTIONS_FIELD = ALL_FIELDS.find((entry) => entry.field === 'notifyQuestions')
 
 /**
  * The card's controller.
@@ -482,6 +492,8 @@ export class MailNotifyCard {
       saving: this.saving,
       failed: this.failed,
       fields,
+      questionsOn:
+        QUESTIONS_FIELD !== undefined && formatField(QUESTIONS_FIELD, section[QUESTIONS_FIELD.field]) === 'true',
       credentialRef: credentialRefFrom(section[CREDENTIAL_REF_FIELD.field]),
       secret: {
         draft: this.secretDraft,

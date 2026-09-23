@@ -324,3 +324,52 @@ test('per-instance disclosure ids: two mounted cards never duplicate a region id
     assert.equal(document.querySelectorAll(`[id="${id}"]`).length, 1, `id ${id} must occur exactly once`)
   }
 })
+
+test('summary semantics: an unsaved staged Reset/Clear must not claim questions are off while they run', async (t) => {
+  // The collapsed summary documents itself as reporting the question switch's
+  // *effective* state. The effective state only moves when a save lands; a
+  // staged draft is pending intent. This pins that boundary in both staging
+  // directions the card offers: the Reset gesture (staged clear) and a staged
+  // "false".
+  const { host, mounted } = await mountedCard(t)
+  const summaryText = (): string => mounted.container.querySelector('[data-summary]')?.textContent ?? ''
+
+  // Save the switch on: the user layer now carries the override and the running
+  // configuration has question notifications on.
+  await click(mounted.toggle())
+  await choose(mounted.field('notifyQuestions') as HTMLSelectElement, 'true')
+  await click(mounted.action('save'))
+  await settle(mounted)
+  assert.equal(host.mutations.length, 1, 'the switch-on save must land')
+  assert.equal(host.user.notifyQuestions, true, 'the effective document carries the override')
+  assert.ok(summaryText().includes('Questions on'), 'the summary follows the saved state')
+
+  // Stage the Reset gesture (a staged clear) without saving, then collapse.
+  const reset = mounted.container.querySelector<HTMLButtonElement>(
+    'button[data-action="reset-field"][data-field="notifyQuestions"]',
+  )
+  assert.ok(reset !== null, 'an overridden field must offer Reset')
+  await click(reset)
+  await click(mounted.toggle())
+  await settle(mounted)
+
+  assert.equal(host.mutations.length, 1, 'the reset must never have been saved')
+  assert.equal(host.user.notifyQuestions, true, 'the running configuration still has the override on')
+  assert.ok(
+    summaryText().includes('Questions on'),
+    `the collapsed summary must report the effective state while the reset is only staged (got "${summaryText()}")`,
+  )
+
+  // Same boundary for a staged "false".
+  await click(mounted.toggle())
+  await choose(mounted.field('notifyQuestions') as HTMLSelectElement, 'false')
+  await click(mounted.toggle())
+  await settle(mounted)
+
+  assert.equal(host.mutations.length, 1, 'nothing else must have been saved')
+  assert.equal(host.user.notifyQuestions, true, 'the running configuration is unchanged')
+  assert.ok(
+    summaryText().includes('Questions on'),
+    `the collapsed summary must report the effective state while "false" is only staged (got "${summaryText()}")`,
+  )
+})

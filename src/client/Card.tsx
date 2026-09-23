@@ -87,19 +87,6 @@ function useCardState(card: MailNotifyCard): CardState {
 }
 
 /**
- * Read one field's draft text — the staged edit when there is one, and the
- * effective value otherwise.
- *
- * @param state - the card projection.
- * @param field - the field name.
- * @returns the control's current text ('' while the field inherits).
- */
-function draftOf(state: CardState, field: string): string {
-  const found = state.fields.find((entry) => entry.def.field === field)
-  return found === undefined ? '' : found.text
-}
-
-/**
  * The collapsed summary: one compact line of safe operational facts.
  *
  * Deliberately narrow — runtime state, SMTP readiness, and the question
@@ -122,7 +109,7 @@ function summaryOf(state: CardState, t: MailNotifyTranslate): string {
         : t('summaryInactive'),
   )
   segments.push(state.status?.smtpConfigured ? t('summarySmtpConfigured') : t('summarySmtpMissing'))
-  segments.push(draftOf(state, 'notifyQuestions') === 'true' ? t('summaryQuestionsOn') : t('summaryQuestionsOff'))
+  segments.push(state.questionsOn ? t('summaryQuestionsOn') : t('summaryQuestionsOff'))
   if (state.saving || state.testing) segments.push(t('summaryBusy'))
   return segments.join(' · ')
 }
