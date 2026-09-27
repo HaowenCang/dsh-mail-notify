@@ -74,6 +74,24 @@ export interface SessionHandlers {
   clear(): void
 }
 
+/**
+ * Why a user-role message is not the turn's prompt.
+ *
+ * The distinction is not cosmetic. A turn's prompt is the one thing
+ * `includeUserPrompt` promises to render, and DSH writes several *other*
+ * user-role messages into the same log — the runtime-context snapshot, the skill
+ * catalogue, and any instruction reminder a plugin injects. Rendering one of
+ * those instead would put platform boilerplate in the mail where the operator's
+ * own words belong.
+ */
+export type UserTextRejection = 'already-attributed' | 'context-injection'
+
+/** One turn's prompt attribution, as the handler tracks it. */
+interface PromptAttribution {
+  /** Whether the turn already has the one prompt it is allowed. */
+  claimed: boolean
+}
+
 /** Counters the handler keeps for observability. */
 interface HandlerCounters {
   eventsSeen: number
@@ -88,14 +106,23 @@ interface HandlerCounters {
   approvalAsksObserved: number
   /** Interaction observations that could not be parsed into anything sendable. */
   attentionUnparsable: number
+  /**
+   * User-role messages that were not the turn's prompt, by reason.
+   *
+   * Recorded rather than silently dropped: a change in what DSH injects as a
+   * user message would otherwise re-attribute prompts with nothing in the log to
+   * show for it.
+   */
+  userMessagesRejected: Partial<Record<UserTextRejection, number>>
 }
 
 /**
  * How long a collected user prompt stays eligible for the turn that follows it.
  *
- * The runtime writes `user/message` before the turn it belongs to opens, so the
- * text has to be held briefly. The bound keeps a prompt from attaching to a
- * turn that starts much later for an unrelated reason.
+ * The runtime writes `user/message` before the turn it belongs to opens — and,
+ * since session format v4, may also write it *after* the turn has opened. The
+ * bound keeps a prompt from attaching to a turn that starts much later for an
+ * unrelated reason.
  */
 export const PENDING_USER_TEXT_TTL_MS = 120_000
 
@@ -118,6 +145,49 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
    */
   const pendingUserText = new Map<string, { text: string; at: number }>()
 
+  /**
+   * Whether each open turn has already taken its prompt, by session then turn.
+   *
+   * ## Why a turn may take only one user message
+   *
+   * Session format v4 opens `turn/start` **before** the queued input is fully
+   * entered, and the input itself arrives as `user/message` with no turn number.
+   * A single Turn therefore produces several user-role messages in this order:
+   *
+   * 1. the prompt the operator typed;
+   * 2. the runtime-context snapshot DSH appends;
+   * 3. the skill-catalogue reminder.
+   *
+   * The last three are platform context, not the operator's words, and they
+   * arrive *after* the real prompt. Any rule that keeps the latest text — which
+   * is what this handler did through DSH 0.1.5 — therefore ends up rendering the
+   * reminder and losing the prompt, and because a turn only releases its entry
+   * at settlement, the same rule also mis-attributes across two sequential
+   * turns. Counting instead of overwriting is what makes the first message the
+   * prompt and every later one context.
+   *
+   * The count is per `(session, turn)` and is dropped when the turn is released,
+   * so it cannot grow with a session's lifetime.
+   */
+  const promptAttribution = new Map<string, Map<number, PromptAttribution>>()
+
+  /** This session's per-turn attribution records. */
+  const attributionOf = (sessionId: string): Map<number, PromptAttribution> => {
+    const existing = promptAttribution.get(sessionId)
+    if (existing !== undefined) return existing
+    const created = new Map<number, PromptAttribution>()
+    promptAttribution.set(sessionId, created)
+    return created
+  }
+
+  /** Forget one turn's attribution, and the session's map once it is empty. */
+  const releaseAttribution = (sessionId: string, turn: number): void => {
+    const turns = promptAttribution.get(sessionId)
+    if (turns === undefined) return
+    turns.delete(turn)
+    if (turns.size === 0) promptAttribution.delete(sessionId)
+  }
+
   const counters: HandlerCounters = {
     eventsSeen: 0,
     candidatesProduced: 0,
@@ -128,18 +198,73 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
     questionCallsObserved: 0,
     approvalAsksObserved: 0,
     attentionUnparsable: 0,
+    userMessagesRejected: {},
   }
 
-  /** Attach a collected prompt to a turn, if one is waiting and still fresh. */
-  const seedUserText = (sessionId: string, state: { lastUserText?: string }): void => {
-    if (state.lastUserText !== undefined) return
+  /**
+   * Attach a collected prompt to a turn, if one is waiting and still fresh.
+   *
+   * Seeding also claims the turn's one prompt slot, so a message that arrives
+   * later in the same turn — the runtime-context snapshot, or a reminder a plugin
+   * injects — cannot take the place the real prompt has already taken.
+   *
+   * @param sessionId - the session whose pending text may apply.
+   * @param turn - the turn being seeded.
+   * @param state - the turn's state, written to in place.
+   */
+  const seedUserText = (sessionId: string, turn: number, state: { lastUserText?: string }): void => {
+    const turns = attributionOf(sessionId)
+    if (turns.get(turn) !== undefined) return
     const pending = pendingUserText.get(sessionId)
     if (pending === undefined) return
     if (now() - pending.at > PENDING_USER_TEXT_TTL_MS) {
       pendingUserText.delete(sessionId)
       return
     }
+    turns.set(turn, { claimed: true })
     state.lastUserText = pending.text
+  }
+
+  /**
+   * Offer one user-role message to a turn as its prompt.
+   *
+   * @param sessionId - the session the message arrived in.
+   * @param turn - the open turn it arrived during.
+   * @param text - the message's text.
+   * @returns `undefined` when the turn took it, or why it did not.
+   */
+  const offerUserText = (sessionId: string, turn: number, text: string): UserTextRejection | undefined => {
+    // A whitespace-only message is not a prompt and must not *claim* the turn's
+    // one slot either: doing so would let an empty first message lock out the
+    // real prompt that follows it, which is worse than rendering nothing.
+    const prompt = text.trim()
+    if (prompt === '') return 'context-injection'
+    const turns = attributionOf(sessionId)
+    const record = turns.get(turn)
+    if (record === undefined) {
+      turns.set(turn, { claimed: true })
+      const state = store.stateOf(sessionId, turn)
+      state.lastUserText = prompt
+      return undefined
+    }
+    // The turn already has its prompt. Everything after it in the same turn is
+    // platform context that DSH appended, which is exactly what must not be
+    // rendered in the operator's place.
+    return 'already-attributed'
+  }
+
+  /**
+   * Attribute one user-role message to a turn, and log a rejection when it loses.
+   *
+   * @param sessionId - the session the message arrived in.
+   * @param turn - the turn it addresses.
+   * @param text - the message's text.
+   */
+  const attributeUserText = (sessionId: string, turn: number, text: string): void => {
+    const rejected = offerUserText(sessionId, turn, text)
+    if (rejected === undefined) return
+    counters.userMessagesRejected[rejected] = (counters.userMessagesRejected[rejected] ?? 0) + 1
+    logger.debug('prompt.attribution-rejected', { sessionId, turn, reason: rejected, textLength: text.length })
   }
 
   /** Accumulate one internal event into turn state. */
@@ -152,12 +277,12 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
         state.sawTurnStart = true
         state.telemetryComplete = true
         state.startAt = event.timeMs
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         return
       }
       case 'step-start': {
         const state = store.stateOf(sessionId, event.turn)
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         store.markStep(sessionId, event.turn, event.step)
         // The runtime's announcement that this step will make a model call. The
         // announcement is what makes a missing usage report detectable at all.
@@ -166,7 +291,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       }
       case 'assistant-message': {
         const state = store.stateOf(sessionId, event.turn)
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         state.assistantEvents += 1
         store.markStep(sessionId, event.turn, event.step)
         const visible = extractVisibleText(event.blocks)
@@ -192,7 +317,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       }
       case 'assistant-attempt': {
         const state = store.stateOf(sessionId, event.turn)
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         store.markStep(sessionId, event.turn, event.step)
         // A model call that produced no surface message. It is still an
         // accountable call: with no usage in its stream it becomes a counted
@@ -208,7 +333,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       }
       case 'llm-retry': {
         const state = store.stateOf(sessionId, event.turn)
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         state.usage.noteRetry({
           step: event.step,
           ...(event.seq !== undefined ? { seq: event.seq } : {}),
@@ -218,14 +343,14 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       }
       case 'tool-call': {
         const state = store.stateOf(sessionId, event.turn)
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         state.toolCallCount += 1
         store.markStep(sessionId, event.turn, event.step)
         return
       }
       case 'tool-result': {
         const state = store.stateOf(sessionId, event.turn)
-        seedUserText(sessionId, state)
+        seedUserText(sessionId, event.turn, state)
         state.toolResultCount += 1
         if (event.explicitError) state.explicitToolErrorCount += 1
         store.markStep(sessionId, event.turn, event.step)
@@ -332,15 +457,22 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
 
     if (internal.kind === 'user-message') {
       // Collected for every session in scope and rendered only under
-      // `includeUserPrompt`, so the collection path has one shape. A message that
-      // already names its turn is written straight onto that turn's state; one
-      // that does not is held for the turn that opens next.
-      if (internal.turn !== undefined) {
-        const state = store.stateOf(facts.sessionId, internal.turn)
-        if (internal.text !== '') state.lastUserText = internal.text
+      // `includeUserPrompt`, so the collection path has one shape. Session format
+      // v4 writes an unnumbered message during the turn it belongs to, so it is
+      // attributed to the turn that is currently open rather than held: holding
+      // it would let the turn's own context messages overwrite it before the
+      // turn ever asked for it. A numbered message is attributed to its turn
+      // directly. Anything that arrives with no turn open waits for the next one.
+      if (internal.turn === undefined) {
+        const openTurn = store.currentTurn(facts.sessionId)
+        if (openTurn !== undefined) {
+          attributeUserText(facts.sessionId, openTurn, internal.text)
+          return
+        }
+        if (internal.text !== '') pendingUserText.set(facts.sessionId, { text: internal.text, at: now() })
         return
       }
-      if (internal.text !== '') pendingUserText.set(facts.sessionId, { text: internal.text, at: now() })
+      attributeUserText(facts.sessionId, internal.turn, internal.text)
       return
     }
 
@@ -378,7 +510,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       sawTurnStart: candidate.sawTurnStart ?? null,
       // The failure code and status are structured, bounded scalars; the failure
       // message is provider text and stays in the mail body, never in the log
-      // (§8).
+      // (SECURITY.md §8).
       failureCode: candidate.failure?.code ?? null,
       failureStatus: candidate.failure?.status ?? null,
       // Telemetry shape only: sample counts and the completeness verdict are
@@ -396,6 +528,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
       settleTurn(facts.sessionId, candidate)
     } finally {
       store.release(facts.sessionId, internal.turn)
+      releaseAttribution(facts.sessionId, internal.turn)
       pendingUserText.delete(facts.sessionId)
     }
   }

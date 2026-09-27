@@ -17,7 +17,7 @@ export const REASON_DETAIL_LIMIT = 500
 /** Longest provider-neutral `code` retained; the field classifies, so it is bounded. */
 export const FAILURE_CODE_LIMIT = 120
 
-/** The six confirmed `turn/end` reason kinds. */
+/** The seven confirmed `turn/end` reason kinds. */
 const CONFIRMED_KINDS: readonly string[] = [
   'completed',
   'max-tokens',
@@ -25,6 +25,13 @@ const CONFIRMED_KINDS: readonly string[] = [
   'aborted',
   'blocked',
   'interrupted',
+  // DSH 0.1.7 added `forked`: fork-seed construction closes a turn that was
+  // still open at the fork boundary in the source session, and the source events
+  // before the boundary remain intact in the child. It is a synthetic closer
+  // rather than a live settlement — the agent loop never emits it — so it is
+  // recognised here to keep it out of `unknown`, and classified as
+  // non-notifiable rather than as a success or a failure.
+  'forked',
 ]
 
 /**
@@ -81,6 +88,12 @@ export function classifyCompletion(
       return 'blocked'
     case 'interrupted':
       return 'interrupted'
+    case 'forked':
+      // A fork seed's synthetic closer, not a turn that ran and settled. It maps
+      // to its own status — never to `completed`, `error`, or `max-tokens` —
+      // and {@link import('./subject.ts').policySwitchFor} has no switch for it,
+      // so no message is fabricated for a turn the agent never finished. See §19.
+      return 'forked'
     default:
       // A kind outside the confirmed set is a normal forward-compatibility
       // event, not an exception: classify defensively and let policy suppress.

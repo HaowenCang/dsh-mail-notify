@@ -48,6 +48,10 @@ const STATUS_LABELS: Readonly<Record<CandidateStatus, string>> = {
   aborted: 'Task aborted',
   blocked: 'Task blocked',
   interrupted: 'Task interrupted',
+  // Reachable only from a fork seed, and never notified — the label exists so
+  // that the status is *named* rather than mistaken for an unrecognised one if
+  // some future surface ever renders it.
+  forked: 'Task forked from another session',
   unknown: 'Task ended (unrecognised reason)',
 }
 
@@ -588,4 +592,21 @@ export function policySwitchFor(status: CandidateStatus): 'completed' | 'error' 
  */
 export function isNotifiableKind(kind: TurnEndKind): boolean {
   return kind === 'completed' || kind === 'error' || kind === 'max-tokens'
+}
+
+/**
+ * The turn-end kinds a fork seed fabricates, as opposed to the ones the live
+ * agent loop emits.
+ *
+ * DSH 0.1.7 constructs a fork seed by copying an event prefix and closing
+ * whatever was open at the boundary with synthetic results and closers. Those
+ * closers carry `reason.kind = 'forked'` and never mean "this turn settled", so
+ * a notification built from one would report a task outcome that no agent ever
+ * produced.
+ *
+ * @param kind - the narrowed turn-end kind.
+ * @returns true when the kind is a construction marker rather than a settlement.
+ */
+export function isSyntheticCloser(kind: TurnEndKind): boolean {
+  return kind === 'forked' || kind === 'interrupted'
 }

@@ -138,6 +138,15 @@ export type CandidateStatus =
   | 'aborted'
   | 'blocked'
   | 'interrupted'
+  /**
+   * A fork seed's synthetic turn closer (DSH 0.1.7).
+   *
+   * Present so that a fork-seed marker is never mistaken for a settlement that
+   * ran: no notification policy switch exists for it, and the plugin fabricates
+   * neither a success nor a failure message for one. The agent loop never emits
+   * this kind live; it exists only in a session constructed by forking.
+   */
+  | 'forked'
   | 'unknown'
 
 /**
@@ -174,7 +183,11 @@ export interface FailureFacts {
  * The six confirmed `turn/end` reasons plus the defensive fallback.
  *
  * `unknown` is reachable only when the runtime reports a kind outside the
- * confirmed set; no confirmed kind produces it (D007).
+ * confirmed set; no confirmed kind produces it (D007). `forked` is a confirmed
+ * kind since DSH 0.1.7 and is deliberately *not* folded into `unknown`: the two
+ * are told apart because one is a recognised marker with a defined meaning and
+ * the other is an unrecognised one, and only the second should ever prompt a
+ * reader to look at the runtime.
  */
 export type TurnEndKind =
   | 'completed'
@@ -183,6 +196,7 @@ export type TurnEndKind =
   | 'aborted'
   | 'blocked'
   | 'interrupted'
+  | 'forked'
   | 'unknown'
 
 /** Why a candidate was not turned into a queued job. */
@@ -601,6 +615,40 @@ export type SendResult =
 
 /** The sink contract shared by the real mailer and the debug sink. */
 export type MailSink = (job: MailJob) => Promise<SendResult>
+
+/**
+ * The raw, pre-validation shape a configuration arrives in.
+ *
+ * Only {@link import('./config.ts').resolveConfig} reads this: every field is
+ * optional and unvalidated, because the document may come from a hand-edited
+ * profile patch or from a caller outside the Cordis path. The validated form is
+ * `ConfigSnapshot`, and the resolved form is {@link ResolvedConfig}.
+ */
+export interface RawConfig {
+  enabled?: unknown
+  smtpHost?: unknown
+  smtpPort?: unknown
+  smtpSecure?: unknown
+  smtpUser?: unknown
+  smtpPasswordCredential?: unknown
+  from?: unknown
+  to?: unknown
+  includeSubagents?: unknown
+  notifyCompleted?: unknown
+  notifyErrors?: unknown
+  notifyMaxTokens?: unknown
+  notifyQuestions?: unknown
+  notifyApprovals?: unknown
+  minTurnDurationMs?: unknown
+  maxBodyChars?: unknown
+  includeMetadata?: unknown
+  includeUserPrompt?: unknown
+  includeFooter?: unknown
+  queueSize?: unknown
+  retryAttempts?: unknown
+  retryBaseDelayMs?: unknown
+  maxDedupeEntries?: unknown
+}
 
 /** Network and timeout knobs the mailer needs, resolved and defaulted. */
 export interface SmtpConfig {

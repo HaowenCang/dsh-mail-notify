@@ -54,6 +54,27 @@ export class TurnStateStore {
   }
 
   /**
+   * The turn a session is currently inside, if any.
+   *
+   * Session format v4 writes the operator's prompt as a `user/message` with no
+   * turn number *during* the turn it belongs to, so the only way to attribute it
+   * is to ask which turn is open. Turns are sequential within a session and a
+   * settled turn is released, so the highest live turn number is the open one.
+   *
+   * @param sessionId - the session to inspect.
+   * @returns the open turn number, or `undefined` when the session is idle.
+   */
+  currentTurn(sessionId: string): number | undefined {
+    const turns = this.sessions.get(sessionId)
+    if (turns === undefined || turns.size === 0) return undefined
+    let highest: number | undefined
+    for (const turn of turns.keys()) {
+      if (highest === undefined || turn > highest) highest = turn
+    }
+    return highest
+  }
+
+  /**
    * Record a distinct step number for one turn.
    *
    * @param sessionId - the owning session.
