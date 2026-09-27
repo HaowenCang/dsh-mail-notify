@@ -403,7 +403,7 @@ PROBE-01 的 2 封已实测得到，两封而非一封正是「question 的去�
 
 **PROBE-03 在 Phase 8 未达成，在 Phase 8.1 补齐。** Phase 8 执行时审批请求始终没有打开，原因是环境约束而非实现缺陷：该 composition 的 approval policy 由 `DSH_PERMISSION_MODE` 推导，本机 preset 为 `danger-full-access`，其 policy 为 `never`，在 waterfall 之前就确定性拒绝，因此不产生 `approval/asked`。Phase 8.1 的探针叠加层显式钉住 `approval.policy: ask`，并以一次真实工具执行内的 `ctx.approval.request()` 触发审批；人工替身在探针通过 SMTP 观察到审批邮件之前**不返回决定**，因此「通知发生在审批仍 pending 时」是被测量的事实而不是对时序的假设。实测结果见 `PHASE8_1_REPORT.md` 第 2–5 节。
 
-探针的实际运行环境为 Node `v24.13.0` 与 DSH `0.1.5-rc.1`（`dsh --version`）。它以 `--profile headless --patch <overlay>` 启动，overlay 中携带脚本化 provider、`ask_user_question` 工具、`probe_request_approval` 工具、人工替身、凭据契约检查与指向回环 SMTP 的插件本体；`DSH_HOME` 指向 `tmp/probe/home`（每次运行前整体重建），operator 自己的 DSH 安装根通过 `DSH_INSTALL_ROOT` 提供，二者互不写入。
+探针的运行环境为 Node `v24.13.0` 与 DSH `0.1.7-rc.2`（`dsh --version`）。它以 `--profile headless --patch <overlay>` 启动；自 v0.4.0 起 overlay 由探针**生成**而非签入，因为 DSH 0.1.7 会在插值行的 `!!js` 表达式之前先做插件兼容性预检，而一个未求值的表达式对象会让该检查以 `name.startsWith is not a function` 失败并把行禁用。生成出的 overlay 中每一行的 `name` 都是字面路径或裸包名；插件本体以包名引用，因此先由 `dsh plugin --profile headless add <tgz>` 装入一次性 profile——这同时使探针检验的是真正要发布的 tarball。`DSH_HOME` 指向 `tmp/probe/home`（每次运行前整体重建），operator 自己的 DSH 安装根通过 `DSH_INSTALL_ROOT` 提供，二者互不写入。
 探针替换的恰好三项（脚本化模型 provider、人工替身、SMTP 服务器的身份）在输出中被具名；凭据服务**不**被替换——出厂 file-backed store 被指向一次性目录，其真实解析路径参与运行。真实的 agent loop、工具注册表、session log、`ctx.approval`、插件的监听器、队列与 mailer、以及一次真实 SMTP 会话全部参与。各场景只打开自己要验证的开关，因此一封邮件只可能来自被测族。
 
 ### 14.5 question 与 approval 通知链（Phase 8，D018 第五至十一条）
@@ -472,7 +472,11 @@ PROBE-01 的 2 封已实测得到，两封而非一封正是「question 的去�
 | PKG-05 | `enabled: false` | 不注册监听器（可通过日志或探针确认） |
 | PKG-06 | 卸载 | 卸载后无残留监听器、无残留状态；DSH 正常运行 |
 | PKG-07 | 产物新鲜度（Phase 6） | tarball 内的 `lib/**` 与当前 `npm run build` 输出逐文件一致，且 `package.json` 版本与候选版本一致 |
-| PKG-08 | 双版本安装（Phase 6） | 同一份 tarball 在 `0.1.5-rc.1` 与 `0.1.5-rc.2` 下均安装、装载、投递成功 |
+| PKG-08 | 目标版本安装（Phase 6；v0.4.0 重新执行） | tarball 在 `0.1.7-rc.2` 下安装、装载、投递成功；`0.1.7-rc.2` 是 `0.4.0` 唯一验证过的版本 |
+| PKG-10 | 实时配置（v0.4.0） | 浏览器 Save 写入 profile `cordis.patch.yml` 且只写被改字段；运行中的插件在**不重启**下重建运行时（`active: true`）；live-policy 探针证明开关改变实际投递 |
+| PKG-11 | 无效写入（v0.4.0） | 越界端口与非法凭据引用均由 Host 以 `settings/rejected` 拒绝；patch 文件 SHA-256 逐字节不变、运行配置不变、SMTP 投递能力保留 |
+| PKG-12 | 用户提示词归属（v0.4.0） | 两个可区分提示词的两轮 v4 会话：邮件 n 携带提示词 n，无错位、无跨轮泄漏 |
+| PKG-13 | settings.yaml 迁移（v0.4.0） | v0.3 风格 `settings.yaml` 由 DSH 自行改名为 `.imported` 并导入 profile patch；原文件不被删除；重启后取值保持 |
 | PKG-09 | 新模块进入产物（Phase 8） | tarball 内的编译产物含 `human-attention` 对应的 `lib` 文件；`scripts/probe-e2e.mjs` 与 `scripts/probe/` **不在**归档内 |
 
 ---

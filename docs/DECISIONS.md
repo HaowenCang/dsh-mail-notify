@@ -998,6 +998,68 @@ DSH 的凭据 seam 有两个**互不相通**的键空间，Phase 8 把二者混�
 
 ---
 
+## D020 — DSH 0.1.7 原生插件配置迁移（v0.4.0，2026-09）
+
+### 背景
+
+DSH 0.1.7-rc.2 删除了插件注册独立 settings namespace 的整套接缝，改为以每个插件条目自身的 Cordis `Config` 作为可编辑配置文档。v0.3.1 的实现完全建立在前一套接缝之上，因此在目标运行时上**同时**在两侧失败：宿主侧 `settingsCtx.settings.installSection is not a function`（`src/settings.ts` 在 `apply` 期间的 `ctx.inject(['settings'], …)` 回调内抛出），浏览器侧 `dsh-mail-notify: pending (waiting for service: settingsScope)`（客户端 `inject` 声明的服务在 0.1.7 已不存在，条目永不激活）。两处都是实测复现，不是推断。详见 `V0.4.0_COMPAT_REPORT.md` 的 "Pre-fix reproduction"。
+
+### 决策
+
+**不提供兼容垫片，直接迁移到目标契约。** `installSection` 在目标 API 中不存在；垫片只能伪造一个合并语义，而该合并本就属于 DSH 而非本插件，且表单是**从 Config schema 生成**的，与注册 namespace 无关——垫片写不进用户实际编辑的那份文档。因此 `src/settings.ts` 被整体重写为 volatile 配置绑定，而不是保留一个假的兼容层。
+
+### 1. 为什么 `installSection` / `settings.plugin.item` 不再有效
+
+- `ctx.settings` 的类型在目标中是 `SettingsForms`（`dsh-settings/lib/types/index.d.ts`），公开成员为 `describe` / `update` / `replace` / `mutate` / `configure` / `whileServed`，**没有** `installSection`。namespace 不再是插件注册的字符串，而是 **profile 条目 id**。
+- 客户端 `ctx.settingsScope` 被 `ctx.configForms` 取代；`plugins.item` 是 Plugins 页 official 分组的独立卡片槽位，条目由各 host-plane namespace 的 companion 包占用，**不是** bundle 的配置面。
+
+### 2. 为什么插件 Config + volatile 字段是权威
+
+- 表单由 Config schema 投影生成（`volatileForm` / `projectForm`），可编辑字段必须是**顶层、路径固定**的 volatile 字段。Schemastery 拒绝「volatile 字段位于 volatile 祖先或容器节点之下」（实测：`volatile fields require a fixed object path without an enclosing volatile field`），所以 schema 保持扁平，`smtp`/`policy`/`render`/`retry` 分组只存在于派生出的 `ResolvedConfig` 中。
+- 配置写入的持久化层是 profile 的 `cordis.patch.yml`；`SettingsForms.write` 只写用户实际改动的字段，其余继续继承组合层。
+
+### 3. 为什么用 `configForms` / `plugins.bundle.config`
+
+- 卡片是 **bundle 的配置**，因此注册进 keyed 槽位 `plugins.bundle.config`，key 为包名（`dsh-mail-notify`）。页面以 `entryKey: pkg.name` 解析该槽位，并且只渲染 `view: 'page'`。落在 `plugins.item` 会让表单出现在 official 分组的独立卡片上，与它所属的行脱节，也让「启用/禁用该行」与「编辑该行配置」分处两地。
+- 贡献用 `ctx.configForms.whileServed([entryId], …)` 包裹：Host 不服务该条目时页面上不出现任何痕迹，而不是留一个空壳。
+- 本插件的两个字符串契约因此是**双份**的：entry id（`SETTINGS_NAMESPACE`，供 `configForms.get` 与 Loader 条目寻址）与包名（槽位 key）。二者恰好同名，但互不派生；`tests/unit/settings.test.ts` 与 `tests/compatibility/contracts.compile.ts` 分别对出厂 `cordis.patch.yml` 与 `package.json` 断言。
+
+### 4. 持久化语义
+
+- 一次 Save 只写用户改过的字段。实测（一次性 profile）：把 `enabled`、`smtpHost`、`smtpPort`、`smtpUser`、`from`、`to` 六项改动写入后，patch 中出现的正是这六项，其余字段保持继承。
+- **无效写入在持久化之前被拒绝。** `dsh-config-editor.edit` 在落盘前调用 `resolveConfig(fiber.runtime, next)`，也就是用插件自己的 Config schema 解析候选值；失败即抛出，经 `dsh-api-settings-controller` 归类为 `settings/rejected`。实测被拒后 patch 文件 SHA-256 逐字节不变，运行中的配置与 SMTP 投递能力均保持不变。字段级约束（端口范围、引用文法）落在字段 schema 上，因此拒绝信息带字段路径；跨字段规则留在 `resolveConfig` 作为纵深防御，因为手工编辑的 patch 不经过编辑器。
+
+### 5. 实时更新语义
+
+- 仅当变更"只涉及 volatile 字段"时，Loader 才走 `_commitVolatile`：经 `updateVolatile` 就地更新运行 fiber 的引用，然后 emit `loader/volatile-update`。否则走普通重启路径。本插件的全部字段都是 volatile，所以任何 Web 编辑都是实时生效的。
+- 插件以 `bindVolatileConfig` 订阅该事件，重新读取**完整**快照、重新校验、重建 ResolvedConfig、原子替换运行时。快照边界是唯一的：`snapshotOf` 一次性读取每个字段，邮件、队列、策略与事件处理器都不直接持有 `Volatile` 引用，因此一个操作永远消费一致的配置。
+- 实测：浏览器把 `notifyQuestions` 由关改开后，卡片立即显示「提问通知已启用」，`status` 端点报告 `active: true`，无需重启；独立的 live-policy 探针进一步证明该开关改变了**实际投递**——关闭时的提问不产生邮件，运行中改开后同一进程内的下一次提问产生且仅产生一封提问邮件。
+
+### 6. 凭据边界
+
+- 未变。浏览器仍只使用 `describe` / `set` / `unset` 与 `credentials/reference-updated`；凭据值永不回传。目标契约下 `CredentialRef` 文法仍为 `^[A-Za-z_][A-Za-z0-9_]*$`，`CredentialKey`（`<scope>/<id>`）仍不可用于 `resolve()`；探针以安装的 provider 逐项复验（14 项 PASS）。
+- 新增的约束是：该字段的 schema 默认值从空串改为 `DSH_MAIL_SMTP_PASSWORD`。原因是字段级 pattern 会让空串无法通过校验，而表单必须能保存一份"尚未配置"的文档。默认值是**引用名**，不是密码。
+
+### 7. v0.3 迁移影响
+
+- `$DSH_HOME/settings.yaml` 中的 `dsh-mail-notify` 段由 DSH 0.1.7 自行迁移：Loader 结算后把文件改名为 `settings.yaml.imported`，再把各段写入其命名条目的 `config`。本插件不参与、也不重复实现。实测确认改名、导入与「原文件不被删除」。文档化为迁移路径，不做静默改写。
+
+### 8. 为什么没有重设计通知内核
+
+- 迁移改变的是**配置从哪来**，不是**什么值得通知**。通知语义、隐私边界、去重规则、队列与渲染策略在目标运行时上逐项复验通过，因此一行未改。唯一因目标证据而改变的行为是用户提示词归属（见下）与 `forked` 分类，二者都是目标运行时**新增事实**的结果，而非设计变动。
+
+### 附：本次迁移中发现并修正的两处真实缺陷
+
+**A20-1 — v4 生命周期下的用户提示词归属（§20）**
+
+DSH 0.1.7 在排队输入完全进入**之前**就打开 `turn/start`，且 `user/message` 不带 turn 号。实测事件序列为：`turn/start` → `step/start` → `user/message`(真实提示词) → `user/message`(runtime context 快照) → `user/message`(skill 目录提醒) → `assistant/message` → `turn/end`。v0.3.1 的规则是"保留最新一条用户文本"，因此第一轮会把注入的提醒当作提示词、丢掉真实提示词；而由于 turn 状态要到结算才释放，同一条规则还会让两轮之间发生错位。修正为：每个 `(session, turn)` 只接受**第一条**非空白用户消息作为提示词，其后同轮的用户消息一律视为平台上下文；归属记录随 turn 释放。探针以两个可区分的提示词断言"邮件 n 携带提示词 n"。
+
+**A20-2 — `turn/end reason.kind = forked`（§19）**
+
+DSH 0.1.7 新增该 kind，仅由 fork seed 构造产生（`dsh-session` 明确记载"the loop never emits it"）。它此前会落入 `unknown`。现列为独立的确认 kind 与独立 `CandidateStatus`：它没有对应的通知策略开关，因此既不会被读成成功也不会被读成失败，不会为一个从未结算的 turn 伪造邮件。`interrupted` 与之同属**构造函数**写入的合成收尾，二者由 `isSyntheticCloser` 一并标出。
+
+---
+
 ## 附：Implementation Addendum — Phase 8（2026-09）
 
 本节记录 v0.2.0 实现期间出现的、D001–D017 未覆盖或需补充的事实。**D001–D017 本身除 D011 中已显式标注的那一句外未被修改。**

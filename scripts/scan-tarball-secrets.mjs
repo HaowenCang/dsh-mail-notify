@@ -11,18 +11,44 @@
  * Values are read into memory for comparison only. They are never printed, never
  * hashed into a reversible form, and never passed as an argument.
  *
- * Usage: node scan-tarball-secrets.mjs <path-to.tgz> [workDir]
+ * Usage: node scan-tarball-secrets.mjs [path-to.tgz] [workDir]
+ *
+ * With no path argument the archive the *current* package version produces is
+ * used. Deriving it rather than hard-coding it is what keeps the scan pointed at
+ * the artefact the release actually packs: a stale literal would silently scan
+ * the previous release and report PASS for bytes nobody ships.
  */
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const archive = resolve(process.argv[2] ?? 'dsh-mail-notify-0.1.1.tgz')
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+/**
+ * Resolve the archive to scan.
+ *
+ * @param argument - the explicit path, when one was given.
+ * @returns the absolute path to scan.
+ * @throws When the derived archive has not been packed yet, naming the command
+ *   that produces it rather than reporting a missing file.
+ */
+function resolveArchive(argument) {
+  if (argument !== undefined) return resolve(argument)
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  const derived = join(root, `dsh-mail-notify-${version}.tgz`)
+  if (!existsSync(derived)) {
+    throw new Error(`${derived} does not exist; run "npm pack" first`)
+  }
+  return derived
+}
+
+const archive = resolveArchive(process.argv[2])
 const workDir = process.argv[3] === undefined ? mkdtempSync(join(tmpdir(), 'dsh-mail-secret-scan-')) : resolve(process.argv[3])
 mkdirSync(workDir, { recursive: true })
+process.stdout.write(`archive: ${relative(root, archive).replace(/\\/g, '/')}\n`)
 
 /** Read the flat `refs:` map of the credential store without logging values. */
 function readRefs() {

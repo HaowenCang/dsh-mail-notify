@@ -5,22 +5,28 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.2.0` (released)
-- Host-only: no browser half, no UI, no Client package
-- Requires DSH `0.1.5-rc.1` or `0.1.5-rc.2`, and Node `^22.19.0 || >=24.0.0`
+- Version: `0.4.0` (release candidate, not published)
+- Host plugin plus a browser half: a configuration card on the DSH Plugins page
+- Requires DSH `0.1.7-rc.2`, and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
 
-**Verified DSH versions.** Both candidates below were tested, not inferred from the peer range. The
-`^0.1.5-rc.1` range in `package.json` is a SemVer range, not a compatibility statement, and it does
-not assert that later `0.1.5` releases work.
+**Verified DSH version.** Exactly one release has been exercised against this plugin, and it is the
+only one this document claims.
 
 | DSH version | Status | Evidence |
 | --- | --- | --- |
-| `0.1.5-rc.1` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over both a loopback SMTP peer and real SMTP; multi-step turn telemetry |
-| `0.1.5-rc.2` | Verified | Full suite and the runtime contract probe against that installation; isolated install, boot, live turn, and delivery over both a loopback SMTP peer and real SMTP; multi-step turn telemetry |
+| `0.1.7-rc.2` | Verified | Full suite; both compatibility compile probes; six real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract) plus the two-Turn user-prompt attribution probe; the live-policy probe; isolated `npm pack` install into a disposable web profile with browser verification of the configuration card, Save/Reset, credential badge, Test Email, live activation without restart, and Host rejection of invalid writes |
 
-Versions outside this table are untested. See [`PHASE4_1_REPORT.md`](PHASE4_1_REPORT.md),
-[`PHASE6_REPORT.md`](PHASE6_REPORT.md), and [`PHASE6_1_REPORT.md`](PHASE6_1_REPORT.md).
+`0.1.5-rc.1`, `0.1.5-rc.2`, `0.1.6`, a hypothetical `0.1.7` final, and every later release are
+**untested with `0.4.0`**. They are not merely unclaimed: the configuration surface this version is
+built on (`ctx.configForms`, `plugins.bundle.config`, volatile Config) does not exist in the
+`0.1.5` generation, and the `0.1.5` surface it replaced (`ctx.settings.installSection`,
+`settings.plugin.item`, `ctx.settingsScope`) does not exist in `0.1.7`. The break is bidirectional, so
+there is no shared-support range to advertise and no dual-generation shim in the source.
+
+The `peerDependencies` ranges are pinned to the validated release for that reason: a range wide
+enough to admit an untested prerelease would be a compatibility claim this repository cannot
+evidence. See [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md).
 
 **Nodemailer 10.** Phase 6's telemetry release candidate originally retained Nodemailer 7.x; the
 pre-release security review upgraded it to the supported major. Nodemailer supports only its current
@@ -241,9 +247,16 @@ on the next boot.
 
 ## Configure in the Web UI
 
-`Settings → Plugins → Plugin configuration` shows a **dsh-mail-notify** card, titled **Mail
+`Settings → Plugins → dsh-mail-notify` shows a **dsh-mail-notify** card, titled **Mail
 notifications** (邮件通知). Everything in the patch example below can be set there instead; the card
-needs no YAML editing and takes effect without restarting DSH.
+needs no YAML editing and takes effect without restarting DSH. Your edits are persisted into the
+profile's own `cordis.patch.yml`, which is the only configuration document a plugin has.
+
+Only the fields you actually change are written: a Save records the fields you edited, and the rest
+keep inheriting the composition layer. An invalid value is refused by the **host** before anything is
+written — the clause that refuses it is the plugin's own Config schema, resolved by DSH's config
+editor ahead of persistence — so a rejected save leaves both your profile file and the running
+notification runtime exactly as they were.
 
 The card is one collapsible disclosure, collapsed by default so a single plugin cannot push the rest
 of Settings off the screen. Collapsed, it occupies one compact row: its title, and one line of safe
@@ -256,21 +269,36 @@ The card follows the DSH interface language (Settings → General → Language) 
 into English and Simplified Chinese; a language the plugin ships no copy for falls back to English.
 A language switch retranslates the mounted card immediately, notices already on screen included.
 
-The card is registered into the `settings.plugin.item` slot under the key `dsh-mail-notify`, which
-is also the settings namespace the host registers. That key is what pairs the browser half with the
-host half — neither side learns anything else about the other.
+The card is registered into the Plugins page's `plugins.bundle.config` slot under the key
+`dsh-mail-notify` — the plugin's **package name**, which is what the page resolves a bundle's
+configuration by. It is *not* registered into `plugins.item`: that slot is the page's Official group
+of standalone cards, and a bundle's configuration is rendered on the bundle's own page, which is also
+where the enable switch and the component list live. The host side of the same configuration is the
+plugin's Cordis `Config` schema, addressed by the profile entry id `dsh-mail-notify`.
 
-How the three layers compose:
+How the layers compose:
 
 ```
-schema defaults  →  cordis.patch.yml (composition)  →  settings.yaml (your overrides)  →  what runs
+Config schema defaults  →  bundle layer (this package's cordis.patch.yml)
+                        →  profile layer (your cordis.patch.yml)
+                        →  what runs
 ```
 
-The card shows the **effective** value of every field — what a notification would actually use —
-and marks each one `inherited` (no override) or with a `Reset` button (overridden). **Reset removes
-the override**; it does not write the default back, so the field re-inherits the composition layer
-and any later change to the patch is picked up again. `Reset` at the bottom stages that removal for
-every field the plugin owns, and `Save` applies it.
+Every field in the form is a **volatile** Config field. A committed change is applied to the running
+plugin in place: the Loader copies the new values into the references the plugin reads, the plugin
+re-reads the whole configuration as one snapshot, and the notification runtime is rebuilt from it.
+That is why a Save takes effect without restarting DSH, and why a change to the master switch stands
+the runtime down or brings it up immediately.
+
+The card shows the **effective** value of every field — what a notification would actually use — and
+marks each one `inherited` (no entry in your layer) or with a `Reset` button (an entry exists).
+**Reset removes the entry**; it does not write the default back, so the field re-inherits the
+composition layer and any later change to the patch is picked up again. `Reset` at the bottom stages
+that removal for every field the plugin owns, and `Save` applies it.
+
+An override is detected by the **presence** of a key in your layer, never by comparing values: an
+override that happens to equal the composition default is still an override, and a value comparison
+could not see it.
 
 | Card region | Fields |
 | --- | --- |
@@ -303,15 +331,17 @@ preserved as you typed it.
 
 ## Configure by patch file
 
-Add a row to the profile's own patch file (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`). A
-patch **replaces** the targeted row's whole `config`, so restate every key you rely on; omitted
-keys fall back to the schema defaults.
+Add a row to the profile's own patch file (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`). A patch
+**replaces** the targeted row's whole `config`, so restate every key you rely on; omitted keys fall
+back to the schema defaults.
 
-This remains fully supported, and the two routes compose: patch values are the *composition* layer,
-and anything set in the card is a user override on top of them.
+This remains fully supported, and the two routes are the *same* document: the Web card writes this
+file, so a hand edit and a Save are indistinguishable afterwards, and a hand edit is what a Save will
+show as that field's override.
 
 ```yaml
 - id: dsh-mail-notify
+  name: dsh-mail-notify
   config:
     enabled: true
 
@@ -503,6 +533,25 @@ remove that injection instead.
 | No question email arrived | `notifyQuestions` is `false` by default. `notification.suppressed {"notificationKind":"question"}` names the reason. |
 | A question call produced no email although the switch is on | Look for `question.unparsable`, which carries `dropReason` and `argumentsReadable` and nothing else — the argument text is deliberately not logged. |
 | No approval email arrived | `notifyApprovals` is `false` by default. Check that the ask actually appended an `approval/asked` audit event: nothing is mailed from `approval/request`, and nothing at all from `approval/decided`. |
+| A Save is refused and says the configuration is invalid | The message names the offending field, e.g. `$.smtpPort expected number <= 65535`. Nothing was written and the running configuration is untouched. Fix the value and Save again. |
+| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is `0.1.7-rc.2`; the card is contributed only while the entry is composed. |
+| A `settings.yaml` from an older release | DSH `0.1.7` imports its sections into the profile automatically at boot and renames the file to `settings.yaml.imported`. The original is never deleted, and no migration step is needed. See below. |
+
+### Upgrading from a `0.3.x` install
+
+`0.3.x` stored Web overrides in `$DSH_HOME/settings.yaml` under a `dsh-mail-notify` section. DSH
+`0.1.7` migrates that file itself: at boot, once the Loader has settled, it renames
+`settings.yaml` to `settings.yaml.imported` and writes each section's values into the profile entry
+it names — so a `dsh-mail-notify` section becomes that row's `config` in the profile's
+`cordis.patch.yml`. A section the running composition rejects is logged and left only in the renamed
+file.
+
+The plugin does nothing for this and duplicates nothing. Verify it if you want to: the renamed file
+is the evidence, the profile patch is the result, and deleting `settings.yaml.imported` afterwards is
+safe once you have read it. The file that is **not** removed is the original, and it is not removed
+because a partial import must remain recoverable. See
+[`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md) for the disposable-home test that established
+this.
 
 **To see the plugin's own structured log lines** you need an exporter: Cordis buffers logs in
 memory and prints nothing by itself. The `dsh` command line registers no exporter, which is why

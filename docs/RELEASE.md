@@ -9,9 +9,9 @@ the expected result is stated next to it.
 | --- | --- |
 | Node | `^22.19.0 \|\| >=24.0.0` (`v24.13.0` used) |
 | npm | `11.12.0` used |
-| DSH | `0.1.5-rc.1` installed and on `PATH` as `dsh` |
-| Runtime dependency | `nodemailer@10.0.9` (declared `^10.0.9`; the only runtime dependency) |
-| Peer packages resolvable from the profile | `@deepseek-ai/cordis`, `@deepseek-ai/schemastery`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-credentials` |
+| DSH | `0.1.7-rc.2` installed and on `PATH` as `dsh` (`dsh --version`) |
+| Runtime dependency | `nodemailer@10.0.11` (declared `^10.0.9`; the only runtime dependency) |
+| Peer packages resolvable from the profile | `@deepseek-ai/cordis` `4.0.4`, `@deepseek-ai/schemastery` `3.18.4`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-credentials` |
 
 Nodemailer's own security policy supports only its current major, so the declared range stays on
 `10.x`: `^10.0.9` cannot reach `11` unattended, and its lower bound is the patched line rather than
@@ -19,9 +19,12 @@ Nodemailer's own security policy supports only its current major, so the declare
 installed beside it — the two declare the same module and conflict. `npm ls nodemailer` should report
 exactly one entry, and Nodemailer reports zero runtime dependencies of its own.
 
-The peers are declared with wide ranges (`^4.0.2`, `^3.18.2`, `^0.1.5-rc.1`) on purpose: the plugin
-must share one Cordis and one Schemastery instance with the host. Pinning exact versions invites a
-second copy of either, which means two mutually invisible service registries.
+Where the plugin must share an instance with the host, the range is wide enough to do that and no
+wider. Cordis and Schemastery keep shared-major ranges (`^4.0.4`, `^3.18.4`): pinning exact versions
+invites a second copy of either, which means two mutually invisible service registries. The DSH peers
+are the opposite case — they are **pinned to the one validated release** (`0.1.7-rc.2`), because
+`0.4.0` is verified against exactly that release and a range would advertise compatibility this
+repository cannot evidence. See [`../V0.4.0_COMPAT_REPORT.md`](../V0.4.0_COMPAT_REPORT.md).
 
 ## 2. Build
 

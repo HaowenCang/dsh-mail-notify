@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -68,15 +68,22 @@ function pack() {
   return join(root, name)
 }
 
-/** Find the newest archive, or pack one. */
+/**
+ * Find the archive for the current version, or pack one.
+ *
+ * The archive is named after the *declared* version rather than chosen by
+ * modification time. A `.tgz` left in the working directory by an earlier
+ * release is then never audited as if it were this one, which is the failure a
+ * newest-file rule cannot see.
+ *
+ * @param argument - the explicit path, when one was given.
+ * @returns the absolute path of the archive to inspect.
+ */
 function resolveTarball(argument) {
   if (argument !== undefined) return resolve(argument)
-  const candidates = readdirSync(root)
-    .filter((name) => name.endsWith('.tgz'))
-    .map((name) => ({ name, mtime: statSync(join(root, name)).mtimeMs }))
-    .sort((left, right) => right.mtime - left.mtime)
-  if (candidates.length > 0 && candidates[0] !== undefined) return join(root, candidates[0].name)
-  return pack()
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  const derived = join(root, `dsh-mail-notify-${version}.tgz`)
+  return existsSync(derived) ? derived : pack()
 }
 
 const failures = []

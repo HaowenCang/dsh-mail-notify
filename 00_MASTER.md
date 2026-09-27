@@ -52,6 +52,9 @@ Phase 2 期间对本文件做了三类就地修正，均以注释形式标注，
 | Phase 7 — v0.1.1 Formal Release | 冻结发布对象 `340ef362`、复现归档 SHA、`npm publish` 精确 tarball、annotated tag `v0.1.1`、GitHub Release 与 asset，以及本地／npm／GitHub 三方 SHA-256 一致性与 registry 全新安装核验 | **PASS — v0.1.1 RELEASED**（见 [`RELEASE_V0.1.1.md`](RELEASE_V0.1.1.md)） |
 | Phase 8 — Failure and human-attention notifications | 新增终局失败通知（`turn/end(error)`，不要求可见文本）与回合中人工注意力通知（`ask_user_question`、`approval/asked`）两条链路；新增 `notifyQuestions` / `notifyApprovals`（默认 `false`）；question 参数白名单解析；去重命名空间分离；端到端探针 | **PASS — v0.2.0 RC READY**（未发布） |
 | Phase 9 — v0.2.0 Formal Release | 将 main 以 fast-forward 推进到已验收 RC `713100ac`、冻结发布源、从该源复现并审计归档、`npm publish` 精确 tarball、annotated tag `v0.2.0`、GitHub Release 与 asset，以及本地／npm／GitHub 三方 SHA-256 一致性与 registry 全新安装＋已发布产物运行时核验 | **PASS — v0.2.0 RELEASED**（见 [`RELEASE_V0.2.0.md`](RELEASE_V0.2.0.md)） |
+| Phase 10 — v0.4.0 DSH 0.1.7 compatibility migration | 在 `0.1.7-rc.2` 上复现并修复宿主 `installSection` 与浏览器 `settingsScope` 两处断点；迁移到原生 volatile Config、`configForms` 与 `plugins.bundle.config`；重写实时重配置路径；复验全部会话与凭据契约；修正 v4 用户提示词归属与 `forked` 分类；探针、浏览器 E2E、实时策略与无效写入验证 | **PASS — v0.4.0 RC READY**（未发布、未打标签、未合并；见 [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md)） |
+
+当前的 DSH 兼容基线是 **`0.1.7-rc.2`**，且仅是它。`0.3.1` 是 v0.3.0 之后在 `main` 上继续开发、**从未发布**的版本，其改动全部并入 v0.4.0。详见 [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md) 与 [`docs/DECISIONS.md`](docs/DECISIONS.md) 的 D020。
 
 重新编排的理由：
 

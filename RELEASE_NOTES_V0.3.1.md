@@ -1,5 +1,16 @@
 # Release notes — v0.3.1
 
+> **Provenance: never published.** `0.3.1` was development work on `main` after `v0.3.0`. npm's
+> `dsh-mail-notify` registry shows exactly `0.1.0`, `0.1.1`, `0.2.0`, and `0.3.0` (dist-tag `latest`
+> = `0.3.0`), and this repository carries no `v0.3.1` tag. There is therefore no `v0.3.1` release and
+> no published predecessor to describe.
+>
+> These notes are retained as the *design record* of that work: they describe what the changes do and
+> why. Everything they describe shipped for the first time in v0.4.0, together with the DSH
+> `0.1.7-rc.2` compatibility migration. A reader comparing an installed `0.3.0` with `0.4.0` should
+> read this file *and* [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md); one file is the feature
+> record, the other the compatibility record, and neither alone explains the difference.
+
 ## What this release adds
 
 Two changes to the Web configuration surface, and no change whatsoever to the notification

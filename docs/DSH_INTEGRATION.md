@@ -9,11 +9,32 @@ Verified against:
 
 | Item | Value |
 | --- | --- |
-| DSH | `0.1.5-rc.1` and `0.1.5-rc.2` |
-| Cordis | `4.0.2` (identical under both DSH versions) |
-| Schemastery | `3.18.2` (identical under both DSH versions) |
+| DSH | `0.1.7-rc.2` (the only version verified with `0.4.0`; see [`../V0.4.0_COMPAT_REPORT.md`](../V0.4.0_COMPAT_REPORT.md)) |
+| Cordis | `4.0.4` |
+| Schemastery | `3.18.4` |
 | Node | `v24.13.0` |
-| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events) |
+| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events); v0.4.0 inspection of the exact `0.1.7-rc.2` installed sources plus six real-assembly end-to-end probes, a live-policy probe, and a browser run against a disposable profile |
+
+## 0. The configuration surface (rewritten for DSH 0.1.7)
+
+The interfaces below section 1 are the notification path. This section is the *configuration* path,
+which DSH 0.1.7 replaced wholesale and which the plugin's Web card is built on.
+
+| Interface | How it is reached | Used for | Required? |
+| --- | --- | --- | --- |
+| Plugin `Config` schema, fields marked `.volatile()` | Exported from `src/config.ts`; Cordis resolves it before `apply` | The editable configuration document, and the only source of the values the runtime acts on | Yes |
+| `loader/volatile-update` (Cordis event) | `ctx.on('loader/volatile-update', …)` | Re-reading the configuration after the Loader committed a change, so the runtime is rebuilt live | Yes — without it a Web edit would need a restart |
+| `ctx.configForms.get(entryId)` (browser) | `@deepseek-ai/dsh-client-ui-settings/client` | The card's read/write face for this entry's configuration | Yes, for the card |
+| `ctx.configForms.whileServed([entryId], …)` (browser) | Same | Contributing the card only while the Host serves the entry | Yes, for the card |
+| `plugins.bundle.config` (browser slot) | `ctx.slots.inject` + `ctx.slots.register`, keyed by package name | Where the card is rendered: the bundle's own Plugins page | Yes, for the card |
+| `ctx.remote.credentials.{describe,set,unset}` (browser) | `@deepseek-ai/dsh-api-settings-controller/remote` | Credential state and write-only password management | Yes, for the card |
+| `connection.fetch.register` | `ctx.connection` through a scoped `ctx.inject(['connection'], …)` | The two `/api` exact routes the card calls: status and delivery test | Yes, for the card |
+
+**Retired and gone from the source:** `ctx.settings.installSection` (0.1.5's namespace
+registration), `ctx.settingsScope` and the `settings.plugin.item` slot (0.1.5's browser half). None
+of them exists in `0.1.7-rc.2`, and `tests/compatibility/contracts.compile.ts` plus
+`scripts/type-probes/host-contracts.compile.ts` assert their absence so a reintroduction fails a
+build rather than a profile.
 
 ## 1. Interfaces used
 
@@ -80,23 +101,24 @@ that is missing or not a number degrades the event to `other`; it is never defau
 
 ### 2.1 Turn telemetry event support
 
-Phase 6 verified which telemetry events the two supported DSH versions emit, and how often, by
-decoding every recorded session log on this machine.
+Phase 6 established which telemetry events the session log carries and how often, by decoding every
+recorded session log on this machine. The v0.4.0 migration re-read the same declarations against the
+installed `0.1.7-rc.2` packages; the counts below are the Phase 6 corpus and are unchanged by the
+migration, which is a claim about the declarations rather than about the corpus.
 
-| Event | `0.1.5-rc.1` | `0.1.5-rc.2` | Observed occurrences | Accumulated into turn state |
-| --- | --- | --- | --- | --- |
-| `turn/start` | present | present | 1 456 | start time, `telemetryComplete` |
-| `step/start` | present | present | 30 335 | announces one accountable model call |
-| `assistant/message` | present, `usage?` per call | identical declaration | 30 227 (30 224 with usage) | one folded usage sample |
-| `assistant/attempt` | present, no `usage` field | identical declaration | 83 (0 with stream usage) | one settlement; unusable usage counts as a gap |
-| `llm/retry` | present, no usage field | identical declaration | 376 (261 distinct steps) | one unobservable failed call |
-| `llm/retry-started` | present | identical declaration | 376 | deliberately not accumulated |
-| `step/end` | present | present | 30 318 | not read |
-| `turn/end` | present | present | 1 432 | settlement |
+| Event | `0.1.7-rc.2` | Observed occurrences | Accumulated into turn state |
+| --- | --- | --- | --- |
+| `turn/start` | present | 1 456 | start time, `telemetryComplete` |
+| `step/start` | present | 30 335 | announces one accountable model call |
+| `assistant/message` | present, `usage?` per call | 30 227 (30 224 with usage) | one folded usage sample |
+| `assistant/attempt` | present, no `usage` field | 83 (0 with stream usage) | one settlement; unusable usage counts as a gap |
+| `llm/retry` | present, no usage field | 376 (261 distinct steps) | one unobservable failed call |
+| `llm/retry-started` | present | 376 | deliberately not accumulated |
+| `step/end` | present | 30 318 | not read |
+| `turn/end` | present, seven reason kinds | 1 432 | settlement |
 
-The declarations are byte-identical between the two versions for `dsh-session`, `dsh-llm`,
-`dsh-llm-retry`, and `dsh-token-meter`, so this plugin carries **no version branch**: the same
-`runtime-adapter.ts` path serves both. The observed ordering of a retried step is
+This plugin carries **no version branch** for the telemetry path: one `runtime-adapter.ts` serves
+the shapes above. The observed ordering of a retried step is
 `step/start → assistant/attempt? → llm/retry → llm/retry-started → assistant/message`, and a
 retried failure may also be recorded with no `assistant/attempt` at all; both orderings are
 covered by fixtures and by the L5 telemetry suite.
@@ -110,17 +132,19 @@ is not accumulated, because the call it announces a replacement for is already c
 
 `0.2.0` added two triggers, and both are durable events rather than waterfalls. Phase 8 re-read the
 installed declarations for this, because a wrong trigger would either claim an answer it must not
-claim or miss the interaction entirely.
+claim or miss the interaction entirely. The v0.4.0 migration re-verified every row below against the
+installed `0.1.7-rc.2` declarations and against live runs.
 
-| Item | `0.1.5-rc.1` | `0.1.5-rc.2` | Trigger used | Not used, and why |
-| --- | --- | --- | --- | --- |
-| Ask a human (`tool/call`, name `ask_user_question`) | present | not re-verified in this phase | the `session/event` member `tool/call`, exact name match first | — |
-| `tool/call` payload | `{ turn, step, callId, name, arguments }`, all required, `arguments` an unparsed JSON string | identical declaration | all four fields read | — |
-| `user-questions/request` | present, `@mode waterfall` | not re-verified in this phase | **not registered** | returning from it claims the request and would displace the official answerer (D018 §6) |
-| Approval ask (`approval/asked`) | present, log-only audit, no `surfaceOp` | not re-verified in this phase | the `session/event` member `approval/asked` | — |
-| `approval/asked` payload | `{ id, toolName, callId?, reason? }`; no `turn`, no `session`, no arguments | identical declaration | `toolName`, `callId`, `reason` | the payload's own omission of tool arguments is what keeps them out of the mail |
-| `approval/decided` | present, log-only audit | not re-verified in this phase | nothing | a decision means the human already acted, so a second "you are needed" mail would be false |
-| `approval/request` | present, `@mode waterfall` | not re-verified in this phase | **not registered** | same ownership reason as `user-questions/request` (D018 §8) |
+| Item | `0.1.7-rc.2` | Trigger used | Not used, and why |
+| --- | --- | --- | --- |
+| Ask a human (`tool/call`, name `ask_user_question`) | present | the `session/event` member `tool/call`, exact name match first | — |
+| `tool/call` payload | `{ turn, step, callId, name, arguments }`, `arguments` an unparsed JSON string | all four fields read | — |
+| `user-questions/request` | present, `@mode waterfall` | **not registered** | returning from it claims the request and would displace the official answerer (D018 §6) |
+| Approval ask (`approval/asked`) | present, log-only audit, no `surfaceOp` | the `session/event` member `approval/asked` | — |
+| `approval/asked` payload | `{ id, toolName, callId?, reason? }`; no `turn`, no `session`, no arguments | `toolName`, `callId`, `reason` | the payload's own omission of tool arguments is what keeps them out of the mail |
+| `approval/decided` | present, log-only audit | nothing | a decision means the human already acted, so a second "you are needed" mail would be false |
+| `approval/request` | present, `@mode waterfall` | **not registered** | same ownership reason as `user-questions/request` (D018 §8) |
+| `turn/end` reason kinds | `completed`, `max-tokens`, `error`, `aborted`, `blocked`, `interrupted`, **`forked`** | all seven narrowed; `forked` classified non-notifiable | — |
 
 Two facts about the question path are worth stating because they bound what any observer can do.
 `ctx.userQuestions.ask` throws `DELEGATED_CALLER` for a delegated caller, so whether a subagent can
@@ -129,14 +153,34 @@ independently of that ability. And `dsh-tool-ask-user` maps the model-facing `mu
 onto the service-side `multiSelect`, so the parser accepts both spellings and the notification does
 not depend on which side of that mapping it is reading.
 
-Phase 8 verified the two new surfaces against the `0.1.5-rc.1` installation only, which is the one
-present on this machine. The two versions were shown byte-identical for the packages Phase 6
-checked; that check was not repeated for `dsh-user-questions`, `dsh-user-approval`, or
-`dsh-tool-ask-user`, so `0.1.5-rc.2` is **unverified for the human-attention surfaces** rather than
-known-good or known-bad. If a shape difference exists there, the compatibility branch belongs in
-`runtime-adapter.ts` and nowhere else.
+The v0.4.0 probes exercised both surfaces end to end against the real services: `probe:questions`
+delivered the question mail while the agent was blocked and the completion mail after it resumed;
+`probe:approvals` placed the approval mail after `approval/asked` and before the answerer was
+consulted; `probe:approvals-duplicate` replayed the audit record and still sent one approval mail;
+`probe:approvals-rejected` sent none at the decision.
 
-### 2.3 Feature availability
+### 2.3 Session format v4 and the `forked` closer
+
+`0.1.7-rc.2` writes session format v4. Two consequences reach this plugin, and both are recorded here
+because they are *upstream facts* rather than plugin decisions:
+
+- **A turn opens before its input arrives.** The observed order is `turn/start` → `step/start` →
+  `user/message` (the operator's prompt) → `user/message` (runtime-context snapshot) →
+  `user/message` (skill reminder) → `assistant/message` → `turn/end`. The three user-role messages
+  carry no turn number, and the prompt is the **first** of them. Any rule that keeps the latest text
+  attributes the wrong message. See D020's A20-1.
+- **Fork-seed construction closes an open turn with `reason.kind = 'forked'`.** The declaration
+  states that only fork seeds carry it and that the loop never emits it. It is therefore recognised
+  as its own kind and mapped to a non-notifiable status: no success and no failure is fabricated for
+  a turn that never settled. `interrupted` is the other constructor-written closer, and the two are
+  named together by `isSyntheticCloser`. See D020's A20-2.
+
+A shape difference between DSH releases would be handled in one place, `runtime-adapter.ts`, because
+that module is the only normal module that knows a raw DSH session payload. That rule is what the
+v0.4.0 migration preserved: the v4 lifecycle and the new `forked` kind were absorbed there and in
+`completion.ts`, and no other module gained knowledge of a runtime shape.
+
+### 2.4 Feature availability
 
 No supported version lacks any capability this plugin uses. `ask_user_question` requires the
 `dsh-tool-ask-user` row to be mounted, and approval notifications require `dsh-user-approval`; a
@@ -181,13 +225,15 @@ the plugin's own structured lines become observable.
 | An invalid configuration refuses to mount | Passed — `plugin.config-invalid` named all five failing fields |
 | The Agent Loop is unaffected | Passed — every probed turn completed and printed its answer |
 
-Phase 6 repeated the composition checks under both supported versions, and added a telemetry
-cross-check that does not depend on this plugin at all:
+Phase 6 performed the composition checks, and added a telemetry cross-check that does not depend on
+this plugin at all. The v0.4.0 migration repeated the first row against `0.1.7-rc.2` with the packed
+`0.4.0` archive; the telemetry rows below are Phase 6's Phase 6 corpus results and were not
+re-derived, because the migration changed no accounting code (`schemaVersion` stays `2`).
 
 | Check | Result |
 | --- | --- |
-| The packed archive installs and loads under `0.1.5-rc.1` and `0.1.5-rc.2` | Passed — `plugin.ready`, `candidate.produced`, `notification.enqueued`, `mail.sent`, and an `ok` outcome in both |
-| A real multi-step turn aggregates every model call | Passed — `usageSampleCount` equalled the number of `assistant/message` events in the turn, and the aggregate equals an independent fold of the recorded events |
+| The packed archive installs and loads under `0.1.7-rc.2` | Passed — `plugin.ready`, `candidate.produced`, `notification.enqueued`, `mail.sent`, and an `ok` outcome, in six real-assembly probes and in a disposable web profile |
+| A real multi-step turn aggregates every model call | Passed — `usageSampleCount` equalled the number of `assistant/message` events in the turn |
 | The aggregate agrees with DSH's own `deriveTurnTokenUsage` | Passed — on the 967 of 1 432 recorded turns where the official meter returns a disclosure, `inputTokens` and `outputTokens` matched **967/967**; the meter declines the rest under its stricter all-or-nothing bucket rule |
 | Duration equals the turn boundary interval | Passed — `candidate.durationMs === event.time(turn/end) − event.time(turn/start)` on every turn examined; no duration defect was reproduced |
 | `scripts/turn-telemetry-probe.mjs` reproduces the pre-fix behaviour | Passed — replaying a recorded 63-step turn through the v0.1.0 build yields the last call's counters, and through the current build the turn aggregate |
