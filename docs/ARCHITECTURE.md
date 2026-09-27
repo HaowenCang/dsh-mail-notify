@@ -164,9 +164,9 @@ src/
 
 | 项 | 内容 |
 | --- | --- |
-| 职责 | 唯一的 DSH 边界。把 `(session, event)` 转为 `InternalEvent`；把 `session.header` 转为 `SessionFacts`；实现根/子会话三判据（D003）；把 `approval/asked` 的原始 payload 转为 `ApprovalObservation`；处理字段可选性与未知形状 |
+| 职责 | 唯一的 DSH 边界。把 `(session, event)` 转为 `InternalEvent`；把 `session.header` 转为 `SessionFacts`；实现根/子会话判据（D003，v0.4.0 起为两条：`origin === 'subagent'` 与数值 `delegationDepth > 0`；`parentSession` 仅作元数据，见 D021 第 4 条）；把 `approval/asked` 的原始 payload 转为 `ApprovalObservation`；处理字段可选性与未知形状 |
 | 输入 | live `Session` 对象、`SessionEvent`（其 `data` 是已 snapshot + deepFreeze 的普通 JSON）、`approval/asked` 的原始 payload |
-| 输出 | `InternalEvent` 判别联合：`{ kind: 'turn-start', turn, timeMs }`、`{ kind: 'step-start', turn, step, timeMs }`、`{ kind: 'assistant-message', turn, step, seq?, blocks, messageId?, provider?, model?, usage?, timeMs }`、`{ kind: 'assistant-attempt', turn, step, seq?, usage?, timeMs }`、`{ kind: 'llm-retry', turn, step, seq?, timeMs }`、`{ kind: 'tool-call', turn, step, callId?, name?, rawArguments?, timeMs }`、`{ kind: 'tool-result', turn, step, explicitError, errorName?, errorCode?, timeMs }`、`{ kind: 'user-message', turn?, text, timeMs }`、`{ kind: 'turn-end', turn, turnEndKind, detail?, reasonDetail?, failure?, timeMs }`、`{ kind: 'other', type, turn?, timeMs }`；`SessionFacts = { sessionId, isSubagent, decidedBy, cwd?, agentPreset? }`；`ApprovalObservation = { sessionId, notification }` |
+| 输出 | `InternalEvent` 判别联合：`{ kind: 'turn-start', turn, timeMs }`、`{ kind: 'step-start', turn, step, timeMs }`、`{ kind: 'assistant-message', turn, step, seq?, blocks, messageId?, provider?, model?, usage?, timeMs }`、`{ kind: 'assistant-attempt', turn, step, seq?, usage?, timeMs }`、`{ kind: 'llm-retry', turn, step, seq?, timeMs }`、`{ kind: 'tool-call', turn, step, callId?, name?, rawArguments?, timeMs }`、`{ kind: 'tool-result', turn, step, explicitError, errorName?, errorCode?, timeMs }`、`{ kind: 'user-message', turn?, text, sourceKind?, timeMs }`、`{ kind: 'turn-end', turn, turnEndKind, detail?, reasonDetail?, failure?, timeMs }`、`{ kind: 'other', type, turn?, timeMs }`；`SessionFacts = { sessionId, isSubagent, decidedBy, cwd?, agentPreset?, parentSession? }`；`ApprovalObservation = { sessionId, notification }` |
 | 不允许 | 不做业务判定、不构造候选、不累积状态、不写日志（返回值由 handler 记录）、不访问网络或文件、不抛异常（未知形状转 `{ kind: 'other' }`） |
 
 适配器的实现约束：
@@ -175,6 +175,7 @@ src/
 - `event.data.turn` 缺失或非数字时，该事件降级为 `{ kind: 'other' }`，不得用 `0` 或 `NaN` 兜底。
 - `tool/result` 的双判据取或在适配器内完成，输出**已折叠为单一布尔** `explicitError`；只有判据命时才附带 `errorName` / `errorCode`（D005）。
 - `session.header` 的读取必须容忍字段缺失（`cwd`、`agentPreset`、`parentSession`、`delegationDepth` 均可为 `undefined`）。
+- `user/message` 的归属只读 `event.data.source.kind` 一个标量，并在输出中以 `sourceKind` 携带；**不得**保留或记录整个 `source` 对象。`source` 缺失、非对象或 `kind` 非字符串时 `sourceKind` 缺省，该消息按「非直接人类」处理（fail closed）。判定见 `CONFIG_SPEC.md` 第 4.1 节与 D021 第 3 条。
 - 返回的对象只含标量与自有数组，**不得**包含对 `session`、`event`、`event.data` 的任何引用。
 - `assistant/message` 的 usage 取值顺序是 `data.usage` 优先、`data.stream` 中最后一条 `{ type: 'chunk', chunk: { type: 'usage' } }` 记录次之（与 `dsh-token-meter` 一致）；`assistant/attempt` 只从 stream 取。两条路径都不合成、不补齐缺失计数器。
 - `seq` 是 settlement 身份：它是 durable 事件的单调序号（实测 `assistant/message`、`assistant/attempt`、`llm/retry`、`step/start`、`tool/call`、`tool/result`、`turn/start`、`turn/end` 全部携带），适配器原样透传，缺失时省略而不补默认值。
@@ -599,15 +600,31 @@ Map<sessionId, Map<turn, TurnState>>
 | `credentials.describe(ref)` | 构造不含 secret 的诊断信息 | 同上 | Inspect |
 | `timer` | 可随 Fiber 释放的退避等待 | `ctx.get('timer')` + `undefined` 检查 | Inspect |
 | `ctx.effect` | 注册需随 Fiber 释放的资源 | `ctx.effect(callback, label?)` | Inspect |
+| `loader/volatile-update` 事件（v0.4.0） | 实时配置变更信号；订阅后由 `bindVolatileConfig` 重建运行时 | `ctx.on('loader/volatile-update', …)` | Inspect + 实测 |
+| `ctx.inject(['credentials'], …)` 与 `settingsForms`（v0.4.0） | 宿主侧表单服务与凭据状态查询 | `ctx.inject([...], callback)` | Inspect |
 | 日志接口 | 结构化日志输出 | Cordis 上下文 logger（等价物；`console` 仅作 `apply` 早期阶段的兜底） | Inspect（Builtin 目录） |
 
-明确**不**使用：`sessions` Service（根级监听器已全局接收事件，无需反查 live Session）、任何 DSH Slot / Client 侧接口（本插件为 Host-only，无 UI 需求）、任何修改 DSH 核心配置的路径。
+明确**不**使用：`sessions` Service（根级监听器已全局接收事件，无需反查 live Session）、任何修改 DSH 核心配置的路径。
+
+> **v0.4.0 更正。** 本节原先还声明「不使用任何 DSH Slot / Client 侧接口，本插件为 Host-only」。该声明对 v0.3.x 成立，对 v0.4.0 不成立：v0.4.0 随包发布一个浏览器 client bundle（`lib/client.js`），并经 `plugins.bundle.config` 在 Plugins 页提供配置面。因此上表与下段均已就地改写，而不是把过期结论留在规范文档里。
 
 `session/event` 上被识别的 `event.type` 共十种：`turn/start`、`step/start`、`assistant/message`、`assistant/attempt`、`llm/retry`、`tool/call`、`tool/result`、`user/message`、`turn/end`，以及显式忽略但仍被适配器识别的 `llm/retry-started`。全部事件类型的实际支持矩阵与取证见 [`DSH_INTEGRATION.md`](DSH_INTEGRATION.md) 第 2 节。
 
 `approval/asked` 同样经 `session/event` 投递，但不经过上面这张适配器表（D018 第八条）：它由第二个监听器直接观察，并由 `runtime-adapter.ts` 的 `toApprovalObservation()` 转为安全标量。它是一次性的 durable 审计事件，不带 turn 上下文，这决定了它的触发点只能落在审计事件本身，而不能落在 `approval/request` 上。
 
-**本插件为 Host-only。** 不存在 Client half，不注册 Slot，不依赖浏览器环境。
+### 10.1 Client half（v0.4.0 起）
+
+`src/client/**` 是本插件的浏览器半边，随包发布为 `lib/client.js`，`package.json` 的 `dsh.client.inject` 声明它依赖的六个 DSH client 包。它的接口面只有三项：
+
+| 接口 | 用途 |
+| --- | --- |
+| `ctx.configForms.get(entryId)` / `ctx.configForms.whileServed([entryId], …)` | 取得该 profile 条目的表单并只在 Host 服务该条目时贡献槽位 |
+| `ctx.slots.inject('plugins.bundle.config', { view: 'page' }, …)` | 把卡片挂到 bundle 自己的配置面上（key 为包名） |
+| `ctx.connection.rpc.call(...)` | 调用本插件宿主侧注册的两个只读／写入端点（状态、Test Email） |
+
+凭据在浏览器半边是**只写**的：只有 `describe` / `set` / `unset` 三个操作，任何客户端代码路径都收不到凭据值（`SECURITY.md`）。
+
+「不存在 Client half」的表述在 v0.4.0 已被取代，仍保留在 `PRODUCT_SPEC.md` 的历史条目标注中供溯源；该文件的现行条目已同步更正。
 
 ---
 
@@ -622,7 +639,7 @@ Map<sessionId, Map<turn, TurnState>>
 - 去重状态的跨进程持久化。
 - 基于 shell 输出文本的执行问题检测（保留 `executionIssueCount` 概念，不实现算法）。
 - 基于 `usage` 的成本统计或配额告警。
-- Client / 浏览器 UI。
+- ~~Client / 浏览器 UI~~：v0.4.0 已交付 Plugins 页配置面（第 10.1 节），本项不再是非目标。仍属非目标的是：会话流内的通知卡片、邮件历史视图、以及任何在浏览器侧渲染邮件正文的界面。
 - 对 DSH 核心源码的任何修改。
 - 邮件内作答、action link、一键批准与远程回调：人工注意力通知是只读观察，不参与 answer ownership chain。
 - 任何含 DSH Web token 的深链接：`?token=…`、auth token 与会话 secret 一律不得进入邮件；插件不构造 Web 链接，也不读取 token。

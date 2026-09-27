@@ -56,8 +56,15 @@ without `credentials` still loads, still observes turns, and reports
 `this profile mounts no Credential service` when a send is attempted.
 
 **Not used:** the `sessions` service (a root-level listener already receives every session's
-events, so reverse lookup would add coupling for no information), any Slot or Client-side
-interface, and any path that modifies harness configuration.
+events, so reverse lookup would add coupling for no information), and any path that modifies harness
+configuration.
+
+> **v0.4.0 correction.** This section previously also listed "any Slot or Client-side interface" as
+> unused. That was true through `0.3.x`; v0.4.0 ships a browser client half, so the host plane now
+> depends on `ctx.configForms` and the client plane registers into `plugins.bundle.config`. The host
+> dependencies are listed at rows 25–28 of the table above and the client surface in
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) §10.1. What remains unused is any Slot other than
+> `plugins.bundle.config`, and any interface that would render mail content in the browser.
 
 ## 2. Event payload paths
 
@@ -72,8 +79,9 @@ single `session/event` event, so every field access descends through `event.data
 | Payload root | `event.data` |
 | Session id | `session.id` |
 | Workspace, preset | `session.header.cwd`, `session.header.agentPreset` |
-| Subagent, primary criterion | `session.header.origin === 'subagent'` |
-| Subagent, redundant criteria | `session.header.parentSession`, `session.header.delegationDepth > 0` |
+| Subagent, criterion one | `session.header.origin === 'subagent'` |
+| Subagent, criterion two | `typeof session.header.delegationDepth === 'number' && session.header.delegationDepth > 0` |
+| Fork lineage, **not** a subagent criterion | `session.header.parentSession` (metadata only) |
 | Turn, step | `event.data.turn`, `event.data.step` |
 | Content blocks | `event.data.message.content` |
 | User-visible text | `…content[i].text` **only when** `.type === 'text'` |

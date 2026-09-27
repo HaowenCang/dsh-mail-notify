@@ -28,6 +28,13 @@
  *   credentials           the credential-reference contract, on the real store
  *   user-prompt           two sequential Turns, attributing each prompt to its own mail
  *
+ * The semantic-invalid-write case is not a scenario here. The Host write path it
+ * needs (`SettingsForms.update` → `ConfigEditor.edit`) is only composed when a
+ * profile context is published, and this probe's launcher path publishes none, so
+ * the services are disabled and there is no boundary to address. It lives in
+ * `scripts/probe-host-config-write.mjs`, which boots the app itself for exactly
+ * that reason; see that file's header.
+ *
  * @module dsh-mail-notify/scripts/probe-e2e
  */
 
@@ -71,17 +78,27 @@ const promptB = 'PROBE_PROMPT_B_beta second request: summarise the second task'
 /**
  * The DSH installation root — the directory holding `node_modules/@deepseek-ai`.
  *
- * The boot probe defaults to `<DSH_HOME>/..`, which for the disposable probe home
- * is inside the project. Resolving it from the operator's own DSH home instead
- * keeps the probe pointed at the real installation while its `DSH_HOME` stays
- * disposable.
+ * `DSH_INSTALL_ROOT` is authoritative when set. The fallback reads the launcher
+ * that is on `PATH`, because the shape this used to assume — the operator's
+ * `.dsh` sitting beside the global `node_modules` — stopped being true before
+ * this probe was last run: since DSH 0.1.7 the launcher nests its own
+ * dependencies, and `dirname(DSH_HOME)` is now simply the user's home. That
+ * silent wrong answer surfaced as an `ENOENT` from deep inside the installation,
+ * which reads like a broken install rather than a broken assumption.
  *
  * @returns the install root path.
  */
 function resolveInstallRoot() {
   const explicit = process.env['DSH_INSTALL_ROOT']
   if (explicit !== undefined && explicit !== '') return explicit
-  return dirname(process.env['DSH_HOME'] ?? join(homedir(), '.dsh'))
+  const located = spawnSync('npm', ['prefix', '-g'], { encoding: 'utf8', shell: true })
+  const prefix = (located.stdout ?? '').trim()
+  if (located.status === 0 && prefix !== '' && existsSync(join(prefix, 'node_modules', '@deepseek-ai'))) {
+    return prefix
+  }
+  throw new Error(
+    'probe-e2e: cannot locate the DSH installation; set DSH_INSTALL_ROOT to the directory holding node_modules/@deepseek-ai',
+  )
 }
 
 const installRoot = resolveInstallRoot()
@@ -878,7 +895,11 @@ lines.push(`[probe] artifacts: ${outDir}`)
 process.stdout.write(`${lines.join('\n')}\n`)
 
 process.exit(
-  result.code === 0 && messages.length > 0 && credentialFailures.length === 0 && credentialReport !== '' && promptAttributionPassed
+  result.code === 0 &&
+    messages.length > 0 &&
+    credentialFailures.length === 0 &&
+    credentialReport !== '' &&
+    promptAttributionPassed
     ? 0
     : 1,
 )

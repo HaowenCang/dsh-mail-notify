@@ -75,7 +75,7 @@ These are absent by decision, not by omission. Each is recorded with its reasoni
 | Detection of failed shell commands from their output text | `explicitToolErrorCount` deliberately excludes it; a shell non-zero exit is a successful tool result in DSH |
 | Cost accounting or quota alerts from `usage` | The counters' semantics are unconfirmed; deriving from them would present a guess as a fact |
 | Cross-process deduplication | Requires persistence, corruption recovery, and a product answer to "should a replayed turn re-notify" |
-| A browser or Client-side surface | Host-only plugin; there is no UI to build |
+| ~~A browser or Client-side surface~~ | **Superseded in v0.4.0.** The original entry read "Host-only plugin; there is no UI to build". DSH `0.1.7` replaced the namespace-registration seam with schema-derived forms, and a plugin's configuration surface became a browser contribution, so v0.4.0 ships a client bundle with a Plugins-page configuration form (`docs/ARCHITECTURE.md` §10.1). Still non-goals: an in-conversation notification card, a mail history view, and any surface that renders mail bodies in the browser |
 | Any modification to the DeepSeek Harness source | Delivery requirement |
 
 ## 4. Deliberate semantic boundaries

@@ -1069,6 +1069,133 @@ DSH 0.1.7 新增该 kind，仅由 fork seed 构造产生（`dsh-session` 明确�
 
 ---
 
+## D021 — v0.4.0 RC 审计收口：宿主校验边界、来源归属与 subagent 判据（2026-09）
+
+### 背景
+
+D020 记录了首次 v0.4.0 迁移，并把结果记为 `PASS — v0.4.0 RC READY`。随后的 RC 审计否决了该结论。**本节不修改 D020 的任何文字**：首次 RC 确实得出过那个（错误的）校验结论，抹去它会让「后来为什么改」失去依据。本节记录四项判断的修正，以及由此产生的实现与文档变更。
+
+### 1. Cordis 的 `resolveConfig` 与插件本地的 `resolveConfig` 是两个不同的函数
+
+D020 第 4 条写道：`dsh-config-editor.edit` 在落盘前调用 `resolveConfig(fiber.runtime, next)`，「也就是用插件自己的 Config schema 解析候选值」，并据此认为**跨字段规则**已在落盘前生效。前半句成立，后半句是推论错误。
+
+`dsh-config-editor/lib/index.js` 第 4 行从 `@deepseek-ai/cordis` 导入 `resolveConfig`；该函数（`cordis/src/fiber.ts:50`）只对插件的 `Config` 求 standard-schema 值：
+
+```js
+export function resolveConfig(runtime, config) {
+  if (!runtime.Config) return config
+  const result = runtime.Config['~standard'].validate(config)
+  if ('then' in result) throw new TypeError('Async config validation is not supported')
+  if (result.issues) throw new ValidationError(result.issues)
+  return result.value
+}
+```
+
+它**从不调用** `src/config.ts::resolveConfig()`——后者是本插件自己声明的纯函数，只出现在 `src/index.ts` 的运行时路径上。两个同名函数处于两个不同的调用链，唯一的交集是「都读取同一份 `Config` schema」这一事实。因此首轮结论「跨字段规则已由宿主强制」不成立：宿主只强制**字段级**约束，`smtpHost` 为空、`to` 为空这类**产品不合法但字段合法**的配置可以一路写进 `cordis.patch.yml`。
+
+**决策：把产品语义规则放到宿主真正会求值的那条契约上。** 插件导出的 `Config` 是由 `new Schema(Config.toJSON())` 重建、并以 own property 覆盖 `~standard.validate` 的节点：先委托 Schemastery 原有校验，仅在无字段级 issue 时叠加产品语义规则，违规以带路径的 standard-schema `issues` 返回。宿主把它转为 `ValidationError`，`dsh-api-settings-controller` 归类为 `settings/rejected`，此时尚未发生任何文件写入。`src/config.ts::resolveConfig()` 保留为运行时纵深防御（手工编辑的 patch 不经过宿主边界），并改写为调用**同一个**纯校验器，使两处不可能各自漂移。
+
+### 2. `.check()` 在锁定的 Schemastery 上不存在
+
+DSH `0.1.7-rc.2` 的说明文字称「跨字段 Config 校验用 `.check()`，这些检查在持久化前于宿主运行，并从序列化表单 schema 中略去」。该描述对本插件锁定的 `@deepseek-ai/schemastery@3.18.4` **不成立**：实测 `Schema.prototype` 的完整自有属性为 `~standard, toJSON, set, push, i18n, extra, required, disabled, collapse, hidden, loose, deprecated, experimental, pattern, simplify, toString, role, default, link, comment, description, max, min, step, volatile`，其中没有 `check`。仓库内副本与 DSH `0.1.7-rc.2` 随包副本的版本号与属性集完全一致。
+
+`Schema.transform` 不能替代：volatile 字段不允许位于 transform 节点之下（`volatile fields require a fixed object path…`），根 transform 会摧毁表单，D020 第 2 条已实测记录。
+
+**决策：不使用 `.check()`，使用实际存在的 standard-schema 契约。** 该契约同时满足说明文字所承诺的两条性质：在宿主持久化前求值（第 1 条），并且不出现在序列化的表单 schema 中（`toJSON()` 不携带任何函数，`dsh-settings` 的 `plainSchema` 会从重建节点上删除 `volatile` 标记，因此 23 个字段仍然完整可见）。
+
+### 2.1 实践建立的机制，逐项对照
+
+任务要求就地确定的五项，全部由探针在**精确安装**的 `@deepseek-ai/schemastery 3.18.4` 上实测；仓库内副本与 DSH `0.1.7-rc.2` 随包副本（`SCHEMA_PROBE_MODULES` 指向该安装）两组结果一致：
+
+| 问题 | 结论 | 证据 |
+| --- | --- | --- |
+| `.check()` 的回调签名 | **不存在**，因此无签名可确定，该 API 不可调用 | `Schema.prototype` 自有属性完整枚举（见上）；`typeof Schema.prototype.check === 'undefined'` |
+| 回调收到原始候选值还是 volatile 包装 | 该回调不存在；真正被调用的是 standard-schema 校验器，它收到**原始候选值**，其 `value` 是 volatile 树 | `~standard.validate(candidate)` 的 `value.enabled.get()` 可读，`value.to.get()` 为冻结数组 |
+| 含 `.volatile()` 子字段的根对象是否仍是合法表单 | **是**，且字段一个不少 | `toJSON()` → `new Schema(...)` → `plainSchema`（删除 volatile 标记）→ `volatileForm`，字段数与声明一致；探针另断言每个表单节点都已无 volatile 标记 |
+| 失败的检查是否让宿主在写入前拒绝 | **是** | `scripts/probe-host-config-write.mjs`：13 个写入用例、75 项断言全 PASS，含「被拒写入后 patch 逐字节不变、revision 不前进、旧运行时仍能投递」 |
+| 检查是否如上游所述从序列化浏览器表单中略去 | **是**（就本机制而言） | `toJSON()` 的输出不含任何函数；探针断言「序列化结果中不含函数」且「表单节点上无 `~standard` 覆盖」 |
+
+机制的形状，即 `src/config-check.ts` 的 `withProductChecks`：
+
+```js
+const node = new Schema(base.toJSON())      // 与 dsh-settings 的 plainSchema 同一种重建
+const inherited = Object.getOwnPropertyDescriptor(Schema.prototype, '~standard').get
+Object.defineProperty(node, '~standard', { configurable: true, value: {
+  version: 1,
+  vendor: 'dsh-mail-notify',
+  validate: (candidate) => {
+    const result = inherited.call(node).validate(candidate)   // 字段级校验先行，保留其字段路径
+    if ('then' in result) return result                       // 异步由 cordis 自行拒绝
+    if (result.issues !== undefined) return result
+    const issues = checkProductConfig(collapseVolatile(result.value)).issues
+    return issues.length === 0 ? result : { issues: [...issues] }
+  },
+} })
+```
+
+三点后果是这一选择成立的理由：导出的 `Config` 本身未被改动，因此 `simplify`、`toJSON`、`dict` 与每个字段的 `meta.volatile` 都还是 Schemastery 自己的；字段级违规仍由字段 schema 报告，带 Schemastery 计算的路径；校验通过时返回的仍是继承结果，也就是 Loader 需要提交的那棵 volatile 树。
+
+`checkProductConfig` 是**唯一**的规则副本，宿主边界与 `config.ts::resolveConfig` 都调用它。
+
+被拒写入的实测拒绝文本（`scripts/probe-host-config-write.mjs`），格式为 `invalid config:\n  - <message> (at <field>)`：
+
+```text
+enabled=true + smtpHost=""            → - smtpHost is required and must be a non-empty host name (at smtpHost)
+enabled=true + smtpHost="a b"         → - smtpHost must not contain whitespace (at smtpHost)
+enabled=true + to=[]                  → - to must contain at least one valid recipient address (at to)
+enabled=true + smtpUser=""            → - smtpUser is required and must be a non-empty user name (at smtpUser)
+enabled=true + from=""                → - from is required and must be a non-empty address (at from)
+enabled=true（其余留空）              → 上述四条同时给出，逐项带路径
+smtpPort=99999（字段级，对照）        → - $.smtpPort expected number <= 65535 but got 99999 (at smtpPort)
+```
+
+### 3. 直接人类提示词的归属由 `source.kind` 决定，不由事件顺序决定
+
+D020 附 A20-1 把归属修正为「每个 `(session, turn)` 只接受第一条非空白用户消息作为提示词」。这是在 v4 生命周期下对**顺序**的一次正确观察，但它把产品语义建立在一个运行时未承诺的顺序上。
+
+`dsh-llm` 的 `MessageBase` 声明 `readonly source: MessageSource`（必填），基础契约把直接人类消息定义为 `{ kind: 'user' }`；`dsh-api-session-controller` 的 `user-rpc` 增补同样是 `kind: 'user'`。其余生产者各自声明自己的 kind（`runtime-context`、`agent-instructions`、`skill-catalog`、`time-context`、`tmux-context`、`plan-mode`、`repeat-tool-reminder`、`goal`、`webhook`、`agent-message`、`subagent-settled`、`user-approval`、`team-message` 等）。直接人类提示词、`agent.inject()` 注入的合成上下文与 goal 续跑三者**都可以**表现为 `user/message`，正如 Session 文档所述：把它们区分开的是 `source`。
+
+**决策：`includeUserPrompt` 的语义是「该 Turn 内 `source.kind === 'user'` 的最近一条 `user/message`」。** 非 `user` 的 source kind 永远不参与归属；`source` 缺失、非对象或 `kind` 非字符串时按「非直接人类」处理（fail closed）。适配器只复制 `sourceKind` 这一个标量，不保留也不记录 source 对象本身。
+
+**这与 `docs/CONFIG_SPEC.md` 旧文「该 Turn 最近一条用户消息」不是语义变更，而是该表述的精确化**：「最近一条」保持不变，被限定的是「用户消息」的外延。因此不需要「从最近一条改成第一条」的 ADR——那次改动本身才是错的，已撤销。
+
+### 4. `parentSession` 不是 subagent 的正向判据
+
+`dsh-session` 的 `SessionHeader` 对三个字段的说明是精确的：
+
+- `origin?: 'subagent'` — "Coarse product classification for a session created as a subagent child."
+- `delegationDepth?: number` — "absent (zero) for a top-level session, parent depth + 1 for a subagent child."
+- `parentSession?: SessionId` — "The session this one was forked from (**seed lineage**), if any."
+
+前两者是 subagent 的正向证据；`parentSession` 只表示 fork 谱系。用户主动创建的 fork 会带 `parentSession` 而没有 subagent 的 origin 或正 depth，因此把它当作判据会把**用户自己的 fork 误判为 subagent**，从而在 `includeSubagents = false` 时静默吞掉这些会话的全部通知——包括提问与审批。
+
+这一风险在 Phase 8.1 就已被识别并留证（本文件 A15）：`dsh-subagent` 的 `childSessionMeta()` 为**每一个**子代理子会话同时写入 `origin: 'subagent'`、`delegationDepth: parent + 1` 与 `parentSession`，因此运行时的子代理**全部**命中 `origin` 判据；而 `dsh-session` 的 `SessionStore.fork()` 只写 `parentSession` 与 `isSeeded: true`，不写 `origin`、不写 `delegationDepth`。A15 当时的结论是「未观察到真实子代理被误判，故不改动」，并把该分支在 `includeSubagents: false` 下不发邮件的后果记为已知代价。RC 审计改变了这个权衡：**判据应当只表达它真正能证明的事实**，而 `parentSession` 证明的是谱系而不是代理性；删掉它不会让任何真实子代理失去分类（子代理必带 `origin`），却会修复一类用户可触发的静默丢失。
+
+**决策：v0.4.0 只认 `origin === 'subagent'` 与数值 `delegationDepth > 0` 两个正向判据；`parentSession` 降级为元数据（保留在 `SessionFacts` 中，不参与判定）。** 不为 DSH 0.1.5 增加兼容分支：v0.4.0 只声明 `0.1.7-rc.2`。A15 的记录保持原样，作为「当时为何未改」的依据。
+
+### 5. 文档修正
+
+以下规范文档在首轮 RC 中保留了与实现不符的断言，本次一并更正（历史阶段报告保持其历史原貌）：
+
+| 文档 | 过期断言 | 处置 |
+| --- | --- | --- |
+| `docs/CONFIG_SPEC.md` | 配置「在 `apply()` 时一次性读取」；`smtpPasswordCredential` 可写 `<scope>/<id>`；`includeUserPrompt` 为「最近一条用户消息」；校验只发生在装载时 | 新增第 0.1 节（载体／持久化／表单／实时更新／宿主校验边界），改写第 1、2.7、3、4、5、6 节 |
+| `docs/ARCHITECTURE.md` | 「本插件为 Host-only。不存在 Client half，不注册 Slot」；「Client / 浏览器 UI」列为非目标 | 改写第 10 节并新增第 10.1 节（Client half 的三项接口面）；第 11 节相应条目改为「已被 v0.4.0 取代」，保留其余浏览器侧非目标 |
+| `docs/PRODUCT_SPEC.md` | 「A browser or Client-side surface — Host-only plugin」 | 该条目标注为已被 v0.4.0 取代，并说明仍属非目标的部分 |
+| `00_MASTER.md` | Phase 10 状态为 `PASS — v0.4.0 RC READY` | 改为 `PARTIAL — RC correctness closure in progress`，并补上被驳回的四处结论；历史阶段的已发布状态不改写 |
+| `V0.4.0_COMPAT_REPORT.md` | 第 7.4 节把两个 `resolveConfig` 混为一谈；第 10 节把顺序规则写成修复；第 17 节只有字段级无效写入 | 新增 *RC audit correction* 一节逐条更正，保留首轮 `PASS` 结论作为历史；第 7.4、10、17 节就地标注更正 |
+
+### 后果
+
+- 宿主在**落盘前**拒绝字段合法但产品不合法的配置；被拒写入后 `cordis.patch.yml` 逐字节不变、revision 不前进、旧运行时继续生效。
+- 警告级规则（587+secure、465+!secure、五个开关全关）**不**因本次收口升级为错误。
+- `enabled === false` 时未完成的 SMTP 字段保持合法，用户可先关闭再分步配置。
+- 归属语义在 DSH 改变注入内容顺序时保持不变。
+- 用户 fork 不再被当作 subagent 抑制。
+- 语义规则只有一份实现，宿主边界与运行时共用。
+
+---
+
 ## 附：Implementation Addendum — Phase 8（2026-09）
 
 本节记录 v0.2.0 实现期间出现的、D001–D017 未覆盖或需补充的事实。**D001–D017 本身除 D011 中已显式标注的那一句外未被修改。**

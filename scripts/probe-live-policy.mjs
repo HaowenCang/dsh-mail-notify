@@ -58,11 +58,27 @@ const questionWhileOff = 'QUESTION_WHILE_OFF_should_not_be_mailed'
 /** The question the second Turn asks, after the switch is turned on. */
 const questionWhileOn = 'QUESTION_WHILE_ON_should_be_mailed'
 
-/** The DSH installation root, resolved the same way the other probes resolve it. */
+/**
+ * The DSH installation root, resolved the same way the other probes resolve it.
+ *
+ * `DSH_INSTALL_ROOT` wins when set. The fallback asks `npm` for the global
+ * prefix rather than assuming the operator's `.dsh` sits beside the global
+ * `node_modules`: it does not, and the old assumption resolved to the user's home
+ * and produced an `ENOENT` from inside the installation.
+ *
+ * @returns the install root path.
+ */
 function resolveInstallRoot() {
   const explicit = process.env['DSH_INSTALL_ROOT']
   if (explicit !== undefined && explicit !== '') return explicit
-  return dirname(process.env['DSH_HOME'] ?? join(homedir(), '.dsh'))
+  const located = spawnSync('npm', ['prefix', '-g'], { encoding: 'utf8', shell: true })
+  const prefix = (located.stdout ?? '').trim()
+  if (located.status === 0 && prefix !== '' && existsSync(join(prefix, 'node_modules', '@deepseek-ai'))) {
+    return prefix
+  }
+  throw new Error(
+    'probe-live-policy: cannot locate the DSH installation; set DSH_INSTALL_ROOT to the directory holding node_modules/@deepseek-ai',
+  )
 }
 const installRoot = resolveInstallRoot()
 

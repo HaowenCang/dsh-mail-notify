@@ -84,12 +84,14 @@ D018 同一行内出现两个 `QUE-` 前缀组，各自属于不同对象：`§9
 | SES-01 | 根会话 | `{origin: undefined, parentSession: undefined, delegationDepth: undefined}` | 非 subagent | L3 |
 | SES-02 | 根会话 depth 0 | `{origin: null, parentSession: null, delegationDepth: 0}` | **非 subagent**（这是 Phase 1 确证的误判陷阱） | L3、L5 |
 | SES-03 | subagent 由 origin | `{origin:'subagent'}` | subagent，`decidedBy: 'origin'` | L3 |
-| SES-04 | subagent 由 parentSession | `{origin: undefined, parentSession:'session-x'}` | subagent，`decidedBy: 'parentSession'` | L3 |
+| SES-04 | 用户主动 fork（v0.4.0 更正） | `{origin: undefined, parentSession: 'session-x'}`，无正 depth | **非 subagent**，`parentSession` 仅作元数据；`includeSubagents: false` 下仍须通知 | L3、L5 |
 | SES-05 | subagent 由 depth | `{origin: undefined, parentSession: undefined, delegationDepth: 1}` | subagent，`decidedBy: 'delegationDepth'` | L3 |
 | SES-06 | `delegationDepth: 0` 与 `1` 的差异 | 两个会话仅 depth 不同 | 严格 `> 0` 比较，0 判为根 | L3 |
 | SES-07 | 恶意 id 格式 | `id: 'session-subagent-lookalike'` | 不影响判定（不得按 id 格式推断） | L3 |
 
 SES-02 与 SES-06 必须存在。它们对应 Phase 1 在运行时实际捕获的误判风险，而不是假想边界。
+
+> **SES-04 更正（v0.4.0，D021 第 4 条）。** 该用例原先断言 `parentSession` 单独成立即为 subagent，`decidedBy: 'parentSession'`。该断言与 `dsh-session` 对 `SessionHeader.parentSession` 的定义（"The session this one was forked from (seed lineage)"）冲突：它证明的是谱系而不是代理性。`SessionStore.fork()` 只写 `parentSession` 与 `isSeeded: true`，因此原断言恰好把**用户自己的 fork** 判为子代理，并在 `includeSubagents: false` 下静默抑制其通知。现行判据只有 `origin` 与 `delegationDepth > 0`；真实子代理必带 `origin`，故不存在被漏判的子代理。
 
 ---
 
