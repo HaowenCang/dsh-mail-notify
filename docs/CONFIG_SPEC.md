@@ -8,7 +8,7 @@
 
 ## 0. Implementation notes（Phase 3 补记，2026-09）
 
-以下为逐字段实现时的补充事实。**没有字段被改名、删除或改变语义**；`Config` schema 与 `resolveConfig()` 的实际取值与本文件第 3 节一致。
+以下为逐字段实现时的补充事实。**没有字段被改名、删除或改变语义**；`Config` schema 与 `resolveConfig()` 的实际取值与本文件第 3 节一致，逐字段的默认值与校验列见第 2 节（该表的默认值列在 v0.4.0 已按 schema 实际取值更正）。
 
 **校验分两层实现，与第 4 节的两级划分对应但不是同一套机制。**
 
@@ -50,6 +50,7 @@ v0.4.0 更换了配置的**载体、编辑面与校验边界**，本节的结论
 | --- | --- |
 | 可编辑来源 | 本插件导出的 `Config`（`src/config.ts`），不是 `$DSH_HOME/settings.yaml` |
 | 字段数 | **23 个顶层 `.volatile()` 字段**；schema 必须保持扁平，因为 Schemastery 拒绝「volatile 字段位于 volatile 祖先或容器节点之下」 |
+| 默认值 | **每个字段都有 schema 默认值**，没有「无默认值」字段：`smtpHost` / `smtpUser` / `from` 为 `''`，`to` 为 `[]`，`smtpPasswordCredential` 为引用名 `DSH_MAIL_SMTP_PASSWORD`。逐字段取值见第 2 节，汇总见第 3 节 |
 | 持久化 | profile 的 `cordis.patch.yml` 中该条目的 `config` 段，由 `dsh-config-editor` 写入 |
 | 浏览器表单 | `ctx.configForms.get(entryId)`；卡片经 `plugins.bundle.config`（key 为包名）注册，并以 `whileServed([entryId], …)` 门控 |
 | 实时生效 | Loader 在「变更只涉及 volatile 字段」时走 `_commitVolatile` 并 emit `loader/volatile-update`；插件据此重建运行时，无需重启 |
@@ -117,11 +118,15 @@ description, max, min, step, volatile
 
 | 字段 | 类型 | 默认 | 校验 | 说明 |
 | --- | --- | --- | --- | --- |
-| `smtpHost` | `string` | 无（必填） | 非空，不含空白 | SMTP 服务器主机名 |
+| `smtpHost` | `string` | `''` | 字段级无约束；`enabled === true` 时要求非空且不含空白 | SMTP 服务器主机名。`''` 是「尚未配置」的占位值，不是可用的主机名 |
 | `smtpPort` | `number` | `587` | 整数，1–65535 | 端口 |
 | `smtpSecure` | `boolean` | `false` | — | `true` = 隐式 TLS（通常配 465）；`false` = 允许 STARTTLS 升级（通常配 587） |
-| `smtpUser` | `string` | 无（必填） | 非空 | 认证用户名 |
-| `smtpPasswordCredential` | `string` | 无（必填） | 非空，且匹配 `^[A-Za-z_][A-Za-z0-9_]*$` | **凭据引用名**，不是密码本身。交给 `credentials.resolve()` 解析。示例值 `DSH_MAIL_SMTP_PASSWORD` |
+| `smtpUser` | `string` | `''` | 字段级无约束；`enabled === true` 时要求非空 | 认证用户名。`''` 表示未配置 |
+| `smtpPasswordCredential` | `string` | `DSH_MAIL_SMTP_PASSWORD` | 匹配 `^[A-Za-z_][A-Za-z0-9_]*$`（字段级） | **凭据引用名**，不是密码本身。交给 `credentials.resolve()` 解析 |
+
+`smtpHost` 与 `smtpUser` 的 schema 默认值是空串，不是「无默认值」。**两者在语义上仅在 `enabled === true` 时必需**：产品的非空规则只在总开关打开时执行（第 0.1 节、第 4 节），因此关闭插件或分步配置的用户不会被未完成的 SMTP 字段阻塞。空串本身通过字段级校验，它在开关打开时被产品语义校验拒绝，错误信息为 `smtpHost is required and must be a non-empty host name` 或 `smtpUser is required and must be a non-empty user name`。
+
+`smtpPasswordCredential` 的默认值是引用名 `DSH_MAIL_SMTP_PASSWORD`，不是空串：字段级 `pattern()` 不接受空串，而表单必须能表示并保存一份「尚未配置」的文档。该值是**引用名**，绝不是密码。
 
 `smtpPasswordCredential` 只接受一种形式：DSH 的 `CredentialRef` 文法 `^[A-Za-z_][A-Za-z0-9_]*$`，即 POSIX 风格的环境变量名（`DECISIONS.md` D019）。该文法与 `@deepseek-ai/dsh-credentials` 的 `REF_PATTERN` 逐字符相同，也是同一 store 的 `refs` 段在解析时对每个键调用的校验。
 
@@ -133,10 +138,12 @@ description, max, min, step, volatile
 
 | 字段 | 类型 | 默认 | 校验 | 说明 |
 | --- | --- | --- | --- | --- |
-| `from` | `string` | 无（必填） | 非空，含 `@` | 发件人地址 |
-| `to` | `string[]` | 无（必填） | 数组长度 ≥ 1；每项非空且含 `@`；去重后仍需 ≥ 1 项 | 收件人地址列表 |
+| `from` | `string` | `''` | 字段级无约束；`enabled === true` 时要求非空且符合本项目的地址规则 | 发件人地址。`''` 表示未配置 |
+| `to` | `string[]` | `[]` | 字段级无约束；`enabled === true` 时逐项校验地址，忽略空白项，去重后仍需 ≥ 1 项 | 收件人地址列表 |
 
-`to` 为空数组、缺失或全部为非法地址时配置校验失败，插件不装载。**不存在「校验失败但继续运行」的降级路径**：把邮件发到未知收件人比不发送更糟。
+`from` 与 `to` 的 schema 默认值分别是空串与空数组，因此「未配置」是一个可渲染、可保存的文档状态。**两者在语义上仅在 `enabled === true` 时必需**：`to` 为空数组、缺失或全部为非法地址时产品语义校验失败（错误信息 `to must contain at least one valid recipient address`），插件不装载。**不存在「校验失败但继续运行」的降级路径**：把邮件发到未知收件人比不发送更糟。
+
+`smtpHost`、`smtpUser`、`from`、`to` 四个字段的可编辑性由此完整保留：空值只是「尚未配置」，不是 schema 层面的非法值；把插件关闭即可保存一份中间态文档，再逐个补齐字段（第 4 节）。
 
 ### 2.4 范围控制
 
@@ -250,7 +257,7 @@ retryBaseDelayMs: 1000
 maxDedupeEntries: 1000
 ```
 
-**schema 级默认值的实际取值（v0.4.0）。** 每个字段都有默认值，因此表单在任何时候都有可渲染的值；上表中 `smtpHost`、`smtpUser`、`from` 的默认值是空串，`to` 的默认值是空数组，**`smtpPasswordCredential` 的默认值是引用名 `DSH_MAIL_SMTP_PASSWORD`**（不是空串：字段级 `pattern()` 不接受空串，而表单必须能保存一份「尚未配置」的文档；该默认值是引用名，绝不是密码）。空串与空数组在 `enabled === true` 时会被产品语义校验拒绝（第 4 节），因此「漏配」表现为一条带字段路径的拒绝信息，而不是一次发送期的意外失败。
+**schema 级默认值的实际取值（v0.4.0）。** 每个字段都有默认值，因此表单在任何时候都有可渲染的值；第 2 节的表格逐字段列出了这些默认值，本节是它们的汇总：`smtpHost`、`smtpUser`、`from` 的默认值是空串，`to` 的默认值是空数组，**`smtpPasswordCredential` 的默认值是引用名 `DSH_MAIL_SMTP_PASSWORD`**（不是空串：字段级 `pattern()` 不接受空串，而表单必须能保存一份「尚未配置」的文档；该默认值是引用名，绝不是密码）。空串与空数组在 `enabled === true` 时会被产品语义校验拒绝（第 4 节），因此「漏配」表现为一条带字段路径的拒绝信息，而不是一次发送期的意外失败；`enabled === false` 时这四个字段的取值不影响装载。
 
 五个隐私相关默认值的方向性由 D012 冻结；后两项为 Phase 8 新增，其方向性由 D018 冻结（`notifyErrors` 的语义与 `includeSubagents` 的覆盖面同样由 D018 补充）：
 
@@ -278,7 +285,7 @@ notifyApprovals    = false     工具名与 reason 默认不外发
 | --- | --- |
 | `smtpHost` 非空且不含空白 | 空主机名会让 transport 的失败推迟到首次发送；含空白几乎必为粘贴错误 |
 | `smtpUser` 非空 | 同上 |
-| `from` 非空且符合本项目的地址规则 | 信封发件人非法时 SMTP 服务器会拒绝整封邮件 |
+| `from` 非空且符合本项目的地址规则 | 信封发件人非法时 SMTP 服务器会拒绝整封邮件。规则为 `ADDRESS_PATTERN`：非空，且含 `@`、`.`，两侧无空白与 `,`、`;` |
 | `to` 经逐项校验与去重后至少 1 项 | 没有收件人的通知不是通知 |
 | `smtpPasswordCredential` 匹配 `CREDENTIAL_REF_PATTERN` | 仍由**字段级** `pattern()` 管辖（默认值 `DSH_MAIL_SMTP_PASSWORD` 是引用名，不是密码），不上升为跨字段错误 |
 
