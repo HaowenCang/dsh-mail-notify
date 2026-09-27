@@ -248,9 +248,17 @@ on the next boot.
 ## Configure in the Web UI
 
 `Settings → Plugins → dsh-mail-notify` shows a **dsh-mail-notify** card, titled **Mail
-notifications** (邮件通知). Everything in the patch example below can be set there instead; the card
+notifications** (邮件通知). Every value in the patch example below can be set there instead; the card
 needs no YAML editing and takes effect without restarting DSH. Your edits are persisted into the
 profile's own `cordis.patch.yml`, which is the only configuration document a plugin has.
+
+The form carries exactly the Host Config's **23 fields** as 23 controls, plus **one separate
+write-only password control**. The password is not a 24th Config field: it is a Credential value
+written through the `credentials` domain, and the card's editable field table deliberately excludes
+it, so nothing in the form ever reads it back or resets it as configuration. The field list is not
+maintained by hand on either side — the card's table and the Host schema are compared field for field
+by `tests/client/config-surface.test.ts`, which fails if the schema gains a field the form omits, if
+the form invents a Config field the Host does not declare, or if either side lists a name twice.
 
 Only the fields you actually change are written: a Save records the fields you edited, and the rest
 keep inheriting the composition layer. An invalid value is refused by the **host** before anything is
@@ -304,12 +312,18 @@ could not see it.
 | --- | --- |
 | Human attention | `notifyQuestions`, `notifyApprovals` — rendered apart because they are the switches that decide whether you learn an agent is blocked |
 | General | `enabled`, `includeSubagents` |
-| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens` |
+| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, `minTurnDurationMs` |
 | SMTP | `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, `from`, `to` |
 | Credential | `smtpPasswordCredential` (a reference **name**), and the write-only password control |
 | Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter`, `maxBodyChars` |
 | Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
 | Status | live host facts: whether the runtime is mounted, whether the credential reference is configured, the queue depth and counters, and — prominently — the **effective** `notifyQuestions` and `notifyApprovals` values |
+
+The field rows above cover all 23 Config fields: Human attention and the Notifications group render the
+same two switches, the first as the card's prominent block and the second among the ordinary policy
+fields. The password control is the one extra control on the card and belongs to no Config field.
+`minTurnDurationMs` sits in the ordinary notification group rather than in the human-attention block,
+because it applies only to settled Turn notifications.
 
 The status facts are re-read every five seconds while the card is on screen. If a saved
 configuration cannot be applied, the card says so instead of silently doing nothing; the previously
@@ -337,7 +351,8 @@ back to the schema defaults.
 
 This remains fully supported, and the two routes are the *same* document: the Web card writes this
 file, so a hand edit and a Save are indistinguishable afterwards, and a hand edit is what a Save will
-show as that field's override.
+show as that field's override. Every key in the example below is one of the 23 the card exposes, so
+the whole document is configurable from the Web UI.
 
 ```yaml
 - id: dsh-mail-notify
@@ -375,23 +390,23 @@ show as that field's override.
     maxDedupeEntries: 1000
 ```
 
-| Field | Default | Notes |
+| Field | Schema default | Notes |
 | --- | --- | --- |
-| `enabled` | `true` | `false` registers **nothing**: no listener, no queue, no credential read. |
-| `smtpHost` | — required | Non-empty, no whitespace. |
+| `enabled` | `true` | a fresh install runs with `false`; see the note below the table. While false the plugin registers **nothing**: no listener, no queue, no credential read. |
+| `smtpHost` | `''` | Semantically required while `enabled: true`: non-empty, no whitespace. `''` is the "not configured yet" placeholder, not a host name. |
 | `smtpPort` | `587` | Integer 1–65535. |
 | `smtpSecure` | `false` | `true` = implicit TLS (normally 465); `false` allows a STARTTLS upgrade (normally 587). |
-| `smtpUser` | — required | Authentication user name. |
-| `smtpPasswordCredential` | — required | A credential **reference name**, never a password. Exactly the DSH `CredentialRef` grammar, `^[A-Za-z_][A-Za-z0-9_]*$` — an environment-style name such as `DSH_MAIL_SMTP_PASSWORD`. A `<scope>/<id>` value is a `CredentialKey`, which `resolve()` cannot read, so it is refused at mount with an explanation (D019). |
-| `from` | — required | Envelope sender. |
-| `to` | — required | One or more addresses. An empty or entirely invalid list refuses to mount. |
+| `smtpUser` | `''` | Semantically required while `enabled: true`: a non-empty user name. `''` means not configured yet. |
+| `smtpPasswordCredential` | `DSH_MAIL_SMTP_PASSWORD` | A credential **reference name**, never a password. Exactly the DSH `CredentialRef` grammar, `^[A-Za-z_][A-Za-z0-9_]*$` — an environment-style name. The default is a name because the field-level `pattern()` cannot admit `''`; a `<scope>/<id>` value is a `CredentialKey`, which `resolve()` cannot read, so it is refused at mount with an explanation (D019). The **password** it names is not a configuration value: it lives in the credential store and is written through the card's separate write-only control. |
+| `from` | `''` | Semantically required while `enabled: true`: a non-empty, plausible address. `''` means not configured yet. |
+| `to` | `[]` | Semantically required while `enabled: true`: after the address rule and deduplication, at least one recipient. An empty or entirely invalid list refuses to mount. |
 | `includeSubagents` | `false` | Turning this on sends subagent output, subagent questions, and subagent approvals too; read the security section first. |
 | `notifyCompleted` | `true` | Covers `completed-clean` and `completed-with-tool-errors`. |
 | `notifyErrors` | `false` | Covers `status === 'error'`. A terminal failure is mailed **even when the turn produced no visible assistant output**; a completed turn with empty text is still suppressed. |
 | `notifyMaxTokens` | `true` | Covers `status === 'max-tokens'`. |
 | `notifyQuestions` | `false` | Covers an agent blocked on `ask_user_question`. Off by default; enabling it sends the question's text and options to the mail system. |
 | `notifyApprovals` | `false` | Covers an agent blocked on an approval decision. Off by default; enabling it sends the tool name and the asker's reason to the mail system. The approved tool's arguments are never sent. |
-| `minTurnDurationMs` | `0` | Suppresses turns shorter than this. An **unknown** duration is never suppressed. |
+| `minTurnDurationMs` | `0` | Suppresses settled Turn notifications whose known duration is **strictly below** this many milliseconds. `0` disables duration filtering, and an **unknown** duration is never suppressed. Question and approval notifications ignore it. |
 | `maxBodyChars` | `100000` | Visible-text cap in code points, 1000–1000000. |
 | `includeMetadata` | `true` | Session id, workspace, model, timing, status block. |
 | `includeUserPrompt` | `false` | Adds the turn's last user message. Off by default. |
@@ -401,15 +416,42 @@ show as that field's override.
 | `retryBaseDelayMs` | `1000` | Retry *n* waits `base × 3^(n−1)`, capped at 30 s. |
 | `maxDedupeEntries` | `1000` | Dedupe cache capacity. |
 
+The **Schema default** column is what the Config schema resolves when a key is absent — it is not the
+same thing as the effective value of a fresh install. `enabled` is the one field where the two
+differ, and the three values are deliberately distinct:
+
+```text
+schema default           enabled = true     what an absent key resolves to
+bundle composition       enabled = false    this package's own cordis.patch.yml row
+fresh install effective  enabled = false    the schema default is shadowed by the layer above it
+```
+
+The bundle layer ships `enabled: false` so that installing a notification plugin does not start
+emailing before the operator has said where to send. Resetting the field in the Web UI removes the
+profile-layer override and therefore reveals the **bundle** value, `false` — not the schema default
+`true`. To turn the plugin on, set the field explicitly. This design is unchanged; the distinction
+between a schema default (`''`, `[]`, `true`) and an effective fresh-install value (`false`) is what
+the column above is now careful to keep.
+
+Four fields have an empty-schema-default that is nonetheless semantically required while
+`enabled: true`: `smtpHost` (`''`), `smtpUser` (`''`), `from` (`''`), and `to` (`[]`). They are not
+"required" at the schema level — an incomplete document stays renderable and saveable, which is what
+lets you configure the plugin field by field, or park it with `enabled: false` — but the product
+rules refuse to mount a working mail path until each is filled in. `docs/CONFIG_SPEC.md` §2.2–§2.3
+is the normative statement of the same rule.
+
 `aborted`, `blocked`, `interrupted`, and any unrecognised `turn/end` reason have **no** enabling
 switch and never notify. There is also no option to send a *completion* mail with an empty body: a
 completed or max-tokens turn with no visible text is skipped regardless of the notification
 switches. A **terminal failure** is the one exception — it is mailed even with no visible output,
 because the failure itself is the message.
 
-`minTurnDurationMs` applies only to the settled-turn notification. It is never applied to a question
-or an approval: an agent that asks something two seconds into a turn is exactly the case the mail
-exists for, and a turn-length floor would suppress it.
+The example above is a **profile** patch, so it also sets `enabled: true` and the resolved value is
+`true` — that is the other half of why a patch restates every key it relies on.
+
+`minTurnDurationMs` applies only to the settled-turn notification, and only when the turn's duration
+is known. It is never applied to a question or an approval: an agent that asks something two seconds
+into a turn is exactly the case the mail exists for, and a turn-length floor would suppress it.
 
 ## Credential
 
