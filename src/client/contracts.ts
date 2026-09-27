@@ -10,17 +10,26 @@
  * therefore how a plugin states, in one auditable place, exactly which DSH
  * contracts it builds on.
  *
- * Every package on this graph is pinned to one exact `0.1.5-rc.2` release in
- * `devDependencies`. The pins matter because the whole `0.1.5-rc.2` client
+ * Every package on this graph is pinned to one exact `0.1.7-rc.2` release in
+ * `devDependencies`. The pins matter because the whole `0.1.7-rc.2` client
  * family is published but *not* the `latest` dist-tag of these packages: an
  * unpinned install resolves an older client family into the same program, and
- * the two disagree about `SlotMap` and about the renderer's slot contract. The
- * contract probe in `tests/compatibility/contracts.compile.ts` fails to compile
- * if any contract below is renamed, moved, or withdrawn.
+ * the two disagree about `SlotMap` and about the form service. The contract
+ * probe in `tests/compatibility/contracts.compile.ts` fails to compile if any
+ * contract below is renamed, moved, or withdrawn.
  *
  * The imports are type-only, so none of them reaches the emitted bundle: the
  * browser half requires exactly two modules at runtime — `react` and
  * `react/jsx-runtime` — both of which the shell's seed table supplies.
+ *
+ * ## What changed for DSH 0.1.7
+ *
+ * `ctx.settingsScope` and the `settings.plugin.item` slot are gone. The card now
+ * reads and writes through `ctx.configForms` — the shared form service over the
+ * Host's describe mirror — and registers into the Plugins page's bundle
+ * configuration slot. Both replacements are declared by packages this module
+ * imports for their augmentations, so the registration site below is checked
+ * against the installed contract rather than against a local restatement.
  *
  * @module dsh-mail-notify/client/contracts
  */
@@ -31,13 +40,15 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // `PropsRuntime` plus the `SlotMap` declaration-merging table the slot contract
 // is composed from.
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
-// `ctx.settingsScope` — the per-namespace settings transport — and the
-// `SettingsScope` / `SettingsScopeSnapshot` contracts the card reads through.
+// `ctx.configForms` — the shared form service over the Host describe mirror —
+// and the `ConfigForm` / `ConfigFormSnapshot` contracts the card reads and
+// writes through. Also the `plugins.*` slot contract is composed against the
+// `ConfigForm` declared here, so this import is what makes the two agree.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// The `settings.plugin.item` SlotMap entry. Registering into a slot the program
+// The `plugins.bundle.config` SlotMap entry. Registering into a slot the program
 // does not know is a compile error, so this import is what makes the card's
 // registration site checkable rather than merely plausible.
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 // `ctx.remote` itself.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 // The `credentials` Remote namespace: `describe`, `set`, `unset`, and the
@@ -54,8 +65,8 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 
 /**
  * The client root context DSH hands to a plugin's browser `apply`.
@@ -67,6 +78,10 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
  * The member type is the package's own published `ConnectionHandle` rather than
  * a restatement: a renamed method must break this file, not silently keep
  * compiling against a stale local copy.
+ *
+ * `configForms` needs no statement here: `@deepseek-ai/dsh-client-ui-settings/client`
+ * declares it on `Context` directly, so this plugin consumes the published
+ * member rather than a structural clone of it.
  */
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -75,14 +90,48 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** The slot key one plugin card occupies inside the plugin configuration tab. */
-export const SETTINGS_PLUGIN_ITEM_SLOT = 'settings.plugin.item'
+/**
+ * The slot one bundle's configuration occupies inside the Plugins page.
+ *
+ * A keyed slot: the page resolves it with `entryKey: pkg.name`, so the
+ * registration must supply `key` — the *package* name — rather than `id`. The
+ * page renders the entry with `view: 'page'` only; a bundle has no one-liner
+ * position in this contract, and a registration that answered `view: 'summary'`
+ * with content would never be drawn.
+ */
+export const BUNDLE_CONFIG_SLOT = 'plugins.bundle.config'
+
+/**
+ * The npm package name this bundle is installed under.
+ *
+ * The Plugins page keys `plugins.bundle.config` by the *package* name, so this
+ * constant is that key's only source. It is stated literally rather than read
+ * from `package.json` because the browser bundle must not import a JSON manifest
+ * at runtime, and the release check in `tests/package/tarball.test.ts` asserts
+ * that the literal and the published `name` field agree.
+ */
+export const MAIL_NOTIFY_PACKAGE_NAME = 'dsh-mail-notify'
 
 /** The client root context type this plugin's browser half consumes. */
 export type ClientContext = Context
 
-/** The card's props share supplied by the tab, plus the registrant's own face. */
-export type SettingsPluginItemProps = PropsRuntime<typeof SETTINGS_PLUGIN_ITEM_SLOT>
+/**
+ * The props the bundle configuration slot renders its entry with.
+ *
+ * Taken from the slot contract itself rather than restated, so a change to what
+ * the page passes is a compile error at the card's signature. The card reads
+ * `view` and `form`; `form.state` is the same `ConfigFormSnapshot` the
+ * controller renders from, and `form.mutate` the same write the controller
+ * queues —which is what lets the shared form and this plugin's staged drafts
+ * agree without either restating the other.
+ */
+export type BundleConfigSlotProps = PluginConfigViewProps
 
-/** The bound settings scope type for one namespace. */
-export type { SettingsScope }
+/**
+ * The shared form contract for one Host plugin entry.
+ *
+ * Re-exported under this plugin's own vocabulary so the controller and the
+ * fields module do not each import the same two names from the DSH package; the
+ * types themselves are the published ones.
+ */
+export type { ConfigForm, ConfigFormSnapshot }

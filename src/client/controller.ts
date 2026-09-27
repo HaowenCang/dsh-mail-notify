@@ -1,10 +1,10 @@
 /**
- * The card's controller: staged drafts over one settings namespace, plus the
- * actions that write them.
+ * The card's controller: staged drafts over one Host configuration entry, plus
+ * the actions that write them.
  *
- * Two stores sit underneath and they must not be conflated. The settings scope
- * is the *host's* state — a revision-fenced document this card only reads — and
- * the staged map is the *user's* pending intent. The rendered snapshot is a
+ * Two stores sit underneath and they must not be conflated. The configuration
+ * form is the *host's* state — a revision-fenced document this card only reads —
+ * and the staged map is the *user's* pending intent. The rendered snapshot is a
  * projection of both, rebuilt whenever either moves, and it is published
  * through one `getSnapshot`/`subscribe` pair so the card can read it with
  * `useSyncExternalStore`.
@@ -12,17 +12,19 @@
  * A field shows its effective value and separately whether the user layer
  * carries it. Presence, not a value comparison, is what marks a field
  * overridden: an override equal to the composition default is still an
- * override, and comparing values could not see it. That is also what makes
- * Reset meaningful — a reset is the *removal* of a user-layer entry, so the
- * field re-inherits the composition layer rather than being written to a copy
- * of it.
+ * override, and comparing values could not see it. The Host contract says the
+ * same thing in its own words — `ConfigFormSnapshot.user` is the raw user layer,
+ * and a field's presence there is what marks it overridden. That is also what
+ * makes Reset meaningful: a reset is the *removal* of a user-layer entry, so the
+ * field re-inherits the composition layer rather than being written to a copy of
+ * it.
  *
  * @module dsh-mail-notify/client/card
  */
 
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import { SETTINGS_NAMESPACE, type QueueStatusValue, type StatusValue } from '../protocol.ts'
-import type { ClientContext, SettingsScope } from './contracts.ts'
+import type { ClientContext, ConfigForm, ConfigFormSnapshot } from './contracts.ts'
 import {
   ALL_FIELDS,
   CREDENTIAL_REF_FIELD,
@@ -144,12 +146,12 @@ const APPROVALS_FIELD = ALL_FIELDS.find((entry) => entry.field === 'notifyApprov
 /**
  * The card's controller.
  *
- * Constructed inside the client plugin's effect, so the bound settings scope
- * and the credential-invalidation subscription are released with the plugin.
+ * Constructed inside the client plugin's effect, so the form binding and the
+ * credential-invalidation subscription are released with the plugin.
  */
 export class MailNotifyCard {
   private readonly ctx: ClientContext
-  private readonly scope: SettingsScope<Section>
+  private readonly form: ConfigForm<Section>
   private readonly listeners = new Set<() => void>()
   private readonly staged = new Map<string, Draft>()
   private readonly disposers: Array<() => void> = []
@@ -170,10 +172,13 @@ export class MailNotifyCard {
    */
   constructor(ctx: ClientContext) {
     this.ctx = ctx
-    this.scope = ctx.settingsScope.bind<Section>({ namespace: SETTINGS_NAMESPACE })
+    // The Host's own form for this entry. `configForms.get` is addressed by the
+    // profile entry id, which is the same string the Host's Config schema is
+    // reachable under and the same one the bundle patch row declares.
+    this.form = ctx.configForms.get<Section>(SETTINGS_NAMESPACE)
     this.snapshot = this.project()
 
-    const offScope = this.scope.subscribe(() => {
+    const offForm = this.form.subscribe(() => {
       // The host document moved. Staged drafts are the user's and survive: a
       // concurrent write from another surface must not silently discard what
       // this form is holding.
@@ -183,7 +188,7 @@ export class MailNotifyCard {
       if (ref !== this.credentialRef()) return
       void this.refresh()
     })
-    this.disposers.push(offScope, offCredentials)
+    this.disposers.push(offForm, offCredentials)
 
     void this.refresh()
   }
@@ -205,7 +210,7 @@ export class MailNotifyCard {
     }
   }
 
-  /** Release the scope binding and the invalidation subscription. */
+  /** Release the form subscription and the invalidation subscription. */
   dispose(): void {
     for (const disposer of this.disposers.splice(0)) disposer()
     this.listeners.clear()
@@ -303,9 +308,16 @@ export class MailNotifyCard {
     let message: string | undefined
 
     if (ops.length > 0) {
-      const revision = this.scope.getSnapshot().revision
+      // The fence is the revision the form currently stands at. `mutate` is one
+      // atomic namespace mutation, so the document moves by one revision and a
+      // partial application is not a state it can reach.
+      const revision = this.form.getSnapshot().revision
       try {
-        await this.scope.mutate(ops, revision)
+        const accepted = await this.form.mutate(ops, revision)
+        if (!accepted) {
+          ok = false
+          message = undefined
+        }
       } catch (error) {
         ok = false
         message = error instanceof Error ? error.message : String(error)
@@ -417,7 +429,7 @@ export class MailNotifyCard {
 
   /** The credential reference currently in effect. */
   private credentialRef(): string {
-    const section = this.scope.getSnapshot().value
+    const section = this.form.getSnapshot().value
     return credentialRefFrom(section?.[CREDENTIAL_REF_FIELD.field])
   }
 
@@ -458,9 +470,9 @@ export class MailNotifyCard {
     }
   }
 
-  /** Build one projection of the scope and the staged drafts. */
+  /** Build one projection of the form and the staged drafts. */
   private project(): CardState {
-    const scope = this.scope.getSnapshot()
+    const scope: ConfigFormSnapshot<Section> = this.form.getSnapshot()
     const section = (scope.value ?? {}) as Section
     const user = (scope.user ?? undefined) as Section | undefined
 

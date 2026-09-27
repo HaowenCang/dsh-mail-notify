@@ -9,11 +9,11 @@
  *
  * ## Configuration is live
  *
- * `apply` resolves the effective configuration through
- * {@link bindEffectiveConfig} and mounts a runtime from it. When the DSH user
- * settings document changes, the binding fires and the runtime is torn down and
- * rebuilt from the new values — which is what makes a switch flipped in the Web
- * UI take effect without a restart.
+ * `apply` binds the volatile configuration Cordis resolved and mounts a runtime
+ * from a snapshot of it. When a configuration write commits, the Loader updates
+ * the references and emits `loader/volatile-update`; the binding fires and the
+ * runtime is torn down and rebuilt from a fresh snapshot — which is what makes a
+ * switch flipped in the Web UI take effect without a restart.
  *
  * A configuration that cannot be acted on never replaces one that can: an
  * invalid edit is logged and reported to the Web UI, and the previous runtime
@@ -25,9 +25,8 @@
  * would never activate this plugin at all. Both are read with `ctx.get()` and an
  * `undefined` check instead, so a missing service produces a named, actionable
  * diagnostic at send time rather than a plugin that silently fails to load.
- * `settings` and `connection` are reached through scoped `ctx.inject` for the
- * same reason: each narrows behaviour when absent rather than preventing
- * activation.
+ * `connection` is reached through a scoped `ctx.inject` for the same reason: it
+ * narrows behaviour when absent rather than preventing activation.
  *
  * @module dsh-mail-notify
  */
@@ -38,6 +37,12 @@ import type { Context } from '@deepseek-ai/cordis'
 // only is what makes `ctx.on` accept those names, and it is also the only place
 // this plugin touches a DSH type outside `runtime-adapter.ts`.
 import type {} from '@deepseek-ai/dsh-session'
+// Declaration-merge import: `@deepseek-ai/dsh-settings` augments Cordis'
+// `Context` with `settings: SettingsForms`. Nothing in this plugin calls that
+// service — the plugin's Config *is* the configuration document — but the
+// import is what keeps the prohibition checkable: the compatibility suite
+// asserts that `installSection` does not exist on it.
+import type {} from '@deepseek-ai/dsh-settings'
 // Declaration-merge import: `@deepseek-ai/dsh-client-connection` augments
 // Cordis' `Context` with `connection`, the endpoint registry this plugin
 // publishes its two Web routes through.
@@ -58,7 +63,7 @@ import {
 } from './protocol.ts'
 import { createMailQueue, defaultSleep, type MailQueue } from './queue.ts'
 import type { SessionEventLike, SessionLike } from './runtime-adapter.ts'
-import { bindEffectiveConfig } from './settings.ts'
+import { bindVolatileConfig } from './settings.ts'
 import { sendTestEmail } from './test-email.ts'
 import type { MailSink, Notification, ResolvedConfig } from './types.ts'
 import type { TransportFactory } from './transport.ts'
@@ -134,23 +139,22 @@ interface MountedRuntime {
  * Register the plugin on a context.
  *
  * @param ctx - the plugin's fiber context.
- * @param rawConfig - configuration already validated and defaulted by Cordis
- *   against the exported {@link Config} schema. It is the composition layer: the
- *   DSH user settings document overrides it once a settings provider is
- *   attached.
+ * @param config - the volatile configuration Cordis validated and defaulted
+ *   against the exported {@link Config} schema. Every field is a stable
+ *   reference the Loader updates in place when a configuration write commits;
+ *   {@link bindVolatileConfig} collapses it into the primitive snapshot each
+ *   runtime decision is taken from.
  * @param internals - test seams; omitted in production.
  * @returns the live instance when the plugin activated, or `undefined` when it
  *   refused to mount or was disabled.
  */
-export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyInternals): MailNotifyHandle | undefined {
-  const entry = (rawConfig ?? {}) as ConfigValue
-
+export function apply(ctx: Context, config?: ConfigValue, internals?: ApplyInternals): MailNotifyHandle | undefined {
   // Read before anything else is built: `apply` runs with an active fiber, so
   // the timer service's own disposers attach to it and a backoff in progress
   // is cancelled on unload rather than outliving the plugin.
   const timer = readTimerService(ctx)
   const logger = createLogger(ctx.logger(name), internals?.logBufferSize ?? 500)
-  const binding = bindEffectiveConfig(ctx, entry)
+  const binding = bindVolatileConfig(ctx, config ?? Config({}))
 
   let mounted: MountedRuntime | undefined
   /**
@@ -163,14 +167,14 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
   let fingerprint: string | undefined
 
   /**
-   * Re-read the effective configuration and mount, remount, or stand down.
+   * Re-read the configuration and mount, remount, or stand down.
    *
    * The comparison is structural over the *resolved* configuration, so a
    * settings commit that changes nothing this plugin reads does not disturb a
    * running queue.
    */
   const sync = (): void => {
-    const { resolved } = resolveConfig(binding.current())
+    const { resolved } = resolveConfig(binding.snapshot())
     const next = JSON.stringify(resolved)
     if (next === fingerprint) return
 
@@ -235,7 +239,7 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
    *   runtime is mounted.
    */
   const status = (): StatusValue => {
-    const config = effective ?? resolveConfig(binding.current()).resolved
+    const config = effective ?? resolveConfig(binding.snapshot()).resolved
     const stats = mounted?.handle.queue.stats()
     return {
       active: mounted !== undefined,
@@ -267,7 +271,7 @@ export function apply(ctx: Context, rawConfig?: ConfigValue, internals?: ApplyIn
     void payload
     if (method === STATUS_ENDPOINT) return { ok: true, value: status() }
     if (method === TEST_EMAIL_ENDPOINT) {
-      const config = effective ?? resolveConfig(binding.current()).resolved
+      const config = effective ?? resolveConfig(binding.snapshot()).resolved
       const value = await sendTestEmail({
         deliver: makeDeliverer(config),
         config,

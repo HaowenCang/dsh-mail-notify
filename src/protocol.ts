@@ -35,12 +35,20 @@
 export const RPC_CHANNEL = '/api'
 
 /**
- * The settings namespace this plugin owns.
+ * The configuration namespace this plugin owns.
  *
- * Public contract: the host registers its settings section under this name, the
- * browser half binds its scope to it, and the card registers into
- * `settings.plugin.item` under it. The tab pairs the card with the host's
- * namespace by this string alone.
+ * Public contract, and since DSH 0.1.7 a *dual* one. It is the profile entry id
+ * the plugin's Config is addressable by — `ctx.configForms.get(entryId)` on the
+ * browser half, `SettingsForms.describe()` keyed by it on the host half — and it
+ * is the id the bundle patch row declares. The two must be the same string: the
+ * form service refuses a namespace no entry carries, and an entry renamed
+ * without this constant would leave the card editing nothing.
+ *
+ * The browser half also registers its card under the bundle's *package* name,
+ * because that is the key the Plugins page resolves `plugins.bundle.config`
+ * with. The two spellings coincide here and neither is derived from the other;
+ * `tests/compatibility/contracts.compile.ts` checks both against the shipped
+ * `cordis.patch.yml` and `package.json`.
  */
 export const SETTINGS_NAMESPACE = 'dsh-mail-notify'
 
