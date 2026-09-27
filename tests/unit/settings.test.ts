@@ -27,48 +27,24 @@ import { SETTINGS_NAMESPACE } from '../../src/protocol.ts'
 import { bindVolatileConfig } from '../../src/settings.ts'
 import { commitVolatile } from '../support/plugin-harness.ts'
 import { VALID_RAW_CONFIG } from '../support/harness.ts'
+import { hostConfigFields, hostConfigFieldNames } from '../support/host-fields.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /**
- * Every field the Web card edits, in schema declaration order.
+ * Every field the Web card edits, read from the Host Config itself.
  *
  * Stated once and used by both projection tests below: the schema-derivation
  * test walks the serialized form, the settings test drives the installed
  * `volatileForm` over the live node, and a field that reaches one projection
  * but not the other must fail rather than pass in both.
+ *
+ * It is **derived**, not restated. A handwritten copy is a second thing to
+ * update, and its failure mode is silent: add a field to the schema without
+ * touching the list and both tests keep passing while the Web card omits it —
+ * the defect `FLD-01` and `PAR-01` exist to catch.
  */
-const EDITABLE_FIELDS = [
-  'enabled',
-  'smtpHost',
-  'smtpPort',
-  'smtpSecure',
-  'smtpUser',
-  'smtpPasswordCredential',
-  'from',
-  'to',
-  'includeSubagents',
-  'notifyCompleted',
-  'notifyErrors',
-  'notifyMaxTokens',
-  'notifyQuestions',
-  'notifyApprovals',
-  'minTurnDurationMs',
-  'maxBodyChars',
-  'includeMetadata',
-  'includeUserPrompt',
-  'includeFooter',
-  'queueSize',
-  'retryAttempts',
-  'retryBaseDelayMs',
-  'maxDedupeEntries',
-]
-
-/** One node of a serialized Schemastery schema, resolved out of its ref table. */
-interface SchemaNode {
-  meta?: { volatile?: boolean }
-  dict?: Record<string, number>
-}
+const EDITABLE_FIELDS = hostConfigFieldNames()
 
 /** Build one volatile configuration from raw fields. */
 function volatileConfig(overrides: Record<string, unknown> = {}) {
@@ -213,16 +189,16 @@ test('CFG-11 the schema exposes every field the Web card edits', () => {
   // rather than inline. The Host's projection resolves that table the same way,
   // so walking it here is what makes this test a statement about the form the
   // page renders rather than about the schema object in memory.
-  const serialized = Config.toJSON() as unknown as { uid: number; refs: Record<number, SchemaNode> }
-  const form = serialized.refs[serialized.uid]
-  const fields = Object.keys(form?.dict ?? {})
-  assert.deepEqual(fields.sort(), [...EDITABLE_FIELDS].sort())
-  for (const field of fields) {
-    assert.equal(
-      serialized.refs[form?.dict?.[field] as number]?.meta?.volatile,
-      true,
-      `${field} is not volatile, so a Web edit could not reach the running plugin without a restart`,
-    )
+  //
+  // Both sides of the comparison are now derived from that one table: the field
+  // names from the root's `dict`, the volatility from each node's `meta`. The
+  // test therefore asserts the property it names — that the schema the card
+  // edits is a set of live fields — without carrying a copy of the field list.
+  const derived = hostConfigFields()
+  assert.deepEqual(derived.map((entry) => entry.field).sort(), [...EDITABLE_FIELDS].sort())
+  assert.equal(derived.length, 23, 'the Host Config declares 23 fields')
+  for (const { field, volatile } of derived) {
+    assert.equal(volatile, true, `${field} is not volatile, so a Web edit could not reach the running plugin without a restart`)
   }
 })
 
