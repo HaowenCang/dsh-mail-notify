@@ -1058,6 +1058,15 @@ DSH 0.1.7 在排队输入完全进入**之前**就打开 `turn/start`，且 `use
 
 DSH 0.1.7 新增该 kind，仅由 fork seed 构造产生（`dsh-session` 明确记载"the loop never emits it"）。它此前会落入 `unknown`。现列为独立的确认 kind 与独立 `CandidateStatus`：它没有对应的通知策略开关，因此既不会被读成成功也不会被读成失败，不会为一个从未结算的 turn 伪造邮件。`interrupted` 与之同属**构造函数**写入的合成收尾，二者由 `isSyntheticCloser` 一并标出。
 
+### A20-3 — Token 遥测在目标版本上的复验（§21）
+
+以记录的真实会话日志把本插件的 fold 与目标版本自带的 `dsh-token-meter` 的 `deriveTurnTokenUsage` 逐轮比对（`scripts/turn-telemetry-probe.mjs --meter`；该探针的 meter 定位本身也需修复——0.1.7 把启动器的依赖嵌在启动器内部，0.1.5 时代的扁平路径已不存在，而它报出的错误看起来像"包不存在"）。
+
+- **无重试的 9 轮，三个数（uncached input / output / total）逐项完全相等，9/9。** 这是两个独立实现之间的一致，而不是同一份代码的自证。
+- **重试轮次上两者结论不同，但账目相同。** 记录到的重试链为 `step/start` → `assistant/attempt`(usage 全 0) → `llm/retry` → `llm/retry-started` → `assistant/attempt`(全 0) → `llm/retry` …。失败尝试**报告了一条全 0 的 usage** 而非不报告；官方 meter 接受这些 0 并据此关闭 attempt，因此重试轮仍给出数值；本插件把同一批事件计为 retry 并将该轮 coverage 标为不完整。二者在**结论**上不同，在**加总**上一致：被重试的调用对两边都贡献 0，因此发出的数字相同，而失败调用真实消耗的 token 在两边都仍然不可见。
+
+**结论：`schemaVersion` 保持 2，记账语义不变。** 改变语义的条件未满足——目标运行时并未暴露任何此前不可观测的重试用量。本插件的完整性声明是两者中更保守的一个：某轮中若有调用没有给出可用报告，它会说明这一点，而不是把一个数字当作每个调用都已交代清楚来报告。变化的只是这一判断现在有目标版本上的证据，而不是从 0.1.5 继承下来的假设。
+
 ---
 
 ## 附：Implementation Addendum — Phase 8（2026-09）

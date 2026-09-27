@@ -286,15 +286,20 @@ export function expectedFold(turnEvents) {
  * rather than a partial number — so agreement on a clean turn corroborates the
  * plugin's aggregate, and disagreement is a finding either way.
  *
+ * The package is located through the launcher rather than by assuming a depth:
+ * DSH 0.1.7 nests the launcher's dependencies inside the launcher instead of
+ * hoisting them beside it, so the flat path this used through 0.1.5 no longer
+ * exists and the error it produced read like a missing package.
+ *
  * @param {object[]} turnEvents - the recorded durable events of one turn.
- * @param {string} installRoot - a DSH installation root (holds `node_modules/@deepseek-ai`).
+ * @param {string} installRoot - a DSH installation root, used when it is set.
  * @returns {Promise<{value?: object, error?: string}>} the meter's verdict.
  */
 export async function dshMeterFold(turnEvents, installRoot) {
   try {
-    const entry = pathToFileURL(
-      resolve(installRoot, 'node_modules', '@deepseek-ai', 'dsh-token-meter', 'lib', 'types', 'turn-usage.js'),
-    ).href
+    if (installRoot !== undefined && installRoot !== '') process.env['DSH_INSTALL_ROOT'] = installRoot
+    const { packageDirectory } = await import('./probe/dsh-modules.mjs')
+    const entry = pathToFileURL(join(packageDirectory('dsh-token-meter'), 'lib', 'types', 'turn-usage.js')).href
     const { deriveTurnTokenUsage } = await import(entry)
     return { value: deriveTurnTokenUsage(turnEvents) ?? null }
   } catch (error) {
