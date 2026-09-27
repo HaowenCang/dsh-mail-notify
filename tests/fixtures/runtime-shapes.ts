@@ -11,7 +11,9 @@
  * - `turn/end` has exactly six reason kinds;
  * - an assistant message mixes `reasoning`, `text`, and `tool-call` blocks;
  * - a top-level session may carry `delegationDepth: 0`;
- * - `usage` may omit optional counters entirely.
+ * - `usage` may omit optional counters entirely;
+ * - a `user/message` payload *is* the `UserMessage`, and its `source.kind` is
+ *   what separates the operator's prompt from injected context.
  *
  * Secret-bearing content is deliberately synthetic. The sentinels below are the
  * strings the privacy tests search for, so a future field added to a candidate
@@ -84,14 +86,26 @@ export function subagentSession(id = 'session-08062578-254d-4051-a7cf-dc329d334f
   }
 }
 
-/** A session identified as a subagent only by `parentSession`. */
-export function parentOnlySubagent(id = 'session-parent-only'): SessionLike {
-  return { id, header: sessionHeader({ id, parentSession: 'session-x' }) }
-}
-
 /** A session identified as a subagent only by a positive `delegationDepth`. */
 export function depthOnlySubagent(id = 'session-depth-only', depth = 1): SessionLike {
   return { id, header: sessionHeader({ id, delegationDepth: depth }) }
+}
+
+/**
+ * A user-created fork: `parentSession` present, `origin` and `delegationDepth` absent.
+ *
+ * This is the header `SessionStore.fork()` writes — the parent link plus
+ * `isSeeded: true` — and `dsh-session` documents `parentSession` as "the session
+ * this one was forked from (seed lineage), if any". A fork the operator asked for
+ * is therefore a TOP-LEVEL session for notification purposes even though it has a
+ * parent, and this fixture holds that line: a classifier that read lineage as
+ * hierarchy excluded these sessions under the default `includeSubagents: false`.
+ */
+export function forkedSession(
+  id = 'session-forked',
+  parentSession = 'session-3f0c2938-3769-471e-b2bf-12badadde842',
+): SessionLike {
+  return { id, header: sessionHeader({ id, parentSession, isSeeded: true }) }
 }
 
 /** A `turn/start` event. */
@@ -311,14 +325,66 @@ export function reasoningOnlyMessage(turn: number, step: number, time: number): 
   })
 }
 
-/** A `user/message` event, whose payload is the user message itself. */
+/**
+ * The `source.kind` values DSH writes for user-role context, as observed.
+ *
+ * The first three are declared by the installed packages — `runtime-context` by
+ * `dsh-agent-loop` ("the dynamic runtime-context snapshot"), `skill-catalog` by
+ * `dsh-tool-skill`, `agent-instructions` by `dsh-agent-instructions` — and all
+ * three were seen in recorded v4 session logs alongside the operator's `user`
+ * message. They exist here so a test never has to spell a producer's name twice.
+ */
+export const RUNTIME_CONTEXT_SOURCE_KIND = 'runtime-context'
+/** The model-facing skill catalogue. */
+export const SKILL_CATALOG_SOURCE_KIND = 'skill-catalog'
+/** The workspace-instruction baseline. */
+export const AGENT_INSTRUCTIONS_SOURCE_KIND = 'agent-instructions'
+/** A goal continuation round. */
+export const GOAL_SOURCE_KIND = 'goal'
+/** An uncollected tool-job notice. */
+export const TOOL_JOBS_SOURCE_KIND = 'tool-jobs'
+
+/**
+ * A `user/message` event with an arbitrary `source` value.
+ *
+ * The payload *is* the `UserMessage` — `SessionEventMap` declares
+ * `'user/message': UserMessage` — which is why the source sits directly on
+ * `data` rather than under a `message` key.
+ *
+ * @param text - the message's text.
+ * @param source - the exact `source` value to write; `undefined` omits the key.
+ * @param time - event time.
+ * @returns the event.
+ */
+export function userMessageWithSource(text: string, source: unknown, time = 1_750_000_000_100): SessionEventLike {
+  const data: Record<string, unknown> = { role: 'user', id: 'message-user-1', content: [{ type: 'text', text }] }
+  if (source !== undefined) data['source'] = source
+  return { type: 'user/message', seq: 5, time, data }
+}
+
+/** A `user/message` event whose payload is the message itself and whose source is a direct human prompt. */
 export function userMessage(text: string, time = 1_750_000_000_100): SessionEventLike {
-  return {
-    type: 'user/message',
-    seq: 5,
-    time,
-    data: { role: 'user', id: 'message-user-1', content: [{ type: 'text', text }], source: { kind: 'user' } },
-  }
+  return userMessageWithSource(text, { kind: 'user' }, time)
+}
+
+/**
+ * A `user/message` event carrying context DSH injected under its producer's kind.
+ *
+ * It is the same event type and the same role as {@link userMessage}; only
+ * `source.kind` tells them apart, which is exactly the discrimination the
+ * attribution rule must make.
+ *
+ * @param text - the injected text.
+ * @param kind - the producer's `source.kind`.
+ * @param time - event time.
+ * @returns the event.
+ */
+export function injectedUserMessage(
+  text: string,
+  kind: string,
+  time = 1_750_000_000_100,
+): SessionEventLike {
+  return userMessageWithSource(text, { kind }, time)
 }
 
 /** A `system/message` event, used to prove system prompts stay out of output. */

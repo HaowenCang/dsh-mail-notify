@@ -88,13 +88,30 @@ export function toSessionId(session: SessionLike): string {
 /**
  * Decide whether a session is a subagent, and record which criterion decided it.
  *
- * The three criteria are applied in a fixed order: `origin`, then
- * `parentSession`, then `delegationDepth`. The last one uses exactly one
- * comparison form — `typeof === 'number' && > 0` — because `delegationDepth: 0`
- * is a legal value on ordinary top-level sessions. Truthiness testing or key
- * presence would misclassify those sessions as subagents and silently drop
- * their notifications; that misclassification was observed at runtime during
- * Phase 1, so the strict form is part of the contract rather than a preference.
+ * Two criteria carry positive evidence, and both are read from `SessionHeader`:
+ * `origin === 'subagent'`, the runtime's own coarse product classification for a
+ * subagent child, and a strictly positive `delegationDepth`, which DSH documents
+ * as "absent (zero) for a top-level session, parent depth + 1 for a subagent
+ * child". `origin` is tested first only so that the recorded criterion names the
+ * stronger signal; neither test depends on the other, so the order cannot change
+ * the verdict.
+ *
+ * `parentSession` is deliberately *not* a criterion. DSH documents it as "the
+ * session this one was forked from (seed lineage), if any", and
+ * `SessionStore.fork()` writes it — together with `isSeeded: true`, and with
+ * neither `origin` nor `delegationDepth` — for a fork the operator asked for.
+ * Treating it as subagent evidence classified those sessions as subagents and
+ * dropped their notifications under the default `includeSubagents: false`. It is
+ * carried on the returned facts as metadata instead.
+ *
+ * The depth test uses exactly one comparison form — `typeof === 'number'`,
+ * `Number.isFinite`, and a strict `> 0` — because `delegationDepth: 0` is a legal
+ * value on ordinary top-level sessions. Truthiness testing or key presence would
+ * misclassify those sessions as subagents and silently drop their notifications;
+ * that misclassification was observed at runtime during Phase 1, so the strict
+ * form is part of the contract rather than a preference. `Number.isFinite`
+ * additionally rejects `Infinity`, which is not a depth the runtime writes and
+ * must not be read as unbounded delegation.
  *
  * The session id is never consulted: top-level and subagent ids share the same
  * `session-<uuid>` form and carry no hierarchy.
@@ -116,6 +133,10 @@ export function toSessionFacts(session: SessionLike): SessionFacts {
   if (cwd !== undefined) facts.cwd = cwd
   const agentPreset = asString(header.agentPreset)
   if (agentPreset !== undefined) facts.agentPreset = agentPreset
+  // Lineage, reported as lineage. It is read here and nowhere else, and no
+  // branch below consults it.
+  const parentSession = asString(header.parentSession)
+  if (parentSession !== undefined) facts.parentSession = parentSession
 
   const origin = header.origin
   if (origin === 'subagent') {
@@ -124,20 +145,7 @@ export function toSessionFacts(session: SessionLike): SessionFacts {
     return facts
   }
 
-  const parentSession = header.parentSession
-  if (typeof parentSession === 'string' && parentSession !== '') {
-    facts.isSubagent = true
-    facts.decidedBy = 'parentSession'
-    return facts
-  }
-
   const depth = header.delegationDepth
-  // Exactly one comparison form is permitted here: a numeric test and a strict
-  // `> 0`. Truthiness (`if (depth)`) and key presence (`'delegationDepth' in
-  // header`, `!== undefined`) both misclassify a legal top-level session that
-  // carries `delegationDepth: 0`, which the runtime was observed to emit.
-  // `Number.isFinite` additionally rejects `Infinity`, which is not a depth the
-  // runtime writes and must not be read as unbounded delegation.
   if (typeof depth === 'number' && Number.isFinite(depth) && depth > 0) {
     facts.isSubagent = true
     facts.decidedBy = 'delegationDepth'
@@ -188,19 +196,68 @@ function readStreamUsage(stream: unknown): RawUsage | undefined {
 }
 
 /**
+ * Resolve the message record out of a `user/message` payload.
+ *
+ * The installed contract is direct — `SessionEventMap` declares
+ * `'user/message': UserMessage`, so the payload *is* the message, and the
+ * runtime's own readers treat it that way. Some wrappers nest it instead
+ * (`{ message: UserMessage }`, the shaping every other message-bearing event
+ * uses), so that is accepted as a fallback, but only when the direct payload
+ * carries no message-shaped key of its own. A payload carrying both stays
+ * deterministic: the direct one wins.
+ *
+ * @param data - the event payload, viewed structurally.
+ * @returns the message record, or the payload itself when nothing is nested.
+ */
+function resolveUserMessage(data: Record<string, unknown>): Record<string, unknown> {
+  const direct =
+    data['content'] !== undefined || data['text'] !== undefined || data['source'] !== undefined || data['role'] !== undefined
+  if (direct) return data
+  return asRecord(data['message']) ?? data
+}
+
+/**
+ * Read `source.kind` out of one message, copying that scalar and nothing else.
+ *
+ * DSH declares `MessageBase.source` as required and `MessageSourceMap` as a
+ * merge-extensible sum type: the base contract defines `{ kind: 'user' }` for a
+ * direct human message and each other producer declares its own kind in its own
+ * module, so this one value is the only positive evidence that a user-role
+ * message is the operator's own words rather than context DSH injected.
+ *
+ * Failure is closed. An absent or non-object `source`, a non-string `kind`, and
+ * an empty string all yield `undefined`, and the caller must read `undefined` as
+ * "not a direct human message" rather than as "unknown, so probably human". Real
+ * logs also carry kinds that no installed declaration augments (a bare `plugin`),
+ * which is why the reader never attempts to enumerate or normalize the
+ * vocabulary: it copies whatever non-empty string is there and leaves the
+ * comparison to the one consumer.
+ *
+ * The source object itself is never retained, never returned, and never logged.
+ *
+ * @param message - the message record, viewed structurally.
+ * @returns the kind, or `undefined` when no usable one exists.
+ */
+function readMessageSourceKind(message: Record<string, unknown>): string | undefined {
+  const source = asRecord(message['source'])
+  if (source === undefined) return undefined
+  return asString(source['kind'])
+}
+
+/**
  * Read the user's own text out of a `user/message` payload.
  *
  * A `UserMessage` carries a content array or a bare string depending on the
  * path that wrote it, so both are accepted and everything else yields nothing.
  *
- * @param data - the event payload, viewed structurally.
+ * @param message - the resolved message record, viewed structurally.
  * @returns the collected text, possibly empty.
  */
-function readUserText(data: Record<string, unknown>): string {
-  const direct = data.content
+function readUserText(message: Record<string, unknown>): string {
+  const direct = message.content
   if (typeof direct === 'string') return direct
   if (!Array.isArray(direct)) {
-    const text = data.text
+    const text = message.text
     return typeof text === 'string' ? text : ''
   }
   const parts: string[] = []
@@ -222,10 +279,14 @@ function readUserText(data: Record<string, unknown>): string {
  * is missing or non-numeric — becomes `{ kind: 'other' }`. This function never
  * throws and never returns a live object.
  *
- * `step/start`, `assistant/attempt`, and `llm/retry` are translated because
- * turn-level token accounting has to know how many model calls a turn made and
- * which of them reported no usage (D017); without them, a retried call would be
- * invisible and the aggregate would be presented as if it covered the turn.
+ * `user/message` is translated before the turn guard rather than inside the
+ * switch, because the runtime writes it without a turn number; it carries the
+ * message's text and, when the payload had one, its `source.kind` as a bare
+ * scalar. `step/start`, `assistant/attempt`, and `llm/retry` are translated
+ * because turn-level token accounting has to know how many model calls a turn
+ * made and which of them reported no usage (D017); without them, a retried call
+ * would be invisible and the aggregate would be presented as if it covered the
+ * turn.
  *
  * @param event - the runtime event, viewed structurally.
  * @returns the internal event.
@@ -246,9 +307,22 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
   const step = asNumber(data['step'])
 
   if (type === 'user/message') {
-    // Handled before the turn guard: the runtime's own user-message payload has
-    // no turn number, and the text is still worth collecting.
-    return { kind: 'user-message', ...(turn !== undefined ? { turn } : {}), text: readUserText(data), timeMs }
+    // The single `user/message` path — it has no arm in the switch below, by
+    // construction. Handled before the turn guard because the runtime's own
+    // payload carries no turn number and the text is still worth collecting.
+    //
+    // `sourceKind` is copied as one scalar so the handler can tell the operator's
+    // prompt from injected context without ever holding the source object
+    // (architecture invariant one; §13).
+    const message = resolveUserMessage(data)
+    const sourceKind = readMessageSourceKind(message)
+    return {
+      kind: 'user-message',
+      ...(turn !== undefined ? { turn } : {}),
+      text: readUserText(message),
+      ...(sourceKind !== undefined ? { sourceKind } : {}),
+      timeMs,
+    }
   }
 
   if (turn === undefined) {
@@ -326,19 +400,6 @@ export function toInternalEvent(event: SessionEventLike): InternalEvent {
         ...(callId !== undefined ? { callId } : {}),
         ...(name !== undefined ? { name } : {}),
         ...(rawArguments !== undefined ? { rawArguments } : {}),
-        timeMs,
-      }
-    }
-
-    case 'user/message': {
-      // `UserMessage` is the whole payload, so the turn may be present or
-      // absent depending on how the message reached the log; either way the
-      // text is collected and the handler decides which turn owns it.
-      const text = readUserText(data)
-      return {
-        kind: 'user-message',
-        ...(turn !== undefined ? { turn } : {}),
-        text,
         timeMs,
       }
     }

@@ -18,6 +18,7 @@ import type { MailJob, SendResult } from '../../src/types.ts'
 import {
   assistantMessage,
   healthyTurnChain,
+  injectedUserMessage,
   mixedAssistantMessage,
   reasoningOnlyMessage,
   rootSession,
@@ -784,8 +785,16 @@ function v4TurnChain(turn: number, prompt: string, answer: string): SessionEvent
     turnStart(turn, base),
     stepStart(turn, 1, base + 1),
     userMessage(prompt, base + 2),
-    userMessage('Current runtime context. This snapshot supersedes earlier ones.', base + 3),
-    userMessage('<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>', base + 4),
+    // The two injected messages carry their producers' own kinds. Writing them
+    // as direct-human messages — which is what they used to be, because only the
+    // order distinguished them — would make this chain assert the positional rule
+    // the source-based one replaced, and would pass for the wrong reason.
+    injectedUserMessage('Current runtime context. This snapshot supersedes earlier ones.', 'runtime-context', base + 3),
+    injectedUserMessage(
+      '<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>',
+      'skill-catalog',
+      base + 4,
+    ),
     assistantMessage({ turn, step: 1, time: base + 5, content: [{ type: 'text', text: answer }] }),
     turnEnd(turn, base + 6),
   ]

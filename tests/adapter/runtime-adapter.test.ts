@@ -13,16 +13,17 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { toInternalEvent, toSessionFacts, toSessionId } from '../../src/runtime-adapter.ts'
+import { toInternalEvent, toSessionFacts, toSessionId, type SessionEventLike } from '../../src/runtime-adapter.ts'
 import {
   assistantAttempt,
   assistantMessage,
   bareRootSession,
   depthOnlySubagent,
+  forkedSession,
+  injectedUserMessage,
   llmRetry,
   llmRetryStarted,
   mixedAssistantMessage,
-  parentOnlySubagent,
   rootSession,
   stepStart,
   streamUsageRecord,
@@ -33,8 +34,11 @@ import {
   toolResultOk,
   turnEnd,
   turnStart,
+  userMessage,
+  userMessageWithSource,
   TURN_END_REASONS,
   OBSERVED_USAGE,
+  RUNTIME_CONTEXT_SOURCE_KIND,
   TEST_SESSION_CWD,
 } from '../fixtures/runtime-shapes.ts'
 
@@ -60,10 +64,33 @@ test('SES-03 origin is the deciding criterion when present', () => {
   assert.equal(facts.decidedBy, 'origin')
 })
 
-test('SES-04 parentSession decides when origin is absent', () => {
-  const facts = toSessionFacts(parentOnlySubagent())
-  assert.equal(facts.isSubagent, true)
-  assert.equal(facts.decidedBy, 'parentSession')
+test('SES-04 a user-created fork is top level, because parentSession is lineage and not hierarchy', () => {
+  // `SessionStore.fork()` writes `parentSession` plus `isSeeded: true` and
+  // neither of the two positive signals. Reading lineage as hierarchy excluded
+  // these sessions from notification under the default `includeSubagents: false`.
+  const facts = toSessionFacts(forkedSession())
+  assert.equal(facts.isSubagent, false, 'a fork of a top-level session is a top-level session')
+  assert.equal(facts.decidedBy, null)
+  assert.equal(facts.parentSession, 'session-3f0c2938-3769-471e-b2bf-12badadde842', 'the lineage stays available as metadata')
+})
+
+test('SES-04b parentSession alone never decides, whatever else the header omits', () => {
+  for (const parent of ['session-x', 'session-0000', 'x']) {
+    const facts = toSessionFacts({ id: 'session-fork', header: { parentSession: parent, isSeeded: true } })
+    assert.equal(facts.isSubagent, false, `parentSession ${parent} must not classify a subagent`)
+    assert.equal(facts.parentSession, parent)
+  }
+})
+
+test('SES-04c a positive criterion still decides when parentSession is present too', () => {
+  // Every real subagent child carries all three; the lineage must not mask the
+  // signal that actually classifies it.
+  const byOrigin = toSessionFacts({ id: 's', header: { origin: 'subagent', parentSession: 'session-x' } })
+  assert.equal(byOrigin.isSubagent, true)
+  assert.equal(byOrigin.decidedBy, 'origin')
+  const byDepth = toSessionFacts({ id: 's', header: { parentSession: 'session-x', delegationDepth: 2 } })
+  assert.equal(byDepth.isSubagent, true)
+  assert.equal(byDepth.decidedBy, 'delegationDepth')
 })
 
 test('SES-05 a positive delegationDepth decides when the others are absent', () => {
@@ -103,15 +130,18 @@ test('SES-07 the session id format never influences the decision', () => {
   assert.equal(plainSubagent.isSubagent, true)
 })
 
-test('SES-07b an empty parentSession string is not a hierarchy signal', () => {
+test('SES-07b an empty parentSession string is neither hierarchy nor metadata', () => {
   const facts = toSessionFacts({ id: 'session-x', header: { parentSession: '' } })
   assert.equal(facts.isSubagent, false)
+  assert.equal(facts.decidedBy, null)
+  assert.ok(!Object.hasOwn(facts, 'parentSession'), 'an empty id is absence, not a lineage value')
 })
 
 test('session metadata is read when present and omitted when absent', () => {
   const withMeta = toSessionFacts(rootSession())
   assert.equal(withMeta.cwd, TEST_SESSION_CWD)
   assert.equal(withMeta.agentPreset, 'standard')
+  assert.equal(withMeta.parentSession, undefined, 'the shared root fixture carries parentSession: null')
   const bare = toSessionFacts(bareRootSession())
   assert.equal(bare.cwd, undefined)
   assert.equal(bare.agentPreset, undefined)
@@ -569,6 +599,145 @@ test('a missing event time becomes 0 rather than NaN', () => {
     assert.ok(Number.isFinite(internal.timeMs))
   }
 })
+
+/* ── User-message source kinds (D021) ─────────────────────────────────── */
+
+test('ADP-07 a direct human prompt carries its source kind as one scalar', () => {
+  const internal = toInternalEvent(userMessage('the operator asked this'))
+  assert.equal(internal.kind, 'user-message')
+  if (internal.kind !== 'user-message') return
+  assert.equal(internal.text, 'the operator asked this')
+  assert.equal(internal.sourceKind, 'user')
+  // The payload is the message, so `turn` is absent unless the runtime supplied
+  // one; this event has none.
+  assert.ok(!Object.hasOwn(internal, 'turn'), 'the runtime writes user messages without a turn')
+})
+
+test('ADP-07b injected context keeps its producer kind, and the text is still collected', () => {
+  // Collection is unconditional; only rendering is switched (D012). What the
+  // adapter must not do is lose the kind that makes the discrimination possible.
+  const internal = toInternalEvent(injectedUserMessage('a runtime context snapshot', RUNTIME_CONTEXT_SOURCE_KIND))
+  assert.equal(internal.kind, 'user-message')
+  if (internal.kind !== 'user-message') return
+  assert.equal(internal.sourceKind, RUNTIME_CONTEXT_SOURCE_KIND)
+  assert.equal(internal.text, 'a runtime context snapshot')
+})
+
+test('ADP-07c a missing, non-object, or kindless source yields no sourceKind', () => {
+  const sources: unknown[] = [
+    undefined,
+    null,
+    'user',
+    42,
+    [],
+    {},
+    { kind: undefined },
+    { kind: null },
+    { kind: 42 },
+    { kind: true },
+    { kind: '' },
+    { kind: {} },
+    { kind: [] },
+    { provider: 'deepseek-official' },
+  ]
+  for (const source of sources) {
+    const internal = toInternalEvent(userMessageWithSource('text', source))
+    assert.equal(internal.kind, 'user-message')
+    if (internal.kind !== 'user-message') continue
+    assert.equal(internal.sourceKind, undefined, `source ${JSON.stringify(source)} must not produce a kind`)
+    assert.ok(!Object.hasOwn(internal, 'sourceKind'), 'an unusable kind is omitted, not written as undefined')
+  }
+})
+
+test('ADP-07d only the kind scalar survives: no source payload reaches the internal event', () => {
+  // Real sources carry producer payload — a webhook provider, a team sender, a
+  // tool call id. None of it may be retained, and a spread or a reference would
+  // make this fail rather than pass quietly.
+  const internal = toInternalEvent(
+    userMessageWithSource('text', {
+      kind: 'webhook',
+      provider: 'WEBHOOK_PROVIDER_SENTINEL',
+      source: 'WEBHOOK_SOURCE_SENTINEL',
+      deliveryId: 'WEBHOOK_DELIVERY_SENTINEL',
+    }),
+  )
+  assert.equal(internal.kind, 'user-message')
+  if (internal.kind !== 'user-message') return
+  assert.deepEqual(Object.keys(internal).sort(), ['kind', 'sourceKind', 'text', 'timeMs'])
+  const serialized = JSON.stringify(internal)
+  for (const sentinel of ['WEBHOOK_PROVIDER_SENTINEL', 'WEBHOOK_SOURCE_SENTINEL', 'WEBHOOK_DELIVERY_SENTINEL']) {
+    assert.ok(!serialized.includes(sentinel), `${sentinel} must not survive the adapter`)
+  }
+})
+
+test('ADP-07e a nested wrapper is read too, and the direct payload wins when both exist', () => {
+  const nested: SessionEventLike = {
+    type: 'user/message',
+    time: 5,
+    data: { message: { role: 'user', content: [{ type: 'text', text: 'nested text' }], source: { kind: 'user' } } },
+  }
+  const fromNested = toInternalEvent(nested)
+  assert.equal(fromNested.kind, 'user-message')
+  if (fromNested.kind === 'user-message') {
+    assert.equal(fromNested.text, 'nested text')
+    assert.equal(fromNested.sourceKind, 'user')
+  }
+
+  const both: SessionEventLike = {
+    type: 'user/message',
+    time: 6,
+    data: {
+      content: [{ type: 'text', text: 'direct text' }],
+      source: { kind: 'goal' },
+      message: { role: 'user', content: [{ type: 'text', text: 'nested text' }], source: { kind: 'user' } },
+    },
+  }
+  const fromDirect = toInternalEvent(both)
+  assert.equal(fromDirect.kind, 'user-message')
+  if (fromDirect.kind === 'user-message') {
+    assert.equal(fromDirect.text, 'direct text', 'the direct payload is the installed shape and wins')
+    assert.equal(fromDirect.sourceKind, 'goal')
+  }
+})
+
+test('ADP-07f a user message with a turn is filed under it, kind included', () => {
+  const event = userMessage('prompt', 9)
+  ;(event.data as Record<string, unknown>)['turn'] = 4
+  const internal = toInternalEvent(event)
+  assert.equal(internal.kind, 'user-message')
+  if (internal.kind !== 'user-message') return
+  assert.equal(internal.turn, 4)
+  assert.equal(internal.sourceKind, 'user')
+})
+
+test('ADP-07g a malformed user payload degrades safely rather than throwing', () => {
+  // A payload that is not a record cannot be a message at all, and the adapter's
+  // existing contract is to report the type and stop — the same treatment every
+  // other kind gets. It must not be coerced into an empty prompt.
+  for (const data of [null, undefined, 42, 'text', []]) {
+    const internal = toInternalEvent({ type: 'user/message', time: 3, data: data as never })
+    assert.equal(internal.kind, 'other', `data ${JSON.stringify(data)} is not a message`)
+    if (internal.kind === 'other') assert.equal(internal.type, 'user/message')
+  }
+
+  // An empty record is a message with no text and no source: it adapts as an
+  // empty user message, and the absent kind keeps it out of attribution.
+  const empty = toInternalEvent({ type: 'user/message', time: 3, data: {} })
+  assert.equal(empty.kind, 'user-message')
+  if (empty.kind !== 'user-message') return
+  assert.equal(empty.text, '')
+  assert.equal(empty.sourceKind, undefined)
+
+  // A message with a source but no content is likewise empty, and its kind
+  // survives: the kind is read from the source, not from the text.
+  const noContent = toInternalEvent(userMessageWithSource('', { kind: 'user' }))
+  assert.equal(noContent.kind, 'user-message')
+  if (noContent.kind === 'user-message') {
+    assert.equal(noContent.text, '')
+    assert.equal(noContent.sourceKind, 'user')
+  }
+})
+
 
 test('the adapter is pure: adapting the same event twice yields equal results', () => {
   const event = mixedAssistantMessage(2, 3, 500, 'answer')

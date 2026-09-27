@@ -266,6 +266,26 @@ export type InternalEvent =
       turn?: number
       /** The user's own text, collected always and rendered only on opt-in. */
       text: string
+      /**
+       * The producer’s `MessageSource.kind`, copied as one scalar and nothing more.
+       *
+       * A user-role message is the shape several different producers write: the
+       * operator’s prompt, DSH’s injected runtime context, the skill catalogue,
+       * goal continuations, agent-to-agent messages. `source.kind` is the only
+       * field that tells them apart, so this scalar — not the text, and not the
+       * event’s position in the turn — is what decides attribution.
+       *
+       * It is absent whenever the runtime carried no usable kind: `source`
+       * missing or not an object, `kind` not a string, or `kind` empty. Absence
+       * means *not a direct human message*, never “unknown, so assume prompt”,
+       * which is why the handler fails closed on it.
+       *
+       * The raw `source` object is deliberately not part of this shape: it may
+       * carry producer payload (a webhook provider, a team sender, a tool call
+       * id) that this plugin has no reason to retain, and the adapter neither
+       * returns it nor logs it.
+       */
+      sourceKind?: string
       timeMs: number
     }
   | {
@@ -303,7 +323,7 @@ export type InternalEvent =
  * `null` means the session is top level. The value exists so that "why was
  * this mail not sent" is auditable rather than a silent skip.
  */
-export type SubagentDecidedBy = 'origin' | 'parentSession' | 'delegationDepth' | null
+export type SubagentDecidedBy = 'origin' | 'delegationDepth' | null
 
 /** Session-level facts, reduced to what policy needs. */
 export interface SessionFacts {
@@ -312,6 +332,15 @@ export interface SessionFacts {
   decidedBy: SubagentDecidedBy
   cwd?: string
   agentPreset?: string
+  /**
+   * The session this one was forked from, exactly as the header reported it.
+   *
+   * Metadata, and only metadata: `isSubagent` is never derived from it, because
+   * a fork of a top-level session inherits free of any hierarchy signal. It is
+   * retained because “which seed is this session built on” is a real, bounded
+   * fact an operator may need when reading an audit line.
+   */
+  parentSession?: string
 }
 
 /**

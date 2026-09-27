@@ -75,21 +75,48 @@ export interface SessionHandlers {
 }
 
 /**
- * Why a user-role message is not the turn's prompt.
+ * The `MessageSource.kind` DSH reserves for a direct human message.
  *
- * The distinction is not cosmetic. A turn's prompt is the one thing
- * `includeUserPrompt` promises to render, and DSH writes several *other*
- * user-role messages into the same log — the runtime-context snapshot, the skill
- * catalogue, and any instruction reminder a plugin injects. Rendering one of
- * those instead would put platform boilerplate in the mail where the operator's
- * own words belong.
+ * `MessageSourceMap` declares this value in its base contract — `user: { kind:
+ * 'user' }` — while every other producer declares its own kind by module
+ * augmentation, so it is the only positive evidence that a user-role message
+ * carries the operator's own words. The browser prompt path (`user-rpc`) sets the
+ * same kind, which is correct: a human typed it.
  */
-export type UserTextRejection = 'already-attributed' | 'context-injection'
+const DIRECT_HUMAN_SOURCE_KIND = 'user'
+
+/**
+ * Why a user-role message did not become the turn's prompt.
+ *
+ * Both members are facts about the message itself, not about its position in the
+ * turn — which is the whole point of the rule. `non-user-source` covers every
+ * producer other than a direct human one: DSH's runtime-context snapshot, the
+ * skill catalogue, the agent-instruction baseline, tool-job notices, an agent
+ * message, a webhook delivery, a goal continuation, and equally a message whose
+ * `source` was missing or malformed. An unrecognised kind is refused rather than
+ * guessed at, so a future producer cannot silently become "the user's prompt".
+ *
+ * `empty-prompt` is a direct-human message whose text is only whitespace. It is
+ * not a source mismatch — the operator really did send it — but it is not a
+ * prompt either, and it must neither claim nor replace one.
+ *
+ * Both are counted rather than silently dropped: a change in what DSH injects as
+ * a user message would otherwise re-attribute prompts with nothing in the log to
+ * show for it.
+ */
+export type UserTextRejection = 'non-user-source' | 'empty-prompt'
 
 /** One turn's prompt attribution, as the handler tracks it. */
 interface PromptAttribution {
-  /** Whether the turn already has the one prompt it is allowed. */
-  claimed: boolean
+  /**
+   * Whether the turn has taken a direct-human prompt.
+   *
+   * This is not a reserved slot: a later direct-human message replaces the text.
+   * The flag exists so that the pre-turn buffer cannot overwrite a prompt the
+   * turn has already taken, and so that "this turn has an attribution" is one
+   * explicit fact rather than an inference from a non-empty string.
+   */
+  hasDirectPrompt: boolean
 }
 
 /** Counters the handler keeps for observability. */
@@ -106,13 +133,7 @@ interface HandlerCounters {
   approvalAsksObserved: number
   /** Interaction observations that could not be parsed into anything sendable. */
   attentionUnparsable: number
-  /**
-   * User-role messages that were not the turn's prompt, by reason.
-   *
-   * Recorded rather than silently dropped: a change in what DSH injects as a
-   * user message would otherwise re-attribute prompts with nothing in the log to
-   * show for it.
-   */
+  /** User-role messages that were not the turn's prompt, by reason. */
   userMessagesRejected: Partial<Record<UserTextRejection, number>>
 }
 
@@ -138,7 +159,11 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
   const store = new TurnStateStore()
 
   /**
-   * User text collected before its turn opened, by session.
+   * A direct-human prompt collected before its turn opened, by session.
+   *
+   * Only a message whose `source.kind` is exactly `user` is ever held here: an
+   * injected context message that arrives while the session is idle is refused
+   * and counted, because it is not a prompt that a later turn is waiting for.
    *
    * `includeUserPrompt`'s collection always runs and only its rendering is
    * switched, so the collection path has one shape rather than two (D012).
@@ -146,27 +171,41 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
   const pendingUserText = new Map<string, { text: string; at: number }>()
 
   /**
-   * Whether each open turn has already taken its prompt, by session then turn.
+   * Whether each open turn has taken its prompt, by session then turn.
    *
-   * ## Why a turn may take only one user message
+   * ## The rule this map serves
    *
-   * Session format v4 opens `turn/start` **before** the queued input is fully
-   * entered, and the input itself arrives as `user/message` with no turn number.
-   * A single Turn therefore produces several user-role messages in this order:
+   * DSH writes a user-role message for the operator's prompt and for every piece
+   * of context it injects, and an injected message's text can sit in the same
+   * `user/message` event type with no turn number of its own. Position therefore
+   * carries no information: an implementation that took the first non-whitespace
+   * user message of a turn, or the last one, would be encoding an ordering DSH
+   * does not promise, and would render platform boilerplate wherever the
+   * operator's words belong (or lose the prompt entirely) as soon as that
+   * ordering changed.
    *
-   * 1. the prompt the operator typed;
-   * 2. the runtime-context snapshot DSH appends;
-   * 3. the skill-catalogue reminder.
+   * What does distinguish them is `source.kind`. `MessageSourceMap` declares
+   * `user: { kind: 'user' }` for a direct human message, and each other producer
+   * declares its own kind by module augmentation — `runtime-context`,
+   * `skill-catalog`, `agent-instructions`, `tool-jobs`, `goal`, `agent-message`,
+   * `subagent-settled`, and the browser prompt path `user-rpc`, which sets
+   * `kind: 'user'` because it is a human typing. So:
    *
-   * The last three are platform context, not the operator's words, and they
-   * arrive *after* the real prompt. Any rule that keeps the latest text — which
-   * is what this handler did through DSH 0.1.5 — therefore ends up rendering the
-   * reminder and losing the prompt, and because a turn only releases its entry
-   * at settlement, the same rule also mis-attributes across two sequential
-   * turns. Counting instead of overwriting is what makes the first message the
-   * prompt and every later one context.
+   * - a message with `sourceKind === 'user'` is the prompt, and the most recent
+   *   one in the turn wins, because a second direct message is a correction;
+   * - a message with any other or absent `sourceKind` never claims and never
+   *   replaces the prompt, whatever its text and whenever it arrives.
    *
-   * The count is per `(session, turn)` and is dropped when the turn is released,
+   * ## The invariance this buys
+   *
+   * The result depends only on `source.kind`, so it is unchanged if DSH reorders
+   * its injected context, or starts emitting a new injection kind. That property
+   * is a requirement, not an accident: any future edit here that reintroduces a
+   * positional or counting rule breaks the contract this module exists to hold,
+   * and the reordering tests in `tests/unit/prompt-attribution.test.ts` fail on
+   * exactly that change.
+   *
+   * The record is per `(session, turn)` and is dropped when the turn is released,
    * so it cannot grow with a session's lifetime.
    */
   const promptAttribution = new Map<string, Map<number, PromptAttribution>>()
@@ -202,69 +241,130 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
   }
 
   /**
-   * Attach a collected prompt to a turn, if one is waiting and still fresh.
+   * Attach a held prompt to a turn, if one is waiting and still fresh.
    *
-   * Seeding also claims the turn's one prompt slot, so a message that arrives
-   * later in the same turn — the runtime-context snapshot, or a reminder a plugin
-   * injects — cannot take the place the real prompt has already taken.
+   * The buffer holds a direct-human prompt that arrived before its turn opened.
+   * A prompt the turn takes later replaces the seeded text, which is why seeding
+   * only marks attribution rather than protecting it: the newest direct-human
+   * message of the turn is the prompt, whether it arrived before or after
+   * `turn/start`.
    *
-   * @param sessionId - the session whose pending text may apply.
+   * @param sessionId - the session whose held text may apply.
    * @param turn - the turn being seeded.
    * @param state - the turn's state, written to in place.
    */
   const seedUserText = (sessionId: string, turn: number, state: { lastUserText?: string }): void => {
-    const turns = attributionOf(sessionId)
-    if (turns.get(turn) !== undefined) return
     const pending = pendingUserText.get(sessionId)
     if (pending === undefined) return
+    // The held prompt is consumed by whichever comes first: a turn that takes it,
+    // or its own expiry. Expiry is therefore evaluated before the early return
+    // below, because an entry left by a turn that already took a direct prompt
+    // would otherwise never be examined again and would stay resident for the
+    // life of the session — the one place this module could retain text
+    // indefinitely.
     if (now() - pending.at > PENDING_USER_TEXT_TTL_MS) {
       pendingUserText.delete(sessionId)
       return
     }
-    turns.set(turn, { claimed: true })
+    const turns = attributionOf(sessionId)
+    // The flag is read, not merely the key: a turn that has already taken a
+    // direct prompt must not have it overwritten by the pre-turn buffer.
+    if (turns.get(turn)?.hasDirectPrompt === true) return
+    turns.set(turn, { hasDirectPrompt: true })
     state.lastUserText = pending.text
   }
 
   /**
    * Offer one user-role message to a turn as its prompt.
    *
+   * Selection is by `source.kind`, never by position. Only the exact direct-human
+   * kind is accepted; every other kind, and an absent or malformed one, is
+   * refused before its text is even examined. A message that is accepted either
+   * becomes the turn's prompt — replacing an earlier one, because the most recent
+   * direct-human message is the current one — or, when no turn is open yet, is
+   * held for the turn that opens next.
+   *
    * @param sessionId - the session the message arrived in.
-   * @param turn - the open turn it arrived during.
+   * @param turn - the open turn it belongs to, or `undefined` when none is open.
    * @param text - the message's text.
-   * @returns `undefined` when the turn took it, or why it did not.
+   * @param sourceKind - the payload's `MessageSource.kind`, when it had one.
+   * @returns `undefined` when the message was taken or held, or why it was not.
    */
-  const offerUserText = (sessionId: string, turn: number, text: string): UserTextRejection | undefined => {
-    // A whitespace-only message is not a prompt and must not *claim* the turn's
-    // one slot either: doing so would let an empty first message lock out the
-    // real prompt that follows it, which is worse than rendering nothing.
+  const offerUserText = (
+    sessionId: string,
+    turn: number | undefined,
+    text: string,
+    sourceKind: string | undefined,
+  ): UserTextRejection | undefined => {
+    // Injected context, goal continuations, agent messages, and a source that
+    // was missing or malformed all stop here. An unknown kind is not a licence
+    // to guess, which is what keeps a future DSH producer from silently taking
+    // the operator's place in the mail.
+    if (sourceKind !== DIRECT_HUMAN_SOURCE_KIND) return 'non-user-source'
+    // A whitespace-only message is not a prompt and must not claim the turn
+    // either: doing so would let an empty first message lock out the real prompt
+    // that follows it, which is worse than rendering nothing.
     const prompt = text.trim()
-    if (prompt === '') return 'context-injection'
-    const turns = attributionOf(sessionId)
-    const record = turns.get(turn)
-    if (record === undefined) {
-      turns.set(turn, { claimed: true })
-      const state = store.stateOf(sessionId, turn)
-      state.lastUserText = prompt
+    if (prompt === '') return 'empty-prompt'
+    if (turn === undefined) {
+      // No turn is open yet, so the prompt is held — bounded by the TTL — for the
+      // turn that opens next. This is the only path that holds text at all.
+      pendingUserText.set(sessionId, { text: prompt, at: now() })
       return undefined
     }
-    // The turn already has its prompt. Everything after it in the same turn is
-    // platform context that DSH appended, which is exactly what must not be
-    // rendered in the operator's place.
-    return 'already-attributed'
+    attributionOf(sessionId).set(turn, { hasDirectPrompt: true })
+    store.stateOf(sessionId, turn).lastUserText = prompt
+    return undefined
   }
 
   /**
-   * Attribute one user-role message to a turn, and log a rejection when it loses.
+   * Record one refused user-role message under its reason.
+   *
+   * The refused text itself is never logged, only its length, and the kind is a
+   * producer name rather than payload: that is enough for an operator to see
+   * *which* injection took the slot that `includeUserPrompt` would have rendered
+   * without putting session content into the log (§13).
    *
    * @param sessionId - the session the message arrived in.
-   * @param turn - the turn it addresses.
-   * @param text - the message's text.
+   * @param turn - the turn it addressed, when one was known.
+   * @param rejection - why it was refused.
+   * @param sourceKind - the producer kind, when the payload carried one.
+   * @param textLength - the message's length in UTF-16 units.
    */
-  const attributeUserText = (sessionId: string, turn: number, text: string): void => {
-    const rejected = offerUserText(sessionId, turn, text)
+  const noteUserTextRejection = (
+    sessionId: string,
+    turn: number | undefined,
+    rejection: UserTextRejection,
+    sourceKind: string | undefined,
+    textLength: number,
+  ): void => {
+    counters.userMessagesRejected[rejection] = (counters.userMessagesRejected[rejection] ?? 0) + 1
+    logger.debug('prompt.attribution-rejected', {
+      sessionId,
+      turn: turn ?? null,
+      reason: rejection,
+      sourceKind: sourceKind ?? null,
+      textLength,
+    })
+  }
+
+  /**
+   * Attribute one user-role message to a turn, counting a refusal when it loses.
+   *
+   * @param sessionId - the session the message arrived in.
+   * @param turn - the turn it addresses, or `undefined` when none is open.
+   * @param text - the message's text.
+   * @param sourceKind - the payload's `MessageSource.kind`, when it had one.
+   */
+  const attributeUserText = (
+    sessionId: string,
+    turn: number | undefined,
+    text: string,
+    sourceKind: string | undefined,
+  ): void => {
+    const rejected = offerUserText(sessionId, turn, text, sourceKind)
     if (rejected === undefined) return
-    counters.userMessagesRejected[rejected] = (counters.userMessagesRejected[rejected] ?? 0) + 1
-    logger.debug('prompt.attribution-rejected', { sessionId, turn, reason: rejected, textLength: text.length })
+    noteUserTextRejection(sessionId, turn, rejected, sourceKind, text.length)
   }
 
   /** Accumulate one internal event into turn state. */
@@ -457,22 +557,20 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
 
     if (internal.kind === 'user-message') {
       // Collected for every session in scope and rendered only under
-      // `includeUserPrompt`, so the collection path has one shape. Session format
-      // v4 writes an unnumbered message during the turn it belongs to, so it is
-      // attributed to the turn that is currently open rather than held: holding
-      // it would let the turn's own context messages overwrite it before the
-      // turn ever asked for it. A numbered message is attributed to its turn
-      // directly. Anything that arrives with no turn open waits for the next one.
-      if (internal.turn === undefined) {
-        const openTurn = store.currentTurn(facts.sessionId)
-        if (openTurn !== undefined) {
-          attributeUserText(facts.sessionId, openTurn, internal.text)
-          return
-        }
-        if (internal.text !== '') pendingUserText.set(facts.sessionId, { text: internal.text, at: now() })
-        return
-      }
-      attributeUserText(facts.sessionId, internal.turn, internal.text)
+      // `includeUserPrompt`, so the collection path has one shape (D012).
+      //
+      // Which turn owns the message is positional; which message is the prompt is
+      // not. A numbered message belongs to its own turn, an unnumbered one to the
+      // turn that is currently open, and — only when it is a direct human prompt —
+      // an unnumbered message arriving with no turn open is held for the next one.
+      // Everything else is refused by kind, so an injected context message that
+      // arrives while the session is idle cannot become the next turn's prompt.
+      attributeUserText(
+        facts.sessionId,
+        internal.turn ?? store.currentTurn(facts.sessionId),
+        internal.text,
+        internal.sourceKind,
+      )
       return
     }
 
