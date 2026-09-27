@@ -122,8 +122,8 @@ export interface RecordedRpcCall {
 }
 
 /**
- * A faked DSH client context: the settings scope, the credential Remote, and
- * the `/api` channel the card reaches, with every answer owned by the test.
+ * A faked DSH client context: the configuration form, the credential Remote,
+ * and the `/api` channel the card reaches, with every answer owned by the test.
  *
  * The wire shapes mirror what `src/client/wire.ts` validates: envelopes carry
  * `{ ok, value }` or `{ ok, error }`, and the credential namespace exposes
@@ -132,7 +132,7 @@ export interface RecordedRpcCall {
  */
 export interface FakeHost {
   ctx: ClientContext
-  /** The schema-resolved section the scope reports. */
+  /** The schema-resolved section the form reports. */
   section: Record<string, unknown>
   /** The raw user layer; presence of a key marks a field overridden. */
   user: Record<string, unknown>
@@ -161,12 +161,15 @@ export interface FakeHost {
   emitCredentialUpdated(ref: string): void
 }
 
-/** Build one scope snapshot from the fake host's current layers. */
+/** Build one form snapshot from the fake host's current layers. */
 function makeSnapshot(host: FakeHost): Record<string, unknown> {
   return {
     status: 'ready',
     value: { ...host.section },
     base: {},
+    // The raw user layer, exactly as the Host reports it: a field's *presence*
+    // here is what marks it overridden, which is why the fake carries it as a
+    // separate map rather than deriving it from a value comparison.
     user: { ...host.user },
     revision: 1,
     writable: true,
@@ -210,18 +213,27 @@ export function fakeHost(): FakeHost {
   }
 
   let snapshot = makeSnapshot(host)
-  const scopeListeners = new Set<() => void>()
+  const formListeners = new Set<() => void>()
   const republish = (): void => {
     snapshot = makeSnapshot(host)
-    for (const listener of [...scopeListeners]) listener()
+    for (const listener of [...formListeners]) listener()
   }
 
-  const scope = {
+  /**
+   * One Host plugin entry's configuration form.
+   *
+   * The three members are the whole published `ConfigForm` contract minus the
+   * single-field `set`/`unset` helpers this card does not use — it stages every
+   * edit and submits them as one atomic mutation. Answering `boolean` from
+   * `mutate` mirrors the Host: `false` is a refusal the caller must handle, and a
+   * transport failure rejects instead.
+   */
+  const form = {
     getSnapshot: () => snapshot,
     subscribe: (listener: () => void) => {
-      scopeListeners.add(listener)
+      formListeners.add(listener)
       return () => {
-        scopeListeners.delete(listener)
+        formListeners.delete(listener)
       }
     },
     mutate: async (ops: ReadonlyArray<Record<string, unknown>>) => {
@@ -240,6 +252,7 @@ export function fakeHost(): FakeHost {
         }
       }
       republish()
+      return true
     },
   }
 
@@ -273,7 +286,11 @@ export function fakeHost(): FakeHost {
   }
 
   host.ctx = {
-    settingsScope: { bind: () => scope },
+    // The Host's shared form service, answering for the one entry this card
+    // edits. `get` is addressed by the profile entry id, and the fake ignores
+    // the argument for the same reason the card does not: both sides already
+    // agree on which entry a bundle's page is showing.
+    configForms: { get: () => form, whileServed: () => () => {} },
     remote: {
       credentials: { describe, set, unset },
       $on: (name: string, listener: (ref: string) => void) => {

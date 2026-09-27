@@ -6,9 +6,9 @@
  * turned out to be wrong. A grammar test against the plugin's own copy cannot
  * catch that class of error, because the copy is what was wrong.
  *
- * So this plugin asks the **installed, shipped** credential service — the same
+ * So this plugin asks the **installed, shipped** credential service —the same
  * `ctx.credentials` the mailer resolves through, over the disposable probe
- * home's document — the questions the pattern depends on, and compares the
+ * home's document —the questions the pattern depends on, and compares the
  * answers with DSH's own helper functions:
  *
  * ```text
@@ -22,17 +22,16 @@
  *
  * Two properties keep this honest. The disposable probe home is the only
  * credential source, and the checker asserts the value is absent from every
- * environment layer before it accepts a source of `file` — so "it resolved"
+ * environment layer before it accepts a source of `file` —so "it resolved"
  * cannot be a coincidence of ambient state. And no branch here ever writes the
  * value: the report carries presence, layer, and length only (§15).
  *
  * @module dsh-mail-notify/scripts/probe/credential-contract
  */
 
-import { createRequire } from 'node:module'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { importDshPackage, installedVersion } from './dsh-modules.mjs'
 
 /** Plugin name; also the loader row id in the probe overlay. */
 export const name = 'probe-credential-contract'
@@ -64,33 +63,19 @@ const VALUE = process.env['PROBE_CREDENTIAL_VALUE'] ?? ''
 const ENV_LAYERS = ['process', 'project-env', 'user-env']
 
 /**
- * The harness installation root, as this booted app sees it.
+ * Import a package from the operator's DSH installation.
  *
- * @returns the directory holding `node_modules/@deepseek-ai`.
- */
-function installRoot() {
-  const explicit = process.env['DSH_INSTALL_ROOT']
-  if (explicit !== undefined && explicit !== '') return explicit
-  return join(process.env['DSH_HOME'] ?? '', '..')
-}
-
-/**
- * Import a package from the operator's DSH installation by absolute path.
- *
- * The probe plugins live outside the profile's module root — that is what keeps
- * the plugin under test out of it — so a bare specifier cannot resolve here.
- * Resolving through the installation root is the same device `dev-boot-probe`
- * uses for the harness modules themselves, and resolving the package root
- * rather than a file inside it goes through the package's own `exports` map,
- * which is what a real consumer gets.
+ * Delegated to the shared helper, which knows that DSH 0.1.7 nests the
+ * launcher's dependencies inside the launcher rather than hoisting them beside
+ * it. A local `createRequire(<installRoot>)` —which is what this file used
+ * through 0.1.5 —cannot see them at all from 0.1.7, and would report the
+ * credential package as missing.
  *
  * @param packageName - the package name below `@deepseek-ai`.
  * @returns the module namespace.
  */
 function importHarness(packageName) {
-  const require = createRequire(join(installRoot(), 'noop.cjs'))
-  const resolved = require.resolve(`@deepseek-ai/${packageName}`)
-  return import(pathToFileURL(resolved).href)
+  return importDshPackage(packageName)
 }
 
 /**
@@ -111,14 +96,8 @@ function record(lines, label, ok, detail) {
  * @param packageName - the package directory below `@deepseek-ai`.
  * @returns the declared version, or `unknown`.
  */
-function installedVersion(packageName) {
-  try {
-    const require = createRequire(join(installRoot(), 'noop.cjs'))
-    const manifest = require.resolve(`@deepseek-ai/${packageName}/package.json`)
-    return JSON.parse(readFileSync(manifest, 'utf8')).version ?? 'unknown'
-  } catch {
-    return 'unknown'
-  }
+function versionOf(packageName) {
+  return installedVersion(packageName) ?? 'unknown'
 }
 
 /**
@@ -135,8 +114,8 @@ export async function apply(ctx) {
   const { credentialRef, isCredentialRefName, credentialKey, parseCredentialKey } = credentialsModule
   const { parseCredentialsDocument } = localModule
 
-  lines.push(`installed dsh-credentials        ${installedVersion('dsh-credentials')}`)
-  lines.push(`installed dsh-credentials-local  ${installedVersion('dsh-credentials-local')}`)
+  lines.push(`installed dsh-credentials        ${versionOf('dsh-credentials')}`)
+  lines.push(`installed dsh-credentials-local  ${versionOf('dsh-credentials-local')}`)
 
   // 1. The grammar. The plugin validates `smtpPasswordCredential` against its
   //    own copy of the pattern; that copy must agree with the helper the
@@ -221,7 +200,7 @@ export async function apply(ctx) {
     }
     record(lines, 'the document refuses a CredentialKey in `refs`', scopedRejected, scopedDetail)
 
-    // 4. The live service — the one the mailer resolves through.
+    // 4. The live service —the one the mailer resolves through.
     const provider = ctx.get('credentials')
     const resolved = await provider.resolve(credentialRef(REF))
     const described = await provider.describe(credentialRef(REF))

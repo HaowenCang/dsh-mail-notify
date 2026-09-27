@@ -34,9 +34,8 @@
  */
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { importDshPackage } from './dsh-modules.mjs'
 
 /** Plugin name; also the loader row id in the probe overlay. */
 export const name = 'probe-approval-tool'
@@ -46,13 +45,13 @@ export const name = 'probe-approval-tool'
  *
  * This file lives outside the profile's module root — that is what keeps the
  * plugin under test out of it — so a bare `@deepseek-ai/dsh-tools` specifier
- * cannot resolve here. Resolving through the installation root is the same
- * device `dev-boot-probe` uses for the harness modules themselves, and it is
- * what keeps the tool definition going through the registry's real
- * `defineTool` rather than a hand-rolled shape.
+ * cannot resolve here. The shared helper resolves it through the launcher,
+ * which is what keeps the tool definition going through the registry's real
+ * `defineTool` rather than a hand-rolled shape — and what makes the lookup work
+ * under DSH 0.1.7, where the package is nested inside the launcher rather than
+ * hoisted beside it.
  */
-const require = createRequire(join(process.env['DSH_INSTALL_ROOT'] ?? join(process.env['DSH_HOME'] ?? '', '..'), 'noop.cjs'))
-const { defineTool } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-tools')).href)
+const { defineTool } = await importDshPackage('dsh-tools')
 
 /** The services the tool needs before it can ask for a decision. */
 export const inject = ['tools', 'approval']

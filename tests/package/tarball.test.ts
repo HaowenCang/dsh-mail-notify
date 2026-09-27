@@ -115,8 +115,11 @@ test('the packed manifest declares the DSH bundle, the export map, and the brows
   // browser surface declares it here, and the module system reads `platform`
   // and `inject` from this exact object. Asserting the complete shape is what
   // makes a silently dropped `client` block fail here rather than in a browser.
-  // The locale module is the sixth edge: the card's dictionaries register into
-  // its registry, so it must arrive before this plugin's client half.
+  //
+  // For DSH 0.1.7 the fifth edge is the Plugins page that declares the bundle
+  // configuration slot, and the locale module remains the last: the card's
+  // dictionaries register into its registry, so it must arrive before this
+  // plugin's client half.
   assert.deepEqual(
     manifest.dsh,
     {
@@ -126,7 +129,7 @@ test('the packed manifest declares the DSH bundle, the export map, and the brows
         inject: [
           '@deepseek-ai/dsh-client-ui-renderer',
           '@deepseek-ai/dsh-client-ui-settings',
-          '@deepseek-ai/dsh-client-ui-settings-plugins',
+          '@deepseek-ai/dsh-client-ui-plugin-manager',
           '@deepseek-ai/dsh-client-connection',
           '@deepseek-ai/dsh-api-remotes',
           '@deepseek-ai/dsh-client-locale',

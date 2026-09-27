@@ -26,16 +26,18 @@
  *   approvals-duplicate   the same, with the audit record replayed afterwards
  *   approvals-rejected    the same, with the answerer rejecting
  *   credentials           the credential-reference contract, on the real store
+ *   user-prompt           two sequential Turns, attributing each prompt to its own mail
  *
  * @module dsh-mail-notify/scripts/probe-e2e
  */
 
-import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseMessage } from './probe/smtp-decode.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
@@ -56,6 +58,16 @@ const credentialRef = 'DSH_MAIL_SMTP_PASSWORD'
  * run, not merely that no field obviously holds it.
  */
 const toolArgumentSentinel = 'PROBE_TOOL_ARGUMENT_SENTINEL_9f2c41'
+/**
+ * The two prompts the attribution scenario turns on.
+ *
+ * Distinct and self-identifying, because the property under test is which prompt
+ * a mail body carries: a shared or generic prompt could not distinguish correct
+ * attribution from an off-by-one shift, and the whole point of the scenario is
+ * that those two outcomes look identical in the mail count.
+ */
+const promptA = 'PROBE_PROMPT_A_alpha first request: summarise the first task'
+const promptB = 'PROBE_PROMPT_B_beta second request: summarise the second task'
 /**
  * The DSH installation root — the directory holding `node_modules/@deepseek-ai`.
  *
@@ -103,6 +115,22 @@ const paths = {
   stderr: join(outDir, `stderr-${scenario}.log`),
   sentinel: join(statusDir, `approval-mail-${scenario}.ready`),
   timeline: join(outDir, `timeline-${scenario}.log`),
+  /**
+   * The two-Turn driver's own progress trace.
+   *
+   * A child's streams are captured only once it exits, so a driver that hung
+   * would leave no evidence of how far it got. The driver appends to this file
+   * as it runs, which is what turns "the probe timed out" into a stage.
+   */
+  twoTurnTrace: join(outDir, `two-turn-${scenario}.log`),
+  /**
+   * The raw `session/event` order, when a scenario needs to reason about it.
+   *
+   * Attribution is a question about ordering — which user message precedes which
+   * `turn/start` — and reading the answer out of a notification would mean
+   * reasoning backwards from the behaviour under test.
+   */
+  eventOrder: join(outDir, `events-${scenario}.log`),
 }
 
 for (const path of Object.values(paths)) {
@@ -122,6 +150,142 @@ for (const path of Object.values(paths)) {
 rmSync(probeHome, { recursive: true, force: true })
 for (const name of ['', 'sessions', 'storages', 'profiles', 'profiles/headless']) {
   mkdirSync(join(probeHome, name), { recursive: true })
+}
+
+/**
+ * Install the packed plugin into the disposable profile.
+ *
+ * ## Why this is not optional under DSH 0.1.7
+ *
+ * DSH 0.1.7 evaluates every composed row's plugin compatibility *before* the
+ * Loader imports anything, and it evaluates it against the row's own
+ * `package.json`. A row named by absolute path has no package identity to read,
+ * so the check throws and the row is disabled outright — the plugin never loads,
+ * and a probe that kept pointing at `lib/index.js` would spend its whole run
+ * measuring an empty composition.
+ *
+ * Installing the packed archive into the profile gives the row a real package
+ * and a real manifest, which is also what an operator does. The archive is the
+ * one `npm pack` produced for the current version, so the probe exercises the
+ * artefact that ships rather than the checkout it came from.
+ *
+ * @param tarball - absolute path to the packed archive.
+ */
+function installPlugin(tarball) {
+  // `shell: true` because `dsh` is a `.cmd` shim on Windows rather than an
+  // executable; the same invocation works on both platforms and is the command
+  // the README documents.
+  const result = spawnSync('dsh', ['plugin', '--profile', 'headless', 'add', tarball], {
+    cwd: projectRoot,
+    env: { ...process.env, DSH_HOME: probeHome, DSH_INSTALL_ROOT: installRoot },
+    encoding: 'utf8',
+    shell: true,
+  })
+  if (result.status !== 0) {
+    process.stderr.write(`[probe] plugin installation failed:\n${result.stdout ?? ''}\n${result.stderr ?? ''}\n`)
+    process.exit(2)
+  }
+  // The bundle's own patch row is replaced by this run's configuration, so the
+  // plugin must be mounted as a row of the overlay rather than left to the
+  // bundle default — which is `enabled: false` by design and would send nothing.
+}
+
+/**
+ * Write this run's overlay with every path resolved to a literal.
+ *
+ * The overlay is generated rather than checked in for one reason: DSH 0.1.7
+ * evaluates the compatibility of a composed row before it interpolates that
+ * row's `!!js` expressions, so a row whose `name` is an expression reaches the
+ * check as an object and is disabled with `name.startsWith is not a function`.
+ * A literal path has no such problem, and the file is written into the
+ * disposable tree, so no machine's directory layout enters the repository.
+ *
+ * @param file - where to write the overlay.
+ * @param includeTwoTurnDriver - whether this scenario replaces the one-shot runner.
+ * @returns the overlay's path.
+ */
+function writeOverlay(file, includeTwoTurnDriver) {
+  const lines = [
+    '# Generated by scripts/probe-e2e.mjs for one run. Do not edit; see that file.',
+    '#',
+    '# Every plugin row names a literal path or a bare package specifier, because',
+    '# DSH 0.1.7 checks a row\'s plugin compatibility before interpolating !!js',
+    '# expressions in `name`, and an unevaluated expression object fails that',
+    '# check. Paths are absolute for the same reason they always were: the probe',
+    '# keeps the plugin under test outside the profile\'s module root.',
+    '',
+    '- id: agent-default-model',
+    '  config:',
+    '    provider: probe',
+    '    model: probe-scripted',
+    '',
+    '# The agent loop, which the headless template no longer composes on its own',
+    '# under DSH 0.1.7. Without it `ctx.agents` has no factory and a driver that',
+    '# tries to create a Turn fails with "no agent factory registered" — the',
+    '# plugin would then be measured in a deployment where no Turn can happen.',
+    '# The empty `agents` list is the shipped default.',
+    '- id: agent-loop',
+    "  name: '@deepseek-ai/dsh-agent-loop'",
+    '  config:',
+    '    agents: []',
+    '',
+    '# The effective approval policy for this composition is `ask`. It has to be',
+    '# stated: `dsh-base` derives the policy from the permission mode, and this',
+    '# machine runs the `danger-full-access` preset, whose policy is `never` — a',
+    '# mode in which the approval service rejects deterministically before any',
+    '# answerer is consulted.',
+    '- id: approval',
+    '  config:',
+    '    policy: ask',
+    '',
+    '# The shipped file-backed credential store is retargeted rather than',
+    '# replaced, so the production resolution path is under test.',
+    '- id: credentials',
+    '  config:',
+    `    path: ${JSON.stringify(paths.credentialsFile)}`,
+    '    watch: true',
+    '',
+    '- insert:',
+    `    - id: probe-timeline`,
+    `      name: ${JSON.stringify(join(here, 'probe', 'timeline.mjs'))}`,
+    `    - id: probe-credential-contract`,
+    `      name: ${JSON.stringify(join(here, 'probe', 'credential-contract.mjs'))}`,
+    `    - id: probe-scripted-provider`,
+    `      name: ${JSON.stringify(join(here, 'probe', 'scripted-provider.mjs'))}`,
+    '    - id: tool-ask-user',
+    "      name: '@deepseek-ai/dsh-tool-ask-user'",
+    `    - id: probe-approval-tool`,
+    `      name: ${JSON.stringify(join(here, 'probe', 'approval-tool.mjs'))}`,
+    `    - id: probe-auto-answer`,
+    `      name: ${JSON.stringify(join(here, 'probe', 'auto-answer.mjs'))}`,
+    `    - id: probe-event-order`,
+    `      name: ${JSON.stringify(join(here, 'probe', 'event-order.mjs'))}`,
+  ]
+  if (includeTwoTurnDriver) {
+    lines.push(
+      '',
+      '# The shipped one-shot runner drives exactly one Turn and exits, so the',
+      '# attribution scenario replaces it with a driver that appends two.',
+      '- id: headless-runner',
+      '  disabled: true',
+      '',
+      '- insert:',
+      `    - id: probe-two-turn-driver`,
+      `      name: ${JSON.stringify(join(here, 'probe', 'two-turn-driver.mjs'))}`,
+    )
+  }
+  lines.push(
+    '',
+    '# The plugin under test, addressed by package so its real manifest is what',
+    '# the compatibility preflight reads.',
+    '- insert:',
+    '    - id: dsh-mail-notify',
+    '      name: dsh-mail-notify',
+    "      config: !!js 'JSON.parse(process.env.PROBE_MAIL_CONFIG)'",
+    '',
+  )
+  writeFileSync(file, lines.join('\n'), 'utf8')
+  return file
 }
 
 // The one controlled credential source for this run: the shipped file-backed
@@ -267,139 +431,20 @@ function runProfile(patches, scriptPath, mailConfig, extraEnv) {
     child.stderr.on('data', (chunk) => {
       err += chunk.toString('utf8')
     })
-    child.on('close', (code) => resolvePromise({ code, out, err }))
-  })
-}
-
-/**
- * Unfold a header block into `name: value` pairs.
- *
- * A long header is folded across lines that begin with whitespace, and each
- * fragment of an RFC 2047 encoded value is a complete encoded word on its own
- * line. Reading only the first line would report a truncated subject that the
- * mail system never received, so the folding is undone before anything is
- * decoded — that ordering matters, because the encoded words must be joined
- * before they can be decoded.
- *
- * @param block - the raw header block, without the body.
- * @returns one entry per header field, values already unfolded.
- */
-function parseHeaders(block) {
-  const fields = []
-  for (const line of block.split('\n')) {
-    if (/^[ \t]/.test(line) && fields.length > 0) {
-      fields[fields.length - 1] += ` ${line.trim()}`
-      continue
-    }
-    const separator = line.indexOf(':')
-    if (separator === -1) continue
-    fields.push(`${line.slice(0, separator)}:${line.slice(separator + 1).trim()}`)
-  }
-  return fields
-}
-
-/**
- * Decode RFC 2047 encoded words in a header value.
- *
- * The whitespace between two adjacent encoded words is not part of the value:
- * each word encodes a fragment of one string, and the encoder inserted a fold
- * (or a space) purely to satisfy line-length limits. Leaving it in would report
- * `Choos e Mode` for a subject the mail system holds as `Choose Mode`, and every
- * fragment is a complete word, so `B` and `Q` may differ within one value.
- *
- * @param value - the unfolded header value.
- * @returns the decoded value.
- */
-function decodeEncodedWords(value) {
-  return value
-    .replace(/\?=[ \t]+=\?/g, '?==?')
-    .replace(/=\?UTF-8\?([BQ])\?([^?]*)\?=/gi, (_all, mode, payload) => {
-      if (mode.toUpperCase() === 'B') return Buffer.from(payload, 'base64').toString('utf8')
-      // Q encoding: `_` is a space and `=XX` is one byte.
-      const bytes = payload
-        .replace(/_/g, ' ')
-        .replace(/=([0-9A-F]{2})/gi, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
-      return Buffer.from(bytes, 'latin1').toString('utf8')
+    // A boot that never exits must fail the probe rather than hang it. The
+    // timeout is generous — a real agent run through a scripted provider is
+    // seconds, not minutes — and the kill is what lets the run report *which*
+    // stage it reached instead of leaving the caller to interrupt it.
+    const limitMs = Number(process.env['PROBE_TIMEOUT_MS'] ?? '180000')
+    const timer = setTimeout(() => {
+      err += `\n[probe] the booted profile did not exit within ${limitMs} ms; terminating it\n`
+      child.kill('SIGKILL')
+    }, limitMs)
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolvePromise({ code, out, err })
     })
-}
-
-/**
- * Undo quoted-printable: soft line breaks disappear, `=XX` is one byte.
- *
- * @param text - the encoded body text.
- * @returns the decoded text.
- */
-function decodeQuotedPrintable(text) {
-  return Buffer.from(
-    text
-      .replace(/=(?:\r?\n)/g, '')
-      .replace(/=([0-9A-F]{2})/gi, (_m, hex) => String.fromCharCode(parseInt(hex, 16))),
-    'latin1',
-  ).toString('utf8')
-}
-
-/**
- * Pull the two facts a mail reader cares about out of one raw SMTP DATA blob.
- *
- * The message is `multipart/alternative`, so the plain-text part is selected by
- * its MIME boundary and decoded by its own transfer encoding. Reading the raw
- * body instead would report quoted-printable soft breaks as content, which
- * looks like corruption the mail system never produced.
- *
- * @param entry - the accepted message and its arrival time.
- * @returns the decoded subject, body, received time, and arrival order.
- */
-function parseMessage(entry) {
-  const raw = entry.raw
-  const separator = raw.indexOf('\n\n')
-  const headerBlock = separator === -1 ? raw : raw.slice(0, separator)
-  const bodyRaw = separator === -1 ? '' : raw.slice(separator + 2)
-  const fields = parseHeaders(headerBlock)
-
-  const lookup = (name) => {
-    const prefix = `${name.toLowerCase()}:`
-    const found = fields.find((field) => field.toLowerCase().startsWith(prefix))
-    return found === undefined ? '' : found.slice(prefix.length).trim()
-  }
-
-  const subject = decodeEncodedWords(lookup('Subject')).trim()
-
-  const boundary = lookup('Content-Type').match(/boundary="?([^";]+)"?/)?.[1]
-  let part = bodyRaw
-  let legacy = true
-  if (boundary !== undefined) {
-    // The first part after the opening delimiter is the text/plain alternative;
-    // the plugin's messages declare it first.
-    const marker = `--${boundary}`
-    const start = bodyRaw.indexOf(marker)
-    const partStart = bodyRaw.indexOf('\n', start) + 1
-    const end = bodyRaw.indexOf(`\n${marker}`, partStart)
-    part = bodyRaw.slice(partStart, end === -1 ? undefined : end)
-    legacy = false
-  }
-
-  const partSeparator = part.indexOf('\n\n')
-  const partHeaders = legacy ? '' : part.slice(0, partSeparator === -1 ? part.length : partSeparator)
-  const inline = partSeparator === -1 ? '' : part.slice(partSeparator + 2)
-  const partBody = legacy ? part : inline
-  const transfer = (
-    legacy
-      ? lookup('Content-Transfer-Encoding')
-      : (parseHeaders(partHeaders)
-          .find((f) => f.toLowerCase().startsWith('content-transfer-encoding:'))
-          ?.split(':')
-          .slice(1)
-          .join(':')
-          .trim() ?? '')
-  ).toLowerCase()
-
-  const body =
-    transfer === 'base64'
-      ? Buffer.from(partBody.replace(/\s+/g, ''), 'base64').toString('utf8')
-      : transfer === 'quoted-printable'
-        ? decodeQuotedPrintable(partBody)
-        : partBody
-  return { subject, body, receivedAt: entry.at }
+  })
 }
 
 /**
@@ -464,6 +509,12 @@ function scriptFor(name) {
       // has to give the booted app something to do.
       return ['The credential-contract checks ran during activation.']
 
+    case 'user-prompt':
+      // Two completions, one per Turn. The driver appends the prompts itself, so
+      // the script only has to answer each of them; a multi-call Turn is not
+      // needed here and would blur which completion belongs to which prompt.
+      return ['The first task is complete.', 'The second task is complete.']
+
     default:
       return ['The script defines nothing for this scenario.']
   }
@@ -524,6 +575,13 @@ function mailConfigFor(name, port) {
       notifyQuestions: false,
       notifyApprovals: false,
     },
+    'user-prompt': {
+      notifyCompleted: true,
+      notifyErrors: false,
+      notifyMaxTokens: true,
+      notifyQuestions: false,
+      notifyApprovals: false,
+    },
   }[name]
 
   return {
@@ -542,6 +600,10 @@ function mailConfigFor(name, port) {
     maxBodyChars: 100_000,
     includeMetadata: true,
     includeUserPrompt: false,
+    // `includeUserPrompt` is the switch under test, so it is on for this
+    // scenario and off everywhere else: a probe that left it on would make every
+    // other scenario's mail bodies carry a field they do not assert on.
+    includeUserPrompt: name === 'user-prompt',
     includeFooter: true,
     queueSize: 100,
     retryAttempts: 1,
@@ -576,6 +638,17 @@ function extraEnvFor(name) {
   }
   if (name === 'approvals-rejected') {
     return { PROBE_APPROVAL_OUTCOME: 'rejected', PROBE_WAIT_SENTINEL: paths.sentinel, PROBE_WAIT_TIMEOUT_MS: '20000' }
+  }
+  if (name === 'user-prompt') {
+    // The two prompts travel through the environment because the driver plugin
+    // has no invocation surface of its own, and a literal in the overlay would
+    // put the assertion's own sentinels in a different file from the assertion.
+    return {
+      PROBE_PROMPT_A: promptA,
+      PROBE_PROMPT_B: promptB,
+      PROBE_TWO_TURN_TRACE: paths.twoTurnTrace,
+      PROBE_EVENT_ORDER: paths.eventOrder,
+    }
   }
   return {}
 }
@@ -651,7 +724,24 @@ const smtp = await startSmtp((index) => {
 })
 process.stdout.write(`[probe] loopback SMTP listening on 127.0.0.1:${smtp.port}\n`)
 
-const patches = [join(here, 'probe', 'overlay-base.yml')]
+/**
+ * The archive the probe installs: the one `npm pack` produces for the version
+ * this checkout declares.
+ *
+ * Derived from `package.json` rather than chosen by modification time, so a
+ * `.tgz` left behind by an earlier release can never be the thing a green probe
+ * result is about.
+ */
+const version = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')).version
+const archivePath = join(projectRoot, `dsh-mail-notify-${version}.tgz`)
+if (!existsSync(archivePath)) {
+  process.stderr.write(`[probe] ${archivePath} does not exist; run "npm pack" first\n`)
+  process.exit(2)
+}
+process.stdout.write(`[probe] installing ${archivePath} into the disposable profile\n`)
+installPlugin(archivePath)
+
+const patches = [writeOverlay(join(outDir, `overlay-${scenario}.yml`), scenario === 'user-prompt')]
 writeFileSync(paths.script, `${JSON.stringify(scriptFor(scenario), null, 2)}\n`, 'utf8')
 const startedAt = Date.now()
 const result = await runProfile(patches, paths.script, mailConfigFor(scenario, smtp.port), extraEnvFor(scenario))
@@ -731,7 +821,64 @@ for (const line of credentialReport.split('\n')) {
   if (line.trim() !== '') lines.push(`[probe]   ${line}`)
 }
 
+/**
+ * Assert the user-prompt attribution property from the delivered mails alone.
+ *
+ * The claim is about which prompt each body carries, so it is decided by
+ * searching the bodies for the two sentinels rather than by reading anything the
+ * plugin reports about itself. A plugin that attributed the wrong prompt, or
+ * that let a pending prompt survive into the next Turn, produces the same number
+ * of mails as a correct one; only the contents tell them apart, and only if the
+ * two prompts are distinct.
+ *
+ * @param prefix - the mail body's user-prompt section marker.
+ * @returns true when the run's mails attribute both prompts correctly.
+ */
+function checkPromptAttribution(prefix) {
+  if (messages.length !== 2) {
+    lines.push(`[probe] FAIL user-prompt: expected two completion mails, received ${messages.length}`)
+    return false
+  }
+  const [first, second] = messages
+  lines.push(`[probe] mail 1 subject: ${first.subject}`)
+  lines.push(`[probe] mail 2 subject: ${second.subject}`)
+
+  const checks = [
+    ['mail 1 carries prompt A', first.body.includes(promptA)],
+    ['mail 1 does not carry prompt B', !first.body.includes(promptB)],
+    ['mail 2 carries prompt B', second.body.includes(promptB)],
+    ['mail 2 does not carry prompt A', !second.body.includes(promptA)],
+    ['mail 1 names the first completion', first.body.includes('The first task is complete.')],
+    ['mail 2 names the second completion', second.body.includes('The second task is complete.')],
+    ['the prompt section marker is present', first.body.includes(prefix) && second.body.includes(prefix)],
+    // The sentinels exist to be searched for; a run in which neither body carried
+    // one would satisfy "does not carry the other prompt" vacuously.
+    ['the two prompts are distinguishable in the bodies', first.body !== second.body],
+  ]
+  let allPassed = true
+  for (const [label, passed] of checks) {
+    lines.push(`[probe] ${passed ? 'PASS' : 'FAIL'} user-prompt: ${label}`)
+    if (!passed) allPassed = false
+  }
+  return allPassed
+}
+
+const promptAttributionPassed = scenario === 'user-prompt' ? checkPromptAttribution('--- User prompt ---') : true
+
+if (scenario === 'user-prompt') {
+  // The driver's own progress, reported whether or not the run succeeded: when
+  // it fails, the last stage reached is the diagnosis.
+  lines.push('[probe] two-Turn driver stages:')
+  for (const line of readTrace(paths.twoTurnTrace).split('\n')) {
+    if (line.trim() !== '') lines.push(`[probe]   ${line}`)
+  }
+}
+
 lines.push(`[probe] artifacts: ${outDir}`)
 process.stdout.write(`${lines.join('\n')}\n`)
 
-process.exit(result.code === 0 && messages.length > 0 && credentialFailures.length === 0 && credentialReport !== '' ? 0 : 1)
+process.exit(
+  result.code === 0 && messages.length > 0 && credentialFailures.length === 0 && credentialReport !== '' && promptAttributionPassed
+    ? 0
+    : 1,
+)

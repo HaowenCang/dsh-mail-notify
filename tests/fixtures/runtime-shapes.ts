@@ -271,7 +271,7 @@ export function turnEnd(turn: number, time: number, reason: Record<string, unkno
   return { type: 'turn/end', seq: turn * 100 + 99, time, data: { turn, reason } }
 }
 
-/** The six confirmed `turn/end` reasons, plus one unconfirmed kind. */
+/** The seven confirmed `turn/end` reasons, plus one unconfirmed kind. */
 export const TURN_END_REASONS: Readonly<Record<string, Record<string, unknown>>> = {
   completed: { kind: 'completed' },
   'max-tokens': { kind: 'max-tokens' },
@@ -280,6 +280,9 @@ export const TURN_END_REASONS: Readonly<Record<string, Record<string, unknown>>>
   'aborted-hook': { kind: 'aborted', reason: { kind: 'hook', reason: 'budget exceeded' } },
   blocked: { kind: 'blocked' },
   interrupted: { kind: 'interrupted' },
+  // DSH 0.1.7's fork-seed closer. The live agent loop never emits it; it exists
+  // only in a session constructed by forking an open tail turn.
+  forked: { kind: 'forked' },
   future: { kind: 'future-kind' },
 }
 

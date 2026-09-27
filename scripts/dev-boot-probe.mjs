@@ -29,7 +29,8 @@
  * @module dsh-mail-notify/scripts/dev-boot-probe
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -81,16 +82,34 @@ function resolveInstallRoot() {
 
 const installRoot = resolveInstallRoot()
 const dshModules = join(installRoot, 'node_modules', '@deepseek-ai')
+/** The launcher's own directory, used as the resolution base for its dependencies. */
+const launcherLib = join(dshModules, 'dsh', 'lib')
 
 /**
  * Import a harness module by absolute path.
+ *
+ * Two installation layouts occur and both must work. Where the launcher's
+ * dependencies are hoisted beside it — the layout through DSH 0.1.5 — the
+ * module sits directly under the installation root. Where they are nested
+ * inside the launcher's own `node_modules` — the layout from 0.1.7 — it does
+ * not. The flat path is tried first and the launcher's own resolutions second,
+ * so neither layout is assumed.
  *
  * @param relative - the path below `@deepseek-ai`, e.g. `dsh-app-boot/lib/index.js`.
  * @returns the module namespace.
  */
 async function importHarness(relative) {
   const target = join(dshModules, ...relative.split('/'))
-  return import(pathToFileURL(target).href)
+  if (existsSync(target)) return import(pathToFileURL(target).href)
+  // Resolve the package directory through its manifest — the only subpath every
+  // DSH package exports — and append the file path below it. Resolving the file
+  // path itself would be refused by packages whose `exports` map does not list
+  // it.
+  const specifier = `@deepseek-ai/${relative}`
+  const segments = specifier.split('/')
+  const packageName = segments.slice(0, 2).join('/')
+  const manifest = createRequire(join(launcherLib, 'bin.js')).resolve(`${packageName}/package.json`)
+  return import(pathToFileURL(join(dirname(manifest), ...segments.slice(2))).href)
 }
 
 /** Render one Cordis log message without trusting its argument shapes. */
@@ -265,10 +284,14 @@ function replayDuplicate() {
 /**
  * Resolve the launcher's `runProfile`.
  *
- * The boot module's filename carries a content hash, so it is found by scanning
- * the launcher's `lib` directory for the module that actually exports
- * `runProfile`, rather than by hard-coding a hash that a harness upgrade would
- * invalidate.
+ * Every `profile-boot*.js` module in the launcher's `lib` directory is tried in
+ * turn and the first one exporting `runProfile` wins. Two layouts occur across
+ * DSH releases and both are accepted without a version test: through 0.1.5 the
+ * export lived only in a content-hashed chunk, so the scan had to reach past
+ * the stable re-export; from 0.1.7 the stable module re-exports it directly.
+ * Matching on the export rather than on a filename keeps the harness working
+ * under either layout, and importing a module that does not carry it is
+ * harmless.
  *
  * @returns the `runProfile` function.
  */
@@ -276,7 +299,7 @@ async function loadRunProfile() {
   const { readdirSync } = await import('node:fs')
   const libDir = join(dshModules, 'dsh', 'lib')
   for (const name of readdirSync(libDir)) {
-    if (!name.startsWith('profile-boot-') || !name.endsWith('.js')) continue
+    if (!name.startsWith('profile-boot') || !name.endsWith('.js')) continue
     const candidate = await importHarness(`dsh/lib/${name}`)
     if (typeof candidate.runProfile === 'function') return candidate.runProfile
   }

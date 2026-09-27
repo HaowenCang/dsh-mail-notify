@@ -1,6 +1,7 @@
 /**
  * L1 unit tests for `completion.ts` — matrix rows TRN-04…TRN-09 (classification
- * and detail extraction) plus USE-05's "usage does not decide status".
+ * and detail extraction), the DSH 0.1.7 fork-seed closer, plus USE-05's "usage
+ * does not decide status".
  *
  * @module dsh-mail-notify/tests/unit/completion
  */
@@ -15,6 +16,7 @@ import {
   sanitizeDetail,
   toTurnEndKind,
 } from '../../src/completion.ts'
+import { isNotifiableKind, isSyntheticCloser, policySwitchFor } from '../../src/subject.ts'
 import { TURN_END_REASONS } from '../fixtures/runtime-shapes.ts'
 
 test('TRN-04 completed with no explicit tool error is completed-clean', () => {
@@ -41,18 +43,52 @@ test('TRN-08 aborted, blocked, and interrupted each keep their own status', () =
   assert.equal(classifyCompletion('interrupted', 0), 'interrupted')
 })
 
+test('TRN-08c the fork-seed closer is its own status, never a settlement', () => {
+  // DSH 0.1.7 adds `forked`: fork-seed construction closes a turn that was still
+  // open at the fork boundary, and the live agent loop never emits it. It must
+  // therefore never be read as a turn that ran and settled — neither as a
+  // success, nor as a failure, nor as a token-limit stop. The distinct status is
+  // what makes that structural rather than a matter of care: no notification
+  // policy switch exists for it, so nothing can be fabricated from one.
+  assert.equal(classifyCompletion('forked', 0), 'forked')
+  assert.equal(
+    classifyCompletion('forked', 3),
+    'forked',
+    'tool errors observed before the boundary do not turn it into a settlement',
+  )
+  assert.notEqual(classifyCompletion('forked', 0), 'completed-clean')
+  assert.notEqual(classifyCompletion('forked', 0), 'error')
+  assert.notEqual(classifyCompletion('forked', 0), 'max-tokens')
+})
+
 test('TRN-09 an unconfirmed kind is unknown and never throws', () => {
   assert.equal(classifyCompletion('unknown', 0), 'unknown')
   assert.equal(classifyCompletion('unknown', 5), 'unknown')
 })
 
-test('all six confirmed kinds are recognised and nothing else is', () => {
-  for (const kind of ['completed', 'max-tokens', 'error', 'aborted', 'blocked', 'interrupted']) {
+test('all seven confirmed kinds are recognised and nothing else is', () => {
+  for (const kind of ['completed', 'max-tokens', 'error', 'aborted', 'blocked', 'interrupted', 'forked']) {
     assert.equal(toTurnEndKind(kind), kind)
   }
   for (const value of ['future-kind', '', 'COMPLETED', 42, null, undefined, {}]) {
     assert.equal(toTurnEndKind(value), 'unknown', `${String(value)} must narrow to unknown`)
   }
+})
+
+test('the synthetic closers are told apart from a real settlement', () => {
+  // `forked` and `interrupted` are both markers a *constructor* writes rather
+  // than outcomes an agent reached. They are the only two confirmed kinds with
+  // that property, which is what the predicate exists to name.
+  assert.equal(isSyntheticCloser('forked'), true)
+  assert.equal(isSyntheticCloser('interrupted'), true)
+  for (const kind of ['completed', 'max-tokens', 'error', 'aborted', 'blocked', 'unknown'] as const) {
+    assert.equal(isSyntheticCloser(kind), false, `${kind} is a real outcome`)
+  }
+})
+
+test('no notification policy switch exists for a fork-seed closer', () => {
+  assert.equal(policySwitchFor('forked'), undefined)
+  assert.equal(isNotifiableKind('forked'), false)
 })
 
 test('TRN-08b the aborted cause kind becomes the detail', () => {

@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-session'
 import * as plugin from '../../src/index.ts'
 import type { CredentialInfo, CredentialProviderLike, CredentialRef, ResolvedCredential } from '../../src/credentials.ts'
 import type { ApplyInternals, MailNotifyHandle } from '../../src/index.ts'
+import type { ConfigValue } from '../../src/config.ts'
 import type { SessionEventLike, SessionLike } from '../../src/runtime-adapter.ts'
 import type { MailJob, SendResult } from '../../src/types.ts'
 import { VALID_RAW_CONFIG } from './harness.ts'
@@ -90,6 +91,22 @@ export interface PluginHarness {
   credentials: FakeCredentials
   dispose: () => Promise<void>
   /**
+   * Commit a new configuration the way the Loader does, and signal it.
+   *
+   * This is not a shortcut around the seam under test — it *is* the seam. The
+   * Loader resolves the candidate through the plugin's own schema, copies each
+   * changed reference's value into the running fiber's reference, and then emits
+   * `loader/volatile-update`. Skipping any of the three would test a plugin that
+   * reacts to something the real Loader never does.
+   *
+   * The candidate is resolved first, so an invalid configuration throws here
+   * exactly as it would abort a Host write — which is what lets the lifecycle
+   * tests assert that a refused write leaves the running runtime alone.
+   *
+   * @param next - raw configuration fields, merged over the currently mounted ones.
+   */
+  reconfigure: (next: Record<string, unknown>) => void
+  /**
    * Every *public* event name with at least one registered listener.
    *
    * Cordis' own `internal/*` hooks are filtered out: they belong to the
@@ -131,8 +148,16 @@ export async function mountPlugin(
   // `apply` runs on a child context that shares the parent's service scope, so
   // the plugin resolves `credentials` and `timer` through the normal path while
   // the test keeps a handle to what `apply` returned.
+  //
+  // The configuration is resolved through the plugin's own schema first, because
+  // that is what Cordis does before it calls `apply`: `Config(raw)` is what turns
+  // a document into the tree of `Volatile` references `apply` is typed against.
+  // Handing `apply` the raw object instead would compile — `ConfigValue` is an
+  // object type — and then fail at the first `.get()`, which is exactly the
+  // mistake this resolution step exists to prevent.
+  const config: ConfigValue = plugin.Config({ ...VALID_RAW_CONFIG, ...overrides } as never)
   const child = ctx.extend()
-  const handle = plugin.apply(child as never, { ...VALID_RAW_CONFIG, ...overrides } as never, {
+  const handle = plugin.apply(child as never, config, {
     // A real backoff would make the suite slow; the queue gets the seam instead.
     sleep: async (delayMs: number) => {
       TimerService.delays.push(delayMs)
@@ -148,11 +173,48 @@ export async function mountPlugin(
     handle,
     credentials,
     dispose: () => (child as unknown as { fiber: { dispose: () => Promise<void> } }).fiber.dispose(),
+    reconfigure: (next) => {
+      const candidate = plugin.Config({ ...VALID_RAW_CONFIG, ...overrides, ...next } as never)
+      commitVolatile(config, candidate)
+      ctx.emit('loader/volatile-update', [])
+    },
     listenerNames: () => Object.keys(hooks()).filter((entry) => !entry.startsWith('internal/')),
     listenersFor: (name: string) =>
       (hooks()[name] ?? [])
         .map((record) => record.callback)
         .filter((callback): callback is (...args: never[]) => unknown => typeof callback === 'function'),
+  }
+}
+
+/** The shared volatile-reference protocol `@deepseek-ai/cosmokit` installs. */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+
+/**
+ * Copy every changed reference from `source` into `target`.
+ *
+ * The traversal mirrors the Loader's own: references are leaves, and neither
+ * side is descended into beyond them. The write symbol is reached through
+ * `Symbol.for` rather than by importing `cosmokit` deliberately — that library
+ * is a transitive dependency of the schema validator, not a declared dependency
+ * of this plugin, and a test that imported it would make an undeclared edge look
+ * supported. `tests/compatibility/contracts.compile.ts` asserts the symbol
+ * protocol itself, so a change upstream fails a compile rather than turning the
+ * live-update tests into tests of nothing.
+ *
+ * @param target - the running configuration's reference tree.
+ * @param source - the newly resolved candidate tree.
+ */
+export function commitVolatile(target: unknown, source: unknown): void {
+  if (target === null || typeof target !== 'object') return
+  const write = (target as Record<symbol, unknown>)[VOLATILE_WRITE]
+  if (typeof write === 'function') {
+    const read = (source as { get?: () => unknown }).get
+    if (typeof read !== 'function') throw new TypeError('volatile candidate carries no get()')
+    ;(write as (this: unknown, value: unknown) => void).call(target, read.call(source))
+    return
+  }
+  for (const [key, value] of Object.entries(target)) {
+    commitVolatile(value, (source as Record<string, unknown>)[key])
   }
 }
 

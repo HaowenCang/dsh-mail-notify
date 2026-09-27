@@ -11,11 +11,26 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { Config, CREDENTIAL_REF_PATTERN, resolveConfig } from '../../src/config.ts'
+import { Config, CREDENTIAL_REF_PATTERN, resolveConfig, snapshotOf } from '../../src/config.ts'
 import { VALID_RAW_CONFIG } from '../support/harness.ts'
 
+/**
+ * Read the schema defaults the way the runtime does.
+ *
+ * `Config(...)` answers a tree of `Volatile` references, so a test that compared
+ * a field to a literal would compare a reference object to a boolean and pass or
+ * fail for the wrong reason. Going through {@link snapshotOf} makes every
+ * assertion below a statement about the value the running plugin would read.
+ *
+ * @param raw - raw configuration fields.
+ * @returns the primitive snapshot.
+ */
+function defaultsOf(raw: Record<string, unknown> = {}) {
+  return snapshotOf(Config(raw as never))
+}
+
 test('PRIV-08 the schema defaults are the five safe privacy defaults', () => {
-  const defaults = Config({} as never)
+  const defaults = defaultsOf()
   assert.equal(defaults.includeSubagents, false)
   assert.equal(defaults.includeUserPrompt, false)
   assert.equal(defaults.includeMetadata, true)
@@ -26,7 +41,7 @@ test('PRIV-08 the schema defaults are the five safe privacy defaults', () => {
 })
 
 test('the schema defaults match the rest of the frozen configuration table', () => {
-  const defaults = Config({} as never)
+  const defaults = defaultsOf()
   assert.equal(defaults.smtpPort, 587)
   assert.equal(defaults.smtpSecure, false)
   assert.equal(defaults.minTurnDurationMs, 0)
@@ -62,7 +77,25 @@ test('missing required SMTP fields are field-level failures', () => {
   const { errors } = resolveConfig({ enabled: true, to: ['a@b.com'], from: 'a@b.com' })
   assert.ok(errors.some((entry) => entry.includes('smtpHost')))
   assert.ok(errors.some((entry) => entry.includes('smtpUser')))
-  assert.ok(errors.some((entry) => entry.includes('smtpPasswordCredential')))
+})
+
+test('the credential reference has a working default and cannot be cleared', () => {
+  // Since DSH 0.1.7 the field is constrained by the schema itself, so an empty
+  // value is refused there rather than reported here — and it has to be, because
+  // the form is what writes the document. What this plugin still reports is the
+  // absence of a *usable* reference, which the default removes for the common
+  // case and which a cleared field can no longer reach.
+  const { errors, resolved } = resolveConfig({ enabled: true, to: ['a@b.com'], from: 'a@b.com' })
+  assert.equal(
+    errors.some((entry) => entry.includes('smtpPasswordCredential')),
+    false,
+    'the default reference satisfies the requirement',
+  )
+  assert.equal(resolved.smtp.smtpPasswordCredential, 'DSH_MAIL_SMTP_PASSWORD')
+
+  const cleared = resolveConfig({ ...VALID_RAW_CONFIG, smtpPasswordCredential: '' })
+  assert.equal(cleared.resolved.smtpConfigured, false)
+  assert.ok(cleared.errors.some((entry) => entry.includes('smtpPasswordCredential')))
 })
 
 test('an empty recipient list is a field-level failure', () => {
@@ -170,9 +203,25 @@ test('a CredentialKey is refused, because resolve() cannot read the record half'
 })
 
 test('a malformed credential reference is refused with an explanation', () => {
+  // Under the native-Config contract the grammar is enforced by the *schema*,
+  // because that is what `dsh-config-editor` resolves a candidate through before
+  // it persists it. The refusal therefore names the field path, and the plugin's
+  // own wording is kept for the path that still reaches it: a raw document that
+  // never passed the editor.
   const { errors } = resolveConfig({ ...VALID_RAW_CONFIG, smtpPasswordCredential: 'not a reference!' })
-  assert.equal(errors.length, 1)
-  assert.ok(errors[0]?.includes('not a valid credential reference name'))
+  assert.ok(errors.length >= 1)
+  assert.ok(errors.some((entry) => entry.includes('smtpPasswordCredential')))
+
+  const refused = (() => {
+    try {
+      Config({ ...VALID_RAW_CONFIG, smtpPasswordCredential: 'not a reference!' } as never)
+      return undefined
+    } catch (error) {
+      return error as { message: string; options?: { path?: readonly unknown[] } }
+    }
+  })()
+  assert.ok(refused !== undefined, 'the schema must refuse it, so a save is rejected before it is persisted')
+  assert.deepEqual(refused?.options?.path, ['smtpPasswordCredential'])
 })
 
 test('validation never reads the value behind the reference', () => {

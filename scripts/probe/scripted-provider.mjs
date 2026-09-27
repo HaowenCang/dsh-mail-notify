@@ -29,6 +29,53 @@ const PROVIDER = 'probe'
 const MODEL = 'probe-scripted'
 /** Token counts the loop records; fixed so a mail's telemetry is predictable. */
 const USAGE = { inputTokens: 120, outputTokens: 30, totalTokens: 150 }
+/**
+ * The answer given to a call that is not the probe's scripted conversation.
+ *
+ * DSH 0.1.7's session-title plugin runs its own model call through whichever
+ * provider the session uses, and it is routed to this one. Spending a script
+ * entry on it would shift every later entry by one, so the probe identifies it
+ * and answers it without advancing the cursor. The identification is on the
+ * instruction the runtime sends, which is the only surface a provider has for
+ * telling one kind of call from another.
+ */
+const AUXILIARY_CALL_ANSWER = 'probe session'
+
+/**
+ * Whether one model call is the runtime's own auxiliary call rather than the
+ * scripted conversation.
+ *
+ * @param text - the call's last user-role text.
+ * @returns true for a call the script does not describe.
+ */
+function isAuxiliaryCall(text) {
+  return /^Generate the session title\b/.test(text)
+}
+
+/**
+ * Read the last user-role message's text out of an assembled request.
+ *
+ * Used only to tell a real prompt apart from the runtime's own session-opening
+ * turn, so the reading is deliberately shallow: the most recent user message
+ * with any text decides.
+ *
+ * @param options - the assembled request.
+ * @returns the text, or an empty string when the request carries none.
+ */
+function lastUserText(options) {
+  const messages = Array.isArray(options?.messages) ? options.messages : []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role !== 'user') continue
+    const content = message.content
+    if (typeof content === 'string') return content
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      if (block?.type === 'text' && typeof block.text === 'string') return block.text
+    }
+  }
+  return ''
+}
 
 /**
  * Read the scripted turns.
@@ -136,12 +183,22 @@ class ScriptedAdapter extends LlmAdapter {
    * The async generator yields the entry's chunks and then returns, which is the
    * whole contract the only required method has to satisfy.
    *
-   * @param _options - the assembled request; the probe ignores it.
+   * @param options - the assembled request; read only to tell a session-opening
+   *   turn from a prompted one.
    * @returns the chunk stream.
    */
-  async *stream(_options) {
+  async *stream(options) {
+    const prompt = lastUserText(options)
+    if (isAuxiliaryCall(prompt)) {
+      process.stderr.write('[probe-provider] answering an auxiliary call without consuming the script\n')
+      for (const chunk of chunksFor(AUXILIARY_CALL_ANSWER)) yield chunk
+      return
+    }
     const entry = callIndex < script.length ? script[callIndex] : 'The script is exhausted.'
     callIndex += 1
+    process.stderr.write(
+      `[probe-provider] call ${callIndex} of ${script.length}: text="${prompt.slice(0, 40).replace(/\s+/g, ' ')}"\n`,
+    )
     for (const chunk of chunksFor(entry)) yield chunk
   }
 }

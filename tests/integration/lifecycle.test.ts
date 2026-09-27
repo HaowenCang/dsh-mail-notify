@@ -43,36 +43,51 @@ import {
 import { delay, turn, waitFor } from '../support/harness.ts'
 /* ── Registration and the master switch ───────────────────────────────── */
 
-test('ADP-06 only session/event and session/disposed are registered', async () => {
+test('ADP-06 exactly three events are observed, and no turn event among them', async () => {
   const harness = await mount()
   assert.ok(harness.handle !== undefined)
-  assert.deepEqual(harness.listenerNames().sort(), ['session/disposed', 'session/event'])
+  // Two session events plus the Loader's configuration signal. The third is not
+  // a notification path: it is how a committed Web edit reaches the running
+  // plugin at all, and it is registered whether or not a runtime is mounted —
+  // that is what lets `enabled: false` to `true` activate one without a restart.
+  assert.deepEqual(harness.listenerNames().sort(), [
+    'loader/volatile-update',
+    'session/disposed',
+    'session/event',
+  ])
   for (const forbidden of ['turn/start', 'turn/end', 'assistant/message', 'tool/result', 'tool/call']) {
     assert.equal(harness.listenerNames().includes(forbidden), false, `${forbidden} is not a top-level event here`)
   }
 })
 
-test('SUP-05 enabled:false registers no listener at all', async () => {
+test('SUP-05 enabled:false mounts no runtime and registers no session listener', async () => {
   const harness = await mount({ enabled: false })
   assert.equal(harness.handle, undefined)
-  assert.deepEqual(harness.listenerNames(), [], 'a disabled plugin must not register anything')
+  // The configuration listener is the one thing that remains, by design: a plugin
+  // that could not hear the switch being turned back on could only be re-enabled
+  // by restarting the process.
+  assert.deepEqual(harness.listenerNames(), ['loader/volatile-update'])
 
   // Emitting anyway must be inert rather than merely suppressed.
   emit(harness.ctx, rootSession(), healthyTurnChain(1, 'answer'))
   await delay(20)
-  assert.equal(harness.listenerNames().length, 0)
+  assert.equal(harness.listenerNames().includes('session/event'), false)
 })
 
-test('a configuration failure refuses to mount and registers nothing', async () => {
+test('a configuration failure refuses to mount and registers no session listener', async () => {
   const harness = await mount({ smtpHost: '' })
   assert.equal(harness.handle, undefined)
-  assert.deepEqual(harness.listenerNames(), [])
+  assert.deepEqual(harness.listenerNames(), ['loader/volatile-update'])
 })
 
 test('a profile without a Credential service still loads and registers', async () => {
   const harness = await mount({}, {}, { credentials: false })
   assert.ok(harness.handle !== undefined, 'a missing optional service must not prevent activation')
-  assert.deepEqual(harness.listenerNames().sort(), ['session/disposed', 'session/event'])
+  assert.deepEqual(harness.listenerNames().sort(), [
+    'loader/volatile-update',
+    'session/disposed',
+    'session/event',
+  ])
 })
 
 /* ── The candidate pipeline ───────────────────────────────────────────── */
@@ -749,4 +764,163 @@ test('TRUNC-05 the candidate length is measured before truncation', async () => 
   assert.ok(candidate !== undefined)
   assert.equal(candidate.visibleTextLength, 2500)
   assert.equal(Array.from(candidate.visibleText).length, 2500, 'the candidate text itself is not truncated')
+})
+
+/* ── User-prompt attribution under session format v4 ────────────────────── */
+
+/**
+ * The v4 turn shape, as the runtime actually emits it.
+ *
+ * Reproduced field for field from a recorded run rather than written by hand:
+ * `turn/start` opens the turn, `step/start` follows, and only then do the
+ * user-role messages arrive — the operator's prompt first, then the runtime
+ * context snapshot and the skill reminder, none of them carrying a turn number.
+ * A fixture that put `user/message` before `turn/start` would describe the 0.1.5
+ * lifecycle and would let the very bug these tests exist for pass.
+ */
+function v4TurnChain(turn: number, prompt: string, answer: string): SessionEventLike[] {
+  const base = turn * 100
+  return [
+    turnStart(turn, base),
+    stepStart(turn, 1, base + 1),
+    userMessage(prompt, base + 2),
+    userMessage('Current runtime context. This snapshot supersedes earlier ones.', base + 3),
+    userMessage('<system-reminder>\nA skill is a reusable set of task-specific instructions.\n</system-reminder>', base + 4),
+    assistantMessage({ turn, step: 1, time: base + 5, content: [{ type: 'text', text: answer }] }),
+    turnEnd(turn, base + 6),
+  ]
+}
+
+test('UP-01 the operator prompt is what a v4 turn carries, not the injected context', async () => {
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  emit(harness.ctx, rootSession(), v4TurnChain(1, 'PROMPT_ALPHA the operator asked this', 'the answer'))
+  await handle.queue.settle()
+
+  const candidate = turn(sink.jobs[0])
+  assert.equal(candidate?.userText, 'PROMPT_ALPHA the operator asked this')
+  assert.ok(!(candidate?.userText ?? '').includes('system-reminder'), 'the skill reminder must not take the prompt place')
+  assert.ok(!(candidate?.userText ?? '').includes('Current runtime context'), 'nor may the context snapshot')
+})
+
+test('UP-02 two sequential v4 turns attribute their own prompts with no shift', async () => {
+  // The regression this exists for: a turn keeps its state until settlement, and
+  // the old rule kept the *latest* user text. A first turn therefore ended up
+  // rendering the context messages that arrived after its prompt, and the shift
+  // was invisible in the mail count.
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  emit(harness.ctx, rootSession(), v4TurnChain(1, 'PROMPT_ALPHA first request', 'first answer'))
+  emit(harness.ctx, rootSession(), v4TurnChain(2, 'PROMPT_BETA second request', 'second answer'))
+  await handle.queue.settle()
+
+  assert.equal(sink.jobs.length, 2)
+  assert.equal(turn(sink.jobs[0])?.userText, 'PROMPT_ALPHA first request')
+  assert.equal(turn(sink.jobs[1])?.userText, 'PROMPT_BETA second request')
+  assert.ok(!(turn(sink.jobs[1])?.userText ?? '').includes('PROMPT_ALPHA'), 'no cross-turn leak')
+})
+
+test('UP-03 a multi-step turn keeps its first prompt across every step', async () => {
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  emit(harness.ctx, rootSession(), [
+    turnStart(1, 100),
+    stepStart(1, 1, 101),
+    userMessage('PROMPT_ALPHA for a multi-step turn', 102),
+    assistantMessage({ turn: 1, step: 1, time: 103, content: [{ type: 'text', text: 'first step' }] }),
+    stepStart(1, 2, 104),
+    assistantMessage({ turn: 1, step: 2, time: 105, content: [{ type: 'text', text: 'second step' }] }),
+    stepStart(1, 3, 106),
+    assistantMessage({ turn: 1, step: 3, time: 107, content: [{ type: 'text', text: 'final answer' }] }),
+    turnEnd(1, 108),
+  ])
+  await handle.queue.settle()
+
+  const candidate = turn(sink.jobs[0])
+  assert.equal(candidate?.userText, 'PROMPT_ALPHA for a multi-step turn')
+  assert.equal(sink.jobs.length, 1, 'the three steps settle as one turn')
+})
+
+test('UP-04 a prompt arriving before the turn opens is still attributed to it', async () => {
+  // The 0.1.5 order, kept working: a queued input the runtime wrote before
+  // `turn/start` is held briefly and claimed by the turn that opens next.
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  emit(harness.ctx, rootSession(), [
+    userMessage('PROMPT_ALPHA queued before the turn opened', 100),
+    turnStart(1, 101),
+    stepStart(1, 1, 102),
+    assistantMessage({ turn: 1, step: 1, time: 103, content: [{ type: 'text', text: 'the answer' }] }),
+    turnEnd(1, 104),
+  ])
+  await handle.queue.settle()
+
+  assert.equal(turn(sink.jobs[0])?.userText, 'PROMPT_ALPHA queued before the turn opened')
+})
+
+test('UP-05 a whitespace-only message never becomes the prompt', async () => {
+  // It must not claim the turn's one slot either: an empty first message that
+  // locked out the real prompt would render nothing where the prompt belongs.
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  emit(harness.ctx, rootSession(), [
+    turnStart(1, 100),
+    stepStart(1, 1, 101),
+    userMessage('   ', 102),
+    userMessage('PROMPT_ALPHA arrived after the blank one', 103),
+    assistantMessage({ turn: 1, step: 1, time: 104, content: [{ type: 'text', text: 'the answer' }] }),
+    turnEnd(1, 105),
+  ])
+  await handle.queue.settle()
+
+  assert.equal(turn(sink.jobs[0])?.userText, 'PROMPT_ALPHA arrived after the blank one')
+})
+
+test('UP-06 attribution state is released with the turn', async () => {
+  // A leak here would grow with a session's lifetime and — worse — would let a
+  // later turn inherit an earlier turn's prompt because the record still existed.
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  for (let round = 1; round <= 3; round += 1) {
+    emit(harness.ctx, rootSession(), v4TurnChain(round, `PROMPT round ${round}`, `answer ${round}`))
+  }
+  await handle.queue.settle()
+
+  assert.equal(sink.jobs.length, 3)
+  for (let round = 1; round <= 3; round += 1) {
+    assert.equal(turn(sink.jobs[round - 1])?.userText, `PROMPT round ${round}`)
+  }
+  assert.equal(handle.counters()['dedupeEntries'], 3, 'no state outlived the three turns')
+})
+
+test('UP-07 the prompt is never logged, only its length', async () => {
+  const sink = controllableSink()
+  const harness = await mount({ includeUserPrompt: true }, { sink: sink.sink })
+  const handle = harness.handle
+  assert.ok(handle !== undefined)
+
+  emit(harness.ctx, rootSession(), v4TurnChain(1, 'PROMPT_ALPHA_SECRET_SHAPED', 'the answer'))
+  await handle.queue.settle()
+
+  const rendered = handle.logger.render()
+  assert.ok(!rendered.includes('PROMPT_ALPHA_SECRET_SHAPED'), 'the prompt stays out of the log')
+  assert.ok(!rendered.includes('system-reminder'), 'and so does the injected context')
 })
