@@ -11,6 +11,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { CREDENTIAL_REF_PATTERN as RULE_CREDENTIAL_REF_PATTERN } from '../../src/config-check.ts'
 import { Config, CREDENTIAL_REF_PATTERN, resolveConfig, snapshotOf } from '../../src/config.ts'
 import { VALID_RAW_CONFIG } from '../support/harness.ts'
 
@@ -77,6 +78,24 @@ test('missing required SMTP fields are field-level failures', () => {
   const { errors } = resolveConfig({ enabled: true, to: ['a@b.com'], from: 'a@b.com' })
   assert.ok(errors.some((entry) => entry.includes('smtpHost')))
   assert.ok(errors.some((entry) => entry.includes('smtpUser')))
+})
+
+test('the runtime diagnostics keep their exact wording', () => {
+  // The runtime path and the Host path run one rule set
+  // (`config-check.test.ts` asserts the Host reports the same list for the same
+  // candidate), so the sentences are pinned here rather than matched loosely: a
+  // reworded rule that only one boundary learned would fail one of the two.
+  assert.deepEqual([...resolveConfig({ enabled: true, to: ['a@b.com'], from: 'a@b.com' }).errors], [
+    'smtpHost is required and must be a non-empty host name',
+    'smtpUser is required and must be a non-empty user name',
+  ])
+})
+
+test('the credential grammar re-exported here is the rule module’s own constant', () => {
+  // `CREDENTIAL_REF_PATTERN` is the published import path several suites and the
+  // schema builder use; it now lives with the other rules. Identity, not a
+  // pattern comparison: a second copy would be a rule that can drift.
+  assert.equal(CREDENTIAL_REF_PATTERN, RULE_CREDENTIAL_REF_PATTERN)
 })
 
 test('the credential reference has a working default and cannot be cleared', () => {

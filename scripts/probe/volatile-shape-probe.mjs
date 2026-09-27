@@ -12,8 +12,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..', '..')
-const moduleRoot = [process.env['SCHEMA_PROBE_MODULES'], projectRoot].find((root) =>
-  existsSync(join(root, 'node_modules', '@deepseek-ai', 'schemastery', 'package.json')),
+const moduleRoot = [process.env['SCHEMA_PROBE_MODULES'], projectRoot].find(
+  (root) =>
+    typeof root === 'string' && root !== '' && existsSync(join(root, 'node_modules', '@deepseek-ai', 'schemastery', 'package.json')),
 )
 const Schema = (
   await import(

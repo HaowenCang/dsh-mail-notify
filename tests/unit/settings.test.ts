@@ -20,7 +20,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { Config } from '../../src/config.ts'
 import { SETTINGS_NAMESPACE } from '../../src/protocol.ts'
@@ -29,6 +29,40 @@ import { commitVolatile } from '../support/plugin-harness.ts'
 import { VALID_RAW_CONFIG } from '../support/harness.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+/**
+ * Every field the Web card edits, in schema declaration order.
+ *
+ * Stated once and used by both projection tests below: the schema-derivation
+ * test walks the serialized form, the settings test drives the installed
+ * `volatileForm` over the live node, and a field that reaches one projection
+ * but not the other must fail rather than pass in both.
+ */
+const EDITABLE_FIELDS = [
+  'enabled',
+  'smtpHost',
+  'smtpPort',
+  'smtpSecure',
+  'smtpUser',
+  'smtpPasswordCredential',
+  'from',
+  'to',
+  'includeSubagents',
+  'notifyCompleted',
+  'notifyErrors',
+  'notifyMaxTokens',
+  'notifyQuestions',
+  'notifyApprovals',
+  'minTurnDurationMs',
+  'maxBodyChars',
+  'includeMetadata',
+  'includeUserPrompt',
+  'includeFooter',
+  'queueSize',
+  'retryAttempts',
+  'retryBaseDelayMs',
+  'maxDedupeEntries',
+]
 
 /** One node of a serialized Schemastery schema, resolved out of its ref table. */
 interface SchemaNode {
@@ -182,32 +216,7 @@ test('CFG-11 the schema exposes every field the Web card edits', () => {
   const serialized = Config.toJSON() as unknown as { uid: number; refs: Record<number, SchemaNode> }
   const form = serialized.refs[serialized.uid]
   const fields = Object.keys(form?.dict ?? {})
-  const expected = [
-    'enabled',
-    'smtpHost',
-    'smtpPort',
-    'smtpSecure',
-    'smtpUser',
-    'smtpPasswordCredential',
-    'from',
-    'to',
-    'includeSubagents',
-    'notifyCompleted',
-    'notifyErrors',
-    'notifyMaxTokens',
-    'notifyQuestions',
-    'notifyApprovals',
-    'minTurnDurationMs',
-    'maxBodyChars',
-    'includeMetadata',
-    'includeUserPrompt',
-    'includeFooter',
-    'queueSize',
-    'retryAttempts',
-    'retryBaseDelayMs',
-    'maxDedupeEntries',
-  ]
-  assert.deepEqual(fields.sort(), [...expected].sort())
+  assert.deepEqual(fields.sort(), [...EDITABLE_FIELDS].sort())
   for (const field of fields) {
     assert.equal(
       serialized.refs[form?.dict?.[field] as number]?.meta?.volatile,
@@ -215,6 +224,44 @@ test('CFG-11 the schema exposes every field the Web card edits', () => {
       `${field} is not volatile, so a Web edit could not reach the running plugin without a restart`,
     )
   }
+})
+
+test('CFG-13 the installed settings projection still sees every field of the checked Config', async () => {
+  // `Config` is not the plain field schema: `withProductChecks` derives the
+  // exported node so the Host can refuse a product-invalid save. This test drives
+  // the *installed* `dsh-settings` walk over that node rather than a copy of it,
+  // because the walk is what the Plugins page renders from and what
+  // `SettingsForms.write` projects a patch through. The module is reached by path
+  // because the package's export map publishes only `.` and `./types`, and the
+  // projection helpers are not re-exported from either.
+  const schemaModule = join(root, 'node_modules', '@deepseek-ai', 'dsh-settings', 'lib', 'types', 'schema.js')
+  const settings = (await import(pathToFileURL(schemaModule).href)) as {
+    plainConfig(value: unknown): Record<string, unknown>
+    volatileForm(schema: unknown): Record<string, unknown> | undefined
+    isVolatilePath(schema: unknown, path: readonly string[]): boolean
+  }
+
+  const form = settings.volatileForm(Config) as { dict?: Record<string, unknown>; '~standard': { validate(value: unknown): { issues?: unknown } } }
+  assert.ok(form !== undefined, 'a Config whose fields were not volatile would render no form at all')
+  assert.deepEqual(Object.keys(form.dict ?? {}).sort(), [...EDITABLE_FIELDS].sort())
+  assert.equal(
+    Object.values(form.dict ?? {}).every((field) => (field as { meta?: { volatile?: unknown } }).meta?.volatile === undefined),
+    true,
+    'the form schema must be the field-level projection, with the volatile markers stripped',
+  )
+
+  // The form is not the enforcement point. A document the Host would refuse has
+  // to stay renderable, or the user could not repair what the Host rejected.
+  assert.equal(form['~standard'].validate({ enabled: true, smtpHost: '', to: [] }).issues, undefined)
+  assert.ok(Array.isArray(form['~standard'].validate({ enabled: false, smtpPort: 99_999 }).issues))
+
+  // The values the form is filled from are the volatile tree's primitives.
+  const plain = settings.plainConfig(Config({ ...VALID_RAW_CONFIG } as never))
+  assert.deepEqual(Object.keys(plain).sort(), [...EDITABLE_FIELDS].sort())
+  assert.equal(plain['smtpHost'], 'smtp.example.com')
+
+  assert.equal(settings.isVolatilePath(Config, ['smtpHost']), true)
+  assert.equal(settings.isVolatilePath(Config, ['notAField']), false)
 })
 
 test('CFG-12 the retired settings seam is not reachable from this plugin', async () => {

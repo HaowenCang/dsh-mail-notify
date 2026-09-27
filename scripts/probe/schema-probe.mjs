@@ -12,6 +12,15 @@
  *    refused write, with the offending path named;
  * 3. does the DSH settings projection (`volatileForm` + `plainSchema`, copied
  *    here faithfully) still see every field of a root-level `transform`.
+ *
+ * > **Scope note (v0.4.0 RC closure).** Question 3 is a *negative* result, and it
+ * > is kept for that reason: this probe is the record of why a root
+ * > `Schema.transform` was rejected as the cross-field mechanism — Schemastery
+ * > refuses a volatile field under a transform node, and the settings form walks
+ * > an object node's `dict`, so a transform root hides every field. The mechanism
+ * > that actually carries the product rules is the standard-schema validator;
+ * > `scripts/probe/config-check-probe.mjs` is the probe for that, and it is the
+ * > one the Host boundary rests on.
  */
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -47,8 +56,9 @@ async function loadSchemastery() {
   return import('@deepseek-ai/schemastery')
 }
 
-const moduleRoot = [process.env['SCHEMA_PROBE_MODULES'], projectRoot].find((root) =>
-  existsSync(join(root, 'node_modules', '@deepseek-ai', 'schemastery', 'package.json')),
+const moduleRoot = [process.env['SCHEMA_PROBE_MODULES'], projectRoot].find(
+  (root) =>
+    typeof root === 'string' && root !== '' && existsSync(join(root, 'node_modules', '@deepseek-ai', 'schemastery', 'package.json')),
 )
 const Schema = (await loadSchemastery()).default
 const readManifest = async (name) =>
@@ -89,19 +99,48 @@ const check = (label, condition) => {
   if (!condition) failures.push(label)
 }
 
-console.log('--- 1. volatile references ---')
-const parsed = Checked({ enabled: true, smtpHost: 'smtp.example.invalid', to: ['a@b.co'] })
-check('root parse returns an object', typeof parsed === 'object' && parsed !== null)
-check('enabled is a Volatile reference', typeof parsed.enabled?.get === 'function')
-check('enabled.get() is the boolean true', parsed.enabled.get() === true)
-check('smtpPort default is applied and readable', parsed.smtpPort.get() === 587)
-check('the array field returns a frozen snapshot', Array.isArray(parsed.to.get()) && Object.isFrozen(parsed.to.get()))
-check('an omitted field still answers through get()', parsed.notifyApprovals.get() === false)
+console.log('--- 1. the root transform, and why it is not the mechanism ---')
+/**
+ * Parse through the transform root, reporting the refusal instead of throwing.
+ *
+ * The refusal *is* the result this probe exists to record: Schemastery will not
+ * carry a volatile field under a transform node, so wrapping the object schema in
+ * one destroys the configuration rather than validating it.
+ *
+ * @param input - the candidate document.
+ * @returns the parsed value, or the error that refused it.
+ */
+function transformParse(input) {
+  try {
+    return { value: Checked(input) }
+  } catch (error) {
+    return { error }
+  }
+}
+
+const parsed = transformParse({ enabled: true, smtpHost: 'smtp.example.invalid', to: ['a@b.co'] })
+check('a root transform over volatile fields is refused', parsed.error !== undefined, parsed.error?.message ?? 'it parsed')
+check(
+  'the refusal names the volatile-within-transform rule',
+  typeof parsed.error?.message === 'string' && parsed.error.message.includes('volatile fields require a fixed object path'),
+  parsed.error?.message ?? '',
+)
+check('the refusal is raised before any field is readable', parsed.value === undefined)
+
+// The same fields under the object root — the shape the plugin actually ships —
+// resolve into the volatile tree the runtime reads.
+const objectParsed = Config({ enabled: true, smtpHost: 'smtp.example.invalid', to: ['a@b.co'] })
+check('the object root returns an object', typeof objectParsed === 'object' && objectParsed !== null)
+check('enabled is a Volatile reference', typeof objectParsed.enabled?.get === 'function')
+check('enabled.get() is the boolean true', objectParsed.enabled.get() === true)
+check('smtpPort default is applied and readable', objectParsed.smtpPort.get() === 587)
+check('the array field returns a frozen snapshot', Array.isArray(objectParsed.to.get()) && Object.isFrozen(objectParsed.to.get()))
+check('an omitted field still answers through get()', objectParsed.notifyApprovals.get() === false)
 
 console.log('--- 2. refusals ---')
 const refusal = (input) => {
   try {
-    Checked(input)
+    Config(input)
     return undefined
   } catch (error) {
     return error
@@ -111,16 +150,40 @@ const rangeError = refusal({ enabled: false, smtpPort: 99999 })
 check('an out-of-range port is refused', rangeError !== undefined)
 check('the port refusal names its path', JSON.stringify(rangeError?.options?.path) === '["smtpPort"]')
 
-const crossError = refusal({ enabled: true, smtpHost: '', to: [] })
-check('a cross-field violation is refused', crossError !== undefined)
-check('the cross-field refusal comes from the transform', crossError?.message === 'smtpHost is required while enabled is true')
-
-check('a disabled plugin skips the cross-field rules', refusal({ enabled: false, smtpHost: '', to: [] }) === undefined)
+// The product rules are not part of this schema, and this is the record of that
+// boundary: the object root applies defaults and enforces field constraints, and
+// says nothing about whether a well-formed document is usable. That question is
+// answered at the standard-schema layer the Host calls —
+// `scripts/probe/config-check-probe.mjs` — and by the real write path in
+// `scripts/probe-host-config-write.mjs`.
+check(
+  'the object root accepts a field-valid but product-invalid document',
+  refusal({ enabled: true, smtpHost: '', to: [] }) === undefined,
+)
 
 console.log('--- 3. DSH settings projection (volatileForm over plainSchema) ---')
-/** Faithful copy of `dsh-settings`'s `plainSchema`/`volatileForm` walk. */
+/**
+ * Faithful copy of `dsh-settings`'s `plainSchema`/`volatileForm` walk.
+ *
+ * The form schema is rebuilt from `toJSON()` and then has its `volatile` markers
+ * deleted, and `volatileForm` selects the fields whose nearest volatile ancestor
+ * makes them editable without a remount. The copy is deliberately literal: the
+ * claim under test is about what DSH's own walk sees, so a friendlier
+ * reimplementation would be measuring the wrong thing.
+ */
+function plainSchema(schema) {
+  const result = new Schema(schema.toJSON())
+  const walk = (node) => {
+    delete node.meta.volatile
+    for (const child of Object.values(node.dict ?? {})) walk(child)
+    if (node.inner) walk(node.inner)
+    for (const child of node.list ?? []) walk(child)
+  }
+  walk(result)
+  return result
+}
 function volatileForm(schema) {
-  if (schema.meta.volatile) return true
+  if (schema.meta.volatile) return plainSchema(schema)
   if (schema.type === 'object') {
     const dict = Object.fromEntries(
       Object.entries(schema.dict ?? {}).flatMap(([key, child]) => {
@@ -128,16 +191,20 @@ function volatileForm(schema) {
         return field === undefined ? [] : [[key, field]]
       }),
     )
-    return Object.keys(dict).length === 0 ? undefined : { dict }
+    return Object.keys(dict).length === 0 ? undefined : Schema.object(dict)
   }
   return undefined
 }
-const projected = new Schema(Checked.toJSON())
-check('toJSON round-trips the transform node', projected.type === 'transform')
-check('the transform keeps its inner object', projected.inner?.type === 'object')
-const form = volatileForm(projected.inner)
-check('every field is visible to the settings form', Object.keys(form?.dict ?? {}).length === 12)
-check('the projected node still refuses an invalid value', refusal({ enabled: true, to: [] }) !== undefined)
+const projected = new Schema(Config.toJSON())
+check('toJSON round-trips the object root', projected.type === 'object')
+const form = volatileForm(projected)
+const formFields = Object.keys(form?.dict ?? {})
+check('every declared field is visible to the settings form', formFields.length === 12, `saw ${formFields.length}`)
+check(
+  'every form field lost its volatile marker',
+  Object.values(form?.dict ?? {}).every((field) => field.meta.volatile === undefined),
+)
+check('the projected form refuses a field-level violation', refusal({ enabled: false, smtpPort: 99999 }) !== undefined)
 
 console.log(failures.length === 0 ? '\nPASS: schema-probe' : `\nFAIL: schema-probe (${failures.length})`)
 process.exit(failures.length === 0 ? 0 : 1)

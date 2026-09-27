@@ -60,6 +60,7 @@ import {
   TEST_EMAIL_ENDPOINT,
   TEST_EMAIL_ROUTE,
   type StatusValue,
+  type TestEmailValue,
 } from './protocol.ts'
 import { createMailQueue, defaultSleep, type MailQueue } from './queue.ts'
 import type { SessionEventLike, SessionLike } from './runtime-adapter.ts'
@@ -123,6 +124,25 @@ export interface MailNotifyHandle {
   counters(): Record<string, unknown>
 }
 
+/**
+ * What {@link apply} hands back: the mounted runtime plus the two surfaces the
+ * Web card reads.
+ *
+ * Both are already reachable over HTTP, but neither is reachable *without* an
+ * HTTP layer, and a probe that has to reconstruct `active` from the
+ * configuration it just wrote is measuring its own reconstruction rather than the
+ * runtime that is actually mounted. Exposing them here keeps one implementation
+ * per question: {@link status} answers exactly what the status route answers, and
+ * {@link MailNotifySurface.sendTestEmail} runs exactly the path the card's
+ * button runs, credential resolution and real transport included.
+ */
+export interface MailNotifySurface extends MailNotifyHandle {
+  /** The live facts the Web card polls. */
+  status(): StatusValue
+  /** Send one test message through the effective configuration. */
+  sendTestEmail(): Promise<TestEmailValue>
+}
+
 /** The shape of the Cordis timer service this plugin uses. */
 interface TimerLike {
   timeout(delayMs: number): Promise<void>
@@ -148,7 +168,7 @@ interface MountedRuntime {
  * @returns the live instance when the plugin activated, or `undefined` when it
  *   refused to mount or was disabled.
  */
-export function apply(ctx: Context, config?: ConfigValue, internals?: ApplyInternals): MailNotifyHandle | undefined {
+export function apply(ctx: Context, config?: ConfigValue, internals?: ApplyInternals): MailNotifySurface | undefined {
   // Read before anything else is built: `apply` runs with an active fiber, so
   // the timer service's own disposers attach to it and a backoff in progress
   // is cancelled on unload rather than outliving the plugin.
@@ -322,7 +342,21 @@ export function apply(ctx: Context, config?: ConfigValue, internals?: ApplyInter
     'dsh-mail-notify teardown',
   )
 
-  return mounted?.handle
+  return mounted === undefined
+    ? undefined
+    : {
+        ...mounted.handle,
+        status,
+        sendTestEmail: async () => {
+          const config = effective ?? resolveConfig(binding.snapshot()).resolved
+          return sendTestEmail({
+            deliver: makeDeliverer(config),
+            config,
+            logger,
+            ...(internals?.now !== undefined ? { now: internals.now } : {}),
+          })
+        },
+      }
 }
 
 /** Everything {@link startRuntime} needs to build one mounted runtime. */

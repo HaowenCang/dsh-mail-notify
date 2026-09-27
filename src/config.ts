@@ -29,12 +29,33 @@
  *
  * Field-level constraints — the port range, the counters' bounds, the
  * credential-reference grammar — live on the field schemas, so a rejected edit
- * names the field it came from. Cross-field rules live in {@link resolveConfig}
- * and are reached through `dsh-config-editor`, which resolves a candidate
- * through this schema *before* it persists it: an invalid save is refused
- * before the profile patch is written. Runtime resolution stays in place as
- * defence in depth, because a hand-edited patch reaches the plugin without ever
- * passing the editor.
+ * names the field it came from. The cross-field rules live in
+ * {@link import('./config-check.ts')}, and the two boundaries that enforce them
+ * call that one copy.
+ *
+ * The Host boundary is the standard-schema contract on the exported
+ * {@link Config} node. `@deepseek-ai/cordis`'s `resolveConfig(fiber.runtime,
+ * candidate)` — the function `dsh-config-editor` runs before it writes the
+ * profile patch, and the one the Loader's mount and update paths run as well —
+ * calls `candidate.Config['~standard'].validate(candidate)` and throws a
+ * `ValidationError` when the result carries issues. {@link withProductChecks}
+ * therefore layers the product rules onto a node derived from the schema below,
+ * and a product-invalid save is refused before `cordis.patch.yml` is touched.
+ * A root `Schema.transform` is not an alternative: the settings form walks an
+ * object node's `dict`, so a transform root would hide every field from it.
+ *
+ * `config.ts::resolveConfig` — the local function of that name further down,
+ * unrelated to cordis's — runs the same rules through the same module as
+ * runtime defence in depth, because a hand-edited patch reaches the plugin
+ * without ever passing the editor. It is not the Host validator, and cordis's
+ * `resolveConfig` never calls it.
+ *
+ * The mechanism is the standard-schema validator rather than a Schemastery
+ * cross-field hook because the pinned release has none: `.check()` is absent
+ * from `Schema.prototype` in 3.18.4, in both this checkout's copy and the one
+ * the installed DSH 0.1.7-rc.2 ships.
+ * `scripts/probe/config-check-probe.mjs` pins both facts against whichever copy
+ * it is pointed at.
  *
  * Nothing here reads a credential: validation confirms only that
  * `smtpPasswordCredential` is a well-formed reference *name*. Whether that
@@ -45,41 +66,28 @@
  */
 
 import Schema from '@deepseek-ai/schemastery'
+import {
+  CREDENTIAL_REF_PATTERN,
+  checkCredentialReference,
+  checkProductConfig,
+  readEnabled,
+  withProductChecks,
+} from './config-check.ts'
 import type { RawConfig, ResolvedConfig } from './types.ts'
 import { RETRY_MAX_DELAY_MS } from './retry.ts'
 
-/**
- * Reference-name grammar accepted for `smtpPasswordCredential` (D010).
- *
- * This is the installed DSH 0.1.7 `CredentialRef` grammar, character for
- * character: a POSIX-style environment-variable name. Both the Host Remote
- * (`@deepseek-ai/dsh-api-settings-controller`) and the provider build every
- * reference through `credentialRef()`, which throws unless the candidate matches
- * this pattern, and the file-backed provider admits only that grammar into the
- * `refs` section of `.credentials.yaml` — the section its `resolve()` and
- * `describe()` read.
- *
- * The `<scope>/<id>` spelling is a different key space, `CredentialKey`, which
- * addresses the provider-managed `records` section through
- * `readRecord`/`describeRecord`. It is deliberately **not** accepted here: the
- * plugin passes this value to `resolve()` and `describe()`, which know nothing
- * about the record half, so admitting it would validate a reference that can
- * never resolve and would move the misconfiguration from mount time to send
- * time. See D019.
- */
-export const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
-
-/** Deliberately permissive address check: the SMTP server is the real judge. */
-const ADDRESS_PATTERN = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/
+// The rules themselves live in `config-check.ts`, which both boundaries call;
+// this re-export keeps the published import path (`src/config.ts`) unchanged.
+export { CREDENTIAL_REF_PATTERN }
 
 /**
- * Plugin configuration schema.
+ * The field-level plugin configuration schema.
  *
  * Every field is a volatile scalar with a default, so the schema can resolve a
  * completely absent configuration and the form always has a value to render.
  * The defaults are the frozen safe defaults of `docs/CONFIG_SPEC.md §3`.
  */
-export const Config = Schema.object({
+const fieldSchema = Schema.object({
   enabled: Schema.boolean()
     .default(true)
     .volatile()
@@ -176,6 +184,26 @@ export const Config = Schema.object({
     .description('Backoff base; retry n waits base × 3^(n−1), capped at 30 s.'),
   maxDedupeEntries: Schema.natural().min(10).max(100_000).default(1000).volatile().description('Dedupe cache capacity.'),
 })
+
+/**
+ * Plugin configuration schema: the fields above, plus the product rules the Host
+ * enforces before it persists a candidate.
+ *
+ * The exported node is a *derived* one — `withProductChecks` rebuilds it from
+ * the field schema's own serialization and layers the standard-schema validator
+ * on top — so it answers `simplify`, `toJSON`, `dict`, `meta` and the prototype
+ * `~standard` getter exactly as the field schema does, and adds only the
+ * pre-persistence refusal. Deriving rather than mutating is what keeps the
+ * settings form honest: `dsh-settings` projects the form from `toJSON()`, and
+ * that projection carries no product checks, so the user can still open and
+ * repair a document that the Host would refuse to write.
+ *
+ * The annotation on the left is not decoration. `typeof fieldSchema` is what
+ * {@link ConfigValue} is derived from, so stating it here is what makes a field
+ * added to the schema appear in the resolved type — and a field added without a
+ * matching {@link ConfigSnapshot} entry still fails to compile.
+ */
+export const Config: typeof fieldSchema = withProductChecks(fieldSchema)
 
 /**
  * The validated configuration Cordis hands to {@link import('./index.ts').apply}.
@@ -281,26 +309,6 @@ export interface ConfigResolution {
   warnings: readonly string[]
 }
 
-/** Normalize an unknown value into a trimmed non-empty string, or `undefined`. */
-function asNonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed === '' ? undefined : trimmed
-}
-
-/** De-duplicate addresses while preserving order. */
-function dedupeAddresses(values: readonly string[]): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const value of values) {
-    const key = value.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(value)
-  }
-  return out
-}
-
 /**
  * Resolve a configuration snapshot into a fully-populated config.
  *
@@ -313,6 +321,13 @@ function dedupeAddresses(values: readonly string[]): string[] {
  *
  * With `enabled: false` no cross-field validation runs at all. Turning the
  * plugin off should not be blocked by unrelated required fields.
+ *
+ * The rules are not restated here. {@link checkProductConfig} holds the single
+ * copy, and this function feeds it the same primitive shape the Host's
+ * standard-schema validator feeds it, so a candidate the editor would refuse is
+ * a candidate this function reports — which is what the
+ * `Host refusal and runtime refusal` test asserts. This path remains necessary
+ * on its own: it is the only one a hand-edited patch reaches.
  *
  * The input is a {@link ConfigSnapshot}: the schema has already applied
  * defaults and rejected out-of-range values, so this function reports the
@@ -330,11 +345,9 @@ function dedupeAddresses(values: readonly string[]): string[] {
 export function resolveConfig(raw: RawConfig | ConfigSnapshot | unknown): ConfigResolution {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
 
-  // `enabled` is honoured from either the flat input or a nested `policy`/`smtp`
-  // block, so the shape Cordis validates and the shape a test hands over both work.
-  const enabled = input['enabled'] === undefined ? true : input['enabled'] !== false
-
-  if (!enabled) {
+  // Read from either a flat document or any object carrying `enabled`, so the
+  // shape Cordis validates and the shape a test hands over both work.
+  if (!readEnabled(input)) {
     return {
       resolved: {
         enabled: false,
@@ -383,76 +396,30 @@ export function resolveConfig(raw: RawConfig | ConfigSnapshot | unknown): Config
     }
   }
 
-  const errors: string[] = []
-  const warnings: string[] = []
+  // The shared product rules. `validated` is the same primitive shape
+  // `collapseVolatile` produces from the Host's resolved value, so the two
+  // boundaries cannot disagree about a candidate.
+  const check = checkProductConfig(validated)
 
-  const smtpHost = asNonEmptyString(validated.smtpHost)
-  if (smtpHost === undefined) errors.push('smtpHost is required and must be a non-empty host name')
-  else if (/\s/.test(smtpHost)) errors.push('smtpHost must not contain whitespace')
+  // The credential rule is deliberately not part of `check`: the Host enforces
+  // it on the field schema, where a refusal names the field. It is repeated here
+  // because this is the boundary that also sees documents the schema never
+  // touched.
+  const credentialIssue = checkCredentialReference(check.credentialRef)
 
-  const smtpUser = asNonEmptyString(validated.smtpUser)
-  if (smtpUser === undefined) errors.push('smtpUser is required and must be a non-empty user name')
-
-  const credentialRef = asNonEmptyString(validated.smtpPasswordCredential)
-  if (credentialRef === undefined) {
-    errors.push('smtpPasswordCredential is required; give the credential reference name, never the password itself')
-  } else if (!CREDENTIAL_REF_PATTERN.test(credentialRef)) {
-    errors.push(
-      `smtpPasswordCredential "${credentialRef}" is not a valid credential reference name ` +
-        `(expected ${CREDENTIAL_REF_PATTERN.source}, the DSH CredentialRef grammar; ` +
-        'a `<scope>/<id>` CredentialKey addresses the record half of the store and cannot be resolved here)',
-    )
-  }
-
-  const from = asNonEmptyString(validated.from)
-  if (from === undefined) errors.push('from is required and must be a non-empty address')
-  else if (!ADDRESS_PATTERN.test(from)) errors.push(`from "${from}" is not a plausible email address`)
-
-  const rawTo = Array.isArray(validated.to) ? validated.to : []
-  const accepted: string[] = []
-  for (const entry of rawTo) {
-    const address = asNonEmptyString(entry)
-    if (address === undefined) continue
-    if (!ADDRESS_PATTERN.test(address)) {
-      errors.push(`to entry "${address}" is not a plausible email address`)
-      continue
-    }
-    accepted.push(address)
-  }
-  const to = dedupeAddresses(accepted)
-  if (to.length === 0) errors.push('to must contain at least one valid recipient address')
-
-  // Cross-field: a port/`secure` pairing that is almost certainly a mistake is
-  // reported, never corrected. Silently rewriting it would make the operator
-  // believe the configured port took effect (SECURITY.md §3).
-  if (validated.smtpSecure && validated.smtpPort === 587) {
-    warnings.push('smtpSecure is true while smtpPort is 587: port 587 normally expects STARTTLS (smtpSecure: false)')
-  }
-  if (!validated.smtpSecure && validated.smtpPort === 465) {
-    warnings.push('smtpSecure is false while smtpPort is 465: port 465 normally expects implicit TLS (smtpSecure: true)')
-  }
-  if (
-    !validated.notifyCompleted &&
-    !validated.notifyErrors &&
-    !validated.notifyMaxTokens &&
-    !validated.notifyQuestions &&
-    !validated.notifyApprovals
-  ) {
-    warnings.push(
-      'notifyCompleted, notifyErrors, notifyMaxTokens, notifyQuestions, and notifyApprovals are all false: no email can ever be sent',
-    )
-  }
+  const errors: string[] = credentialIssue === undefined ? [...check.errors] : [...check.errors, credentialIssue.message]
+  const warnings: string[] = [...check.warnings]
 
   const resolved: ResolvedConfig = {
     enabled: true,
     smtp: {
-      smtpHost: smtpHost ?? '',
+      smtpHost: check.smtpHost,
       smtpPort: validated.smtpPort,
       smtpSecure: validated.smtpSecure,
-      smtpUser: smtpUser ?? '',
-      smtpPasswordCredential: credentialRef ?? '',
-      from: from ?? '',
-      to,
+      smtpUser: check.smtpUser,
+      smtpPasswordCredential: check.credentialRef,
+      from: check.from,
+      to: [...check.recipients],
     },
     policy: {
       includeSubagents: validated.includeSubagents,
