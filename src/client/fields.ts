@@ -112,6 +112,14 @@ export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
     labelKey: 'labelMaxTokens',
     hintKey: 'hintMaxTokens',
   },
+  {
+    field: 'minTurnDurationMs',
+    kind: 'natural',
+    min: 0,
+    max: 3_600_000,
+    labelKey: 'labelMinTurnDuration',
+    hintKey: 'hintMinTurnDuration',
+  },
 ]
 
 /** SMTP delivery settings. */

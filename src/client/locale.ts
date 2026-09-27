@@ -90,6 +90,8 @@ export type MailNotifyLocaleKey =
   | 'hintErrors'
   | 'labelMaxTokens'
   | 'hintMaxTokens'
+  | 'labelMinTurnDuration'
+  | 'hintMinTurnDuration'
   | 'labelSmtpHost'
   | 'hintSmtpHost'
   | 'labelSmtpPort'
@@ -255,6 +257,9 @@ export const en: Record<MailNotifyLocaleKey, string> = {
   hintErrors: 'A turn that ended with a terminal error, including one that produced no visible output.',
   labelMaxTokens: 'Token-limit termination',
   hintMaxTokens: 'A turn that stopped because it reached the token limit.',
+  labelMinTurnDuration: 'Minimum turn duration',
+  hintMinTurnDuration:
+    'Suppresses settled Turn notifications whose known duration is below this many milliseconds. 0 disables duration filtering, and an unknown duration is never suppressed. Question and approval notifications ignore it.',
   labelSmtpHost: 'SMTP host',
   hintSmtpHost: 'Host name of the SMTP server.',
   labelSmtpPort: 'Port',
@@ -380,6 +385,9 @@ export const zh: Record<MailNotifyLocaleKey, string> = {
   hintErrors: '以终止错误结束的任务，包括没有可见输出的情况。',
   labelMaxTokens: '达到 Token 上限',
   hintMaxTokens: '因达到 Token 上限而停止的任务。',
+  labelMinTurnDuration: '最短任务时长',
+  hintMinTurnDuration:
+    '已知耗时低于该毫秒数的已结算任务通知会被抑制。0 表示不按耗时过滤；耗时未知时不抑制。提问与批准通知不受该项影响。',
   labelSmtpHost: 'SMTP 服务器',
   hintSmtpHost: 'SMTP 服务器的主机名。',
   labelSmtpPort: '端口',

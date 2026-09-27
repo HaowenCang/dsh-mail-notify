@@ -132,10 +132,35 @@ export interface RecordedRpcCall {
  */
 export interface FakeHost {
   ctx: ClientContext
-  /** The schema-resolved section the form reports. */
-  section: Record<string, unknown>
+  /**
+   * The composition layer: the values a field falls back to when the user layer
+   * carries no entry. `mutate` never writes here, which is what makes a Reset
+   * observable — removing an override has to *reveal* this layer, not clear the
+   * field.
+   */
+  base: Record<string, unknown>
+  /**
+   * The schema-resolved section the form reports: the composition layer with the
+   * user layer applied on top.
+   *
+   * Derived, never stored, so a test cannot describe a host whose effective
+   * value disagrees with its two layers. Assigning it seeds the **user** layer,
+   * which is the pair a real Save leaves behind — a field the profile patch
+   * carries is both the override and the effective value.
+   */
+  readonly section: Record<string, unknown>
   /** The raw user layer; presence of a key marks a field overridden. */
-  user: Record<string, unknown>
+  readonly user: Record<string, unknown>
+  /**
+   * Seed the raw user layer directly, without the section's derived read.
+   *
+   * Call this **before** the card is mounted: the controller reads the form's
+   * snapshot once, so a layer seeded afterwards describes a host nobody asked it
+   * to render.
+   *
+   * @param next - the replacement user layer.
+   */
+  seedUser(next: Record<string, unknown>): void
   /** Applied mutations, in order; each entry is the op list of one save. */
   mutations: Array<Array<Record<string, unknown>>>
   /** Credential calls, recorded without values. */
@@ -161,16 +186,22 @@ export interface FakeHost {
   emitCredentialUpdated(ref: string): void
 }
 
-/** Build one form snapshot from the fake host's current layers. */
-function makeSnapshot(host: FakeHost): Record<string, unknown> {
+/** The state a form snapshot is one projection of: the host's two layers. */
+interface Layers {
+  base: Record<string, unknown>
+  user: Record<string, unknown>
+}
+
+/** Build one form snapshot from the fake host's two layers. */
+function makeSnapshot(layers: Layers): Record<string, unknown> {
   return {
     status: 'ready',
-    value: { ...host.section },
-    base: {},
+    value: { ...layers.base, ...layers.user },
+    base: { ...layers.base },
     // The raw user layer, exactly as the Host reports it: a field's *presence*
     // here is what marks it overridden, which is why the fake carries it as a
     // separate map rather than deriving it from a value comparison.
-    user: { ...host.user },
+    user: { ...layers.user },
     revision: 1,
     writable: true,
     mode: 'host',
@@ -189,8 +220,27 @@ export function fakeHost(): FakeHost {
 
   const host: FakeHost = {
     ctx: undefined as unknown as ClientContext,
-    section: {},
-    user: {},
+    base: {},
+    get section(): Record<string, unknown> {
+      return { ...host.base, ...host.user }
+    },
+    set section(next: Record<string, unknown>) {
+      // Seeding the section is seeding the user layer: the effective value and
+      // the override are then the same document, exactly as they are after a
+      // Save. Assigning it any other way would let a test describe a host the
+      // card can never be shown.
+      host.seedUser(next)
+    },
+    get user(): Record<string, unknown> {
+      return layers.user
+    },
+    seedUser: (next: Record<string, unknown>) => {
+      layers.user = { ...next }
+      // The snapshot is derived, so a layer that moved has to invalidate it —
+      // otherwise a test would be asserting against the host it seeded before
+      // its own last line.
+      snapshot = undefined
+    },
     mutations: [],
     credentialCalls: [],
     rpcCalls: [],
@@ -212,10 +262,13 @@ export function fakeHost(): FakeHost {
     },
   }
 
-  let snapshot = makeSnapshot(host)
+  /** The host's two layers; `user` is private so every write invalidates the snapshot. */
+  const layers: Layers = { base: host.base, user: {} }
+  /** The cached projection, rebuilt whenever a layer moved. */
+  let snapshot: Record<string, unknown> | undefined
   const formListeners = new Set<() => void>()
   const republish = (): void => {
-    snapshot = makeSnapshot(host)
+    snapshot = undefined
     for (const listener of [...formListeners]) listener()
   }
 
@@ -229,7 +282,10 @@ export function fakeHost(): FakeHost {
    * transport failure rejects instead.
    */
   const form = {
-    getSnapshot: () => snapshot,
+    // Derived on read, cached until a layer moves: `useSyncExternalStore`
+    // requires a stable reference between publications, and the card compares
+    // the projection it holds against this one on every render.
+    getSnapshot: () => (snapshot ??= makeSnapshot(layers)),
     subscribe: (listener: () => void) => {
       formListeners.add(listener)
       return () => {
@@ -239,18 +295,21 @@ export function fakeHost(): FakeHost {
     mutate: async (ops: ReadonlyArray<Record<string, unknown>>) => {
       await gate
       host.mutations.push([...ops])
+      const next = { ...layers.user }
       for (const op of ops) {
         const path = op.path as unknown
         const field = Array.isArray(path) && typeof path[0] === 'string' ? path[0] : undefined
         if (field === undefined) continue
         if (op.op === 'set') {
-          host.section[field] = op.value
-          host.user[field] = op.value
+          next[field] = op.value
         } else if (op.op === 'unset') {
-          delete host.user[field]
-          delete host.section[field]
+          // Only the user layer moves. The effective value is derived from both
+          // layers, so an unset reveals the composition value rather than
+          // leaving the field blank — which is the whole point of a Reset.
+          delete next[field]
         }
       }
+      host.seedUser(next)
       republish()
       return true
     },

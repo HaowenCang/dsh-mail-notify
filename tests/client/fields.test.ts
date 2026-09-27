@@ -23,6 +23,7 @@ import {
   parseField,
   type FieldDef,
 } from '../../src/client/fields.ts'
+import { compareFieldSets, hostConfigFieldNames, webFieldNames } from '../support/host-fields.ts'
 
 /** Find one field by name, failing loudly when the table lost it. */
 function field(name: string): FieldDef {
@@ -36,33 +37,36 @@ test('FLD-01 the table covers exactly the namespace the host registers', () => {
   // must have a control: a field the host accepts but the card cannot reach
   // would be configurable only by hand-editing settings.yaml, which is the
   // outcome this surface exists to remove.
+  //
+  // The expected set is read from the Host Config's own serialized form rather
+  // than restated here. A second handwritten list would pass while the schema
+  // and the card drifted together — which is precisely the shape of the defect
+  // this row exists to catch.
+  const parity = compareFieldSets(hostConfigFieldNames(), webFieldNames(ALL_FIELDS))
+  assert.deepEqual(parity.missingFromWeb, [], 'every Host Config field must have a control')
+  assert.deepEqual(parity.unknownToHost, [], 'the card must not invent a Config field')
+  assert.deepEqual(parity.duplicatedInWeb, [], 'a field may not appear twice in the table')
+  assert.deepEqual(parity.duplicatedInHost, [], 'the Host schema may not declare a field twice')
+})
+
+test('FLD-01b the suppression threshold is a bounded natural field of the notification group', () => {
+  // The field the card previously omitted. Its bounds mirror the Host schema's
+  // `.min(0).max(3_600_000)`, and the control must be an ordinary notification
+  // policy field rather than one of the two privacy switches, which the card
+  // renders as its own prominent block.
+  const def = field('minTurnDurationMs')
+  assert.equal(def.kind, 'natural')
+  assert.equal(def.min, 0)
+  assert.equal(def.max, 3_600_000)
+  assert.equal(def.privacy, undefined, 'the suppression threshold is not a privacy decision')
   assert.deepEqual(
-    ALL_FIELDS.map((entry) => entry.field).sort(),
-    [
-      'enabled',
-      'from',
-      'includeFooter',
-      'includeMetadata',
-      'includeSubagents',
-      'includeUserPrompt',
-      'maxBodyChars',
-      'maxDedupeEntries',
-      'notifyApprovals',
-      'notifyCompleted',
-      'notifyErrors',
-      'notifyMaxTokens',
-      'notifyQuestions',
-      'queueSize',
-      'retryAttempts',
-      'retryBaseDelayMs',
-      'smtpHost',
-      'smtpPasswordCredential',
-      'smtpPort',
-      'smtpSecure',
-      'smtpUser',
-      'to',
-    ],
+    NOTIFICATION_FIELDS.filter((entry) => entry.privacy === true).map((entry) => entry.field),
+    ['notifyQuestions', 'notifyApprovals'],
   )
+  // Placement: the field follows `notifyMaxTokens` in the notifications group,
+  // so it renders among the ordinary policy switches.
+  const ordinary = NOTIFICATION_FIELDS.map((entry) => entry.field)
+  assert.equal(ordinary[ordinary.indexOf('notifyMaxTokens') + 1], 'minTurnDurationMs')
 })
 
 test('FLD-02 the two human-attention switches are the prominent ones', () => {
