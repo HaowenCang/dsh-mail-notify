@@ -215,7 +215,9 @@ created or pushed.
   the registry and the `dsh plugin add` bundle-assembly path were not repeated after publication.
 - The card's status facts are polled; the host pushes none of them. Queue counters are per runtime
   and restart when a saved configuration remounts it.
-- The plugin's settings namespace is shared by every DSH profile under the same `DSH_HOME`.
+- Plugin Config is profile-specific because Web edits persist in that profile's own `cordis.patch.yml`.
+  The managed credential store is home-level, so profiles under the same `DSH_HOME` may resolve the
+  same `CredentialRef` to the same stored secret.
 - `V0.4.0_COMPAT_REPORT.md` §28.3 still records the superseded pre-`c9fad0a` archive hash. It was left
   as frozen; the correct figures are in this document.
 

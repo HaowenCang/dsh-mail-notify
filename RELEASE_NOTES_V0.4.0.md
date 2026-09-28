@@ -13,12 +13,13 @@ Compatibility is claimed for that harness release only. No broader compatibility
 
 ### Configuration now lives in the native volatile Config
 
-The plugin's settings surface moves onto DSH's native mechanism: the fields are declared with
-`configForms` and read from the volatile configuration the Loader resolves, so a write to
-`plugins.bundle.config` commits, the Loader updates the references and emits `loader/volatile-update`,
-and the runtime is rebuilt from a fresh snapshot. A switch flipped in the Web UI therefore takes
-effect without restarting DSH. A configuration that fails validation never replaces one that works:
-the refusal is logged and reported to the Web UI while the previous runtime keeps running.
+The plugin's Host configuration is declared through its native volatile Cordis `Config`. The browser
+obtains that bundle configuration through `ctx.configForms` and renders it in the
+`plugins.bundle.config` slot. A form mutation commits the profile-layer configuration; the Loader
+updates the volatile references and emits `loader/volatile-update`, and the runtime is rebuilt from a
+fresh snapshot. A switch flipped in the Web UI therefore takes effect without restarting DSH. A
+configuration that fails validation never replaces one that works: the refusal is logged and reported
+to the Web UI while the previous runtime keeps running.
 
 ### Web configuration surface
 
@@ -69,5 +70,6 @@ The same bytes are published to npm and attached to this release.
 dsh plugin --profile <profile> add dsh-mail-notify@0.4.0
 ```
 
-Then add the package name to that profile's `dsh.profile.bundles` and restart DSH. Configuration is
-reachable afterwards from Settings → Plugins → dsh-mail-notify.
+The `dsh plugin ... add` command reconciles the package's declared bundle into that profile's
+`dsh.profile.bundles` automatically. Restart DSH so the startup-loaded profile applies the new bundle;
+configuration is then reachable from Settings → Plugins → dsh-mail-notify.
