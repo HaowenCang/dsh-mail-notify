@@ -5,7 +5,7 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.4.0` (release candidate, not published)
+- Version: `0.4.0`
 - Host plugin plus a browser half: a configuration card on the DSH Plugins page
 - Requires DSH `0.1.7-rc.2`, and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
@@ -115,8 +115,8 @@ states which one it is, in the subject and in the body.
 
 **A settled turn.** Produced at `turn/end` for a top-level turn, under `notifyCompleted`,
 `notifyErrors`, or `notifyMaxTokens`. The body carries the turn's final visible assistant text plus
-the metadata block. `aborted`, `blocked`, `interrupted`, and any unrecognised reason have no switch
-and never notify.
+the metadata block. `aborted`, `blocked`, `interrupted`, `forked`, and any unrecognised reason have no
+switch and never notify.
 
 **A terminal failure.** Also produced at `turn/end`, and only there. What makes it a failure is the
 final reason: `turn/end` with `reason.kind === 'error'`. `llm/retry` is a durable record of one
@@ -221,7 +221,7 @@ The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so
 package also mounts it.
 
 ```powershell
-dsh plugin --profile web add dsh-mail-notify@0.2.0
+dsh plugin --profile web add dsh-mail-notify@0.4.0
 ```
 
 For development, or on a machine without registry access, install the packed archive instead:
@@ -319,11 +319,14 @@ could not see it.
 | Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
 | Status | live host facts: whether the runtime is mounted, whether the credential reference is configured, the queue depth and counters, and — prominently — the **effective** `notifyQuestions` and `notifyApprovals` values |
 
-The field rows above cover all 23 Config fields: Human attention and the Notifications group render the
-same two switches, the first as the card's prominent block and the second among the ordinary policy
-fields. The password control is the one extra control on the card and belongs to no Config field.
-`minTurnDurationMs` sits in the ordinary notification group rather than in the human-attention block,
-because it applies only to settled Turn notifications.
+The field rows above are the complete set: 23 Config fields, each rendered as exactly one control. The
+two switches that decide whether you learn an agent is blocked — `notifyQuestions` and
+`notifyApprovals` — form the Human attention group and appear nowhere else; the Notifications group
+carries the four turn-level policy fields, `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, and
+`minTurnDurationMs`. The password control is the one extra control on the card and belongs to no Config
+field: it is a write-only Credential control, not a 24th Config field. `minTurnDurationMs` sits in the
+Notifications group rather than in the human-attention block, because it applies only to settled Turn
+notifications.
 
 The status facts are re-read every five seconds while the card is on screen. If a saved
 configuration cannot be applied, the card says so instead of silently doing nothing; the previously
@@ -409,7 +412,7 @@ the whole document is configurable from the Web UI.
 | `minTurnDurationMs` | `0` | Suppresses settled Turn notifications whose known duration is **strictly below** this many milliseconds. `0` disables duration filtering, and an **unknown** duration is never suppressed. Question and approval notifications ignore it. |
 | `maxBodyChars` | `100000` | Visible-text cap in code points, 1000–1000000. |
 | `includeMetadata` | `true` | Session id, workspace, model, timing, status block. |
-| `includeUserPrompt` | `false` | Adds the turn's last user message. Off by default. |
+| `includeUserPrompt` | `false` | Adds the most recent direct-human `user/message` in the Turn — the one whose `source.kind === 'user'`. Injected runtime context, skills, goals, agent instructions, agent-to-agent messages, and every other non-user source are excluded, whatever their text and whenever they arrive. Off by default. |
 | `includeFooter` | `true` | Generator footer **and** the truncation marker. |
 | `queueSize` | `100` | Waiting jobs; the worker holds one more. Full queue refuses the newest. |
 | `retryAttempts` | `3` | Retries; total attempts are `1 + this`. `0` means try once. |
@@ -440,9 +443,9 @@ lets you configure the plugin field by field, or park it with `enabled: false` �
 rules refuse to mount a working mail path until each is filled in. `docs/CONFIG_SPEC.md` §2.2–§2.3
 is the normative statement of the same rule.
 
-`aborted`, `blocked`, `interrupted`, and any unrecognised `turn/end` reason have **no** enabling
-switch and never notify. There is also no option to send a *completion* mail with an empty body: a
-completed or max-tokens turn with no visible text is skipped regardless of the notification
+`aborted`, `blocked`, `interrupted`, `forked`, and any unrecognised `turn/end` reason have **no**
+enabling switch and never notify. There is also no option to send a *completion* mail with an empty
+body: a completed or max-tokens turn with no visible text is skipped regardless of the notification
 switches. A **terminal failure** is the one exception — it is mailed even with no visible output,
 because the failure itself is the message.
 
@@ -525,7 +528,7 @@ npm install
 npm run typecheck     # tsc --noEmit, sources and tests
 npm test              # node --test, no network
 npm run build         # tsc -> lib/
-npm pack              # dsh-mail-notify-0.2.0.tgz
+npm pack              # dsh-mail-notify-0.4.0.tgz
 npm run pack:check    # audit the archive's contents
 ```
 
@@ -687,11 +690,13 @@ prints before booting, so what took effect and what was reported cannot diverge.
   at all. That is a property of the composition, not of the plugin.
 - **Duration is unknown for a mid-turn attach.** If the plugin loads after a turn has started, that
   turn's `durationMs` is `null` (not `0`), so `minTurnDurationMs` cannot suppress it.
-- **Four of the six `turn/end` reasons have not been observed on a live turn.** `completed` is
+- **Five of the seven `turn/end` reasons have not been observed on a live turn.** `completed` is
   verified end to end in a real composition, and `error` was exercised by the probe's `errors`
   scenario against a scripted provider. `max-tokens`, `aborted`, `blocked`, and `interrupted` are
   verified against the recorded payload shapes and the frozen classification table, but triggering
-  them live depends on model and provider behaviour.
+  them live depends on model and provider behaviour. `forked` is verified the same way and is
+  unreachable from a live run by upstream design: only fork-seed construction writes it, never the
+  agent loop.
 - **`session/disposed` rarely fires.** DSH keeps sessions loaded for the life of the process, so the
   dominant release path is the per-turn cleanup, not that event.
 - **Token counters are reported and folded, never interpreted.** `usage` is the sum of the per-call
