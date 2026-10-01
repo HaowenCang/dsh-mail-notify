@@ -53,7 +53,7 @@
  * The mechanism is the standard-schema validator rather than a Schemastery
  * cross-field hook because the pinned release has none: `.check()` is absent
  * from `Schema.prototype` in 3.18.4, in both this checkout's copy and the one
- * the installed DSH 0.1.7-rc.2 ships.
+ * the installed DSH 0.2.0-rc.2 ships.
  * `scripts/probe/config-check-probe.mjs` pins both facts against whichever copy
  * it is pointed at.
  *

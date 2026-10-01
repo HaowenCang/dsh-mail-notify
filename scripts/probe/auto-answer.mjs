@@ -32,7 +32,17 @@
  * PROBE_WAIT_TIMEOUT_MS    how long to wait before answering anyway (default 20000)
  * PROBE_APPROVAL_TRACE     where to record this answerer's own timeline
  * PROBE_APPROVAL_ID_FILE   where to record the service-issued approval id
+ * PROBE_QUESTION_PLAN      comma-separated per-request decisions for questions
  * ```
+ *
+ * `PROBE_QUESTION_PLAN` is what makes the timed `ask_user_question` scenarios
+ * expressible. Each `user-questions/request` consumes the next entry:
+ * `answer` claims the request as a person would, `delegate` calls `next()` and
+ * claims nothing. In a timed call, delegating everything leaves the foreground
+ * waterfall with DSH's own `NO_PROVIDER`, so the call waits out its deadline and
+ * settles `pending` — the exact state whose consequences the mail side has to
+ * survive. An empty plan keeps the old behaviour, which is to answer every
+ * request immediately.
  *
  * @module dsh-mail-notify/scripts/probe/auto-answer
  */
@@ -60,6 +70,21 @@ const waitSentinel = process.env['PROBE_WAIT_SENTINEL']
 
 /** How long to wait for that sentinel before answering regardless. */
 const waitTimeoutMs = Number.parseInt(process.env['PROBE_WAIT_TIMEOUT_MS'] ?? '20000', 10)
+
+/**
+ * Per-request decisions for the question waterfall.
+ *
+ * Empty means "answer every request", which is what every non-timed scenario
+ * wants. A non-empty plan is consumed one entry per request; the last entry
+ * repeats if more requests arrive than the plan describes.
+ */
+const questionPlan = (process.env['PROBE_QUESTION_PLAN'] ?? '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter((entry) => entry !== '')
+
+/** How many question requests this run has seen. */
+let questionRequests = 0
 
 /** How many trailing log entries the identity scan may read. */
 const SCAN_DEPTH = 12
@@ -179,7 +204,23 @@ function answer(request) {
  * @param ctx - the plugin's fiber context.
  */
 export function apply(ctx) {
-  ctx.on('user-questions/request', (request) => Promise.resolve(answer(request)))
+  ctx.on('user-questions/request', (request, next) => {
+    // No plan keeps the original behaviour: claim every question request.
+    if (questionPlan.length === 0) return Promise.resolve(answer(request))
+
+    const position = questionRequests
+    questionRequests += 1
+    const decision = questionPlan[Math.min(position, questionPlan.length - 1)]
+    if (decision === 'delegate') {
+      // Claim nothing. For a timed call this is what leaves the foreground
+      // waterfall with `NO_PROVIDER`, so DSH waits out its own deadline and the
+      // call settles `pending` while the question stays answerable.
+      trace(`question request ${String(position)} delegated; the timed wait will expire`)
+      return next()
+    }
+    trace(`question request ${String(position)} answered in the foreground window`)
+    return Promise.resolve(answer(request))
+  })
   ctx.on('approval/request', async (request) => {
     const toolName = String(request?.toolName ?? '')
     const reason = typeof request?.reason === 'string' ? request.reason : ''

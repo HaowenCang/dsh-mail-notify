@@ -1,6 +1,6 @@
 /**
- * Probe: validate the planned v0.4 Config shape against the exact
- * schemastery 3.18.4 contract that DSH 0.1.7-rc.2 ships.
+ * Probe: validate the Config shape against the exact
+ * schemastery 3.18.4 contract that DSH 0.2.0-rc.2 ships.
  *
  * Run with `npm run probe:schema`. It answers three questions the migration
  * depends on and that no amount of reading the source settles as reliably as

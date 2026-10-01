@@ -1,6 +1,6 @@
 /**
  * Probe: establish the exact Host pre-persistence validation mechanism that
- * `@deepseek-ai/schemastery 3.18.4` — the release DSH 0.1.7-rc.2 ships, and the
+ * `@deepseek-ai/schemastery 3.18.4` — the release DSH 0.2.0-rc.2 ships, and the
  * release this plugin's peer range names — actually provides.
  *
  * Run with `npm run probe:config-check`. Nothing here is a mock: the probe

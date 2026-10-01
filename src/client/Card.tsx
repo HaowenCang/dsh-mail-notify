@@ -23,7 +23,7 @@
  *
  * The two human-attention switches render first inside the form and apart from
  * the rest. They are the switches that decide whether an operator learns that
- * an agent has stopped and is waiting for a person, and both are off by default
+ * an agent has asked for a person's input, and both are off by default
  * because turning one on sends content the operator did not author to a
  * third-party mail system. Burying them in an alphabetical list of nine booleans
  * would make the consequential choice the hardest one to find.

@@ -29,14 +29,17 @@ export const SUBJECT_MAX_CHARS = 200
 const ELLIPSIS = '…'
 
 /**
- * Subject prefix for a question the agent is blocked on.
+ * Subject prefix for a question the agent has put to a human.
  *
  * A constant, so no part of a model-supplied string can decide whether a
- * message reads as an instruction from the plugin.
+ * message reads as an instruction from the plugin. The wording is deliberately
+ * phase-neutral: it is true of a legacy blocking question and of a timed one
+ * alike, whether the foreground wait is still running or the agent has already
+ * continued with the question still answerable.
  */
 export const QUESTION_SUBJECT_PREFIX = '[DSH] Input required'
 
-/** Subject prefix for an approval the agent is blocked on. */
+/** Subject prefix for an approval the agent is waiting on. */
 export const APPROVAL_SUBJECT_PREFIX = '[DSH] Approval required'
 
 /** Human-readable label for each status; never claims more than was observed. */
@@ -424,13 +427,22 @@ function renderApprovalSection(notification: ApprovalNotification): string {
 /**
  * Render the metadata block shared by every notification family.
  *
+ * The `Status` line is deliberately phase-neutral. "Waiting for a human" was
+ * accurate while every question was the legacy blocking one, but a timed
+ * `ask_user_question` may have already returned `pending` — the agent continues
+ * while the question stays answerable — so a mail asserting that DSH is still
+ * blocked would be false for exactly the late-answer case this plugin has to
+ * survive. "Human input requested" states what the plugin actually observed: a
+ * request put to a person. It is equally true of an approval, whose answerer
+ * chain does block until a decision.
+ *
  * @param notification - the notification envelope.
  * @returns one line per fact, without a trailing newline.
  */
 function renderNotificationMetadata(notification: Notification): string {
   if (notification.kind === 'turn') return renderMetadata(notification.candidate)
 
-  const lines: string[] = ['Status:    Waiting for a human']
+  const lines: string[] = ['Status:    Human input requested']
   lines.push(`Session:   ${sanitizeLine(notification.sessionId, 120)}`)
   if (notification.turn !== undefined) lines.push(`Turn:      ${notification.turn}`)
   if (notification.step !== undefined) lines.push(`Step:      ${notification.step}`)

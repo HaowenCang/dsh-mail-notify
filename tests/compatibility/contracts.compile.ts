@@ -43,9 +43,10 @@ import type {
   ConfigFormSnapshot,
   ConfigForms,
 } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+import type { ConfigPageForm, PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import { BUNDLE_CONFIG_SLOT, MAIL_NOTIFY_PACKAGE_NAME, type ClientContext } from '../../src/client/contracts.ts'
+import type { MailNotifyCardFace } from '../../src/client/controller.ts'
 import { SETTINGS_NAMESPACE } from '../../src/protocol.ts'
 
 /* 鈹€鈹€ The shared form service 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
@@ -94,6 +95,35 @@ export function slotContractIsKnown(ctx: ClientContext): void {
   const sample: PluginConfigViewProps = { view: 'page' }
   const summary: PluginConfigViewProps = { view: 'summary' }
   void [sample, summary]
+}
+
+/**
+ * The page's owner-supplied form stays optional, and this card does not need it.
+ *
+ * DSH's Plugins page *may* hand a bundle configuration entry its own form, and
+ * the contract declares that prop optional. The card therefore reads values and
+ * queues writes through `ctx.configForms.get(SETTINGS_NAMESPACE)` — the shared
+ * form service — and the two assertions below hold that decision in place: the
+ * absent form is a legal `PluginConfigViewProps` (so a page that omits it is not
+ * a broken page), and the present form is the published `ConfigPageForm` whose
+ * `state` and `mutate` this plugin already gets from the service.
+ *
+ * @param form - the page's own form for one entry, when it supplies one.
+ */
+export function ownerFormIsOptional(form: ConfigPageForm): void {
+  const withoutForm: PluginConfigViewProps = { view: 'page' }
+  const withForm: PluginConfigViewProps = { view: 'page', form }
+  const state: ConfigFormSnapshot<Record<string, unknown>> = form.state
+  const writable: boolean = state.writable
+  const revision: number | undefined = state.revision
+  const queued: Promise<boolean> = form.mutate([], revision)
+  void [withoutForm, withForm, writable, queued]
+
+  // The card's own props are the injected controller face, not the page's owner
+  // props: `form` is deliberately absent from them, which is what stops the
+  // controller from acquiring a dependency on a prop the page may not pass.
+  // @ts-expect-error the card's face carries no owner-supplied form.
+  void (null as unknown as MailNotifyCardFace).form
 }
 
 /* 鈹€鈹€ The credential Remote 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */

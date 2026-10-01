@@ -544,10 +544,12 @@ export interface TurnNotification {
 /**
  * The fields every mid-turn human-attention notification carries.
  *
- * Question and approval notifications are the same kind of thing — an agent
- * that has stopped and is waiting for a person — so the address and context
- * fields live here and are shared. Neither is a settled turn, and neither may be
- * rendered as if it were the model's final output.
+ * Question and approval notifications are the same kind of thing — a request the
+ * agent has put to a person — so the address and context fields live here and are
+ * shared. The phrasing is phase-neutral on purpose: a timed question outlives its
+ * foreground wait, so "is waiting" is not a property the shared fields may assert.
+ * Neither is a settled turn, and neither may be rendered as if it were the
+ * model's final output.
  */
 export interface HumanAttentionPayload {
   sessionId: string
@@ -569,7 +571,13 @@ export interface HumanAttentionPayload {
 }
 
 /**
- * A question the agent is blocked on.
+ * A question the agent has put to a human.
+ *
+ * Covers both DSH question modes: the legacy blocking tool, whose call does not
+ * return until an answer arrives, and the timed tool, whose foreground wait may
+ * close with a `pending` result while the question stays answerable. The
+ * notification is built from the observed `tool/call`, so it describes the
+ * *request* rather than any particular wait phase.
  *
  * Shares its payload fields with {@link ApprovalNotification} through
  * {@link HumanAttentionPayload} but is a distinct member of the union: the two
@@ -585,7 +593,7 @@ export interface QuestionNotification extends HumanAttentionPayload {
   argumentsUnreadable?: boolean
 }
 
-/** An approval the agent is blocked on. */
+/** An approval the agent is waiting on. */
 export interface ApprovalNotification extends HumanAttentionPayload {
   kind: 'approval'
   /** Tool whose operation requires a decision, as the audit event names it. */
@@ -599,7 +607,7 @@ export interface ApprovalNotification extends HumanAttentionPayload {
  * (D018, §25).
  *
  * Three lifecycles are represented and never conflated: a settled turn, a
- * question the agent is blocked on, and an approval the agent is blocked on.
+ * question put to a human, and an approval the agent is waiting on.
  * Every variant carries only plain scalars, arrays, and nested plain records —
  * no live runtime object appears in this union — and `kind` is the single
  * discriminant, so a `switch` on it narrows exhaustively.
@@ -704,7 +712,10 @@ export interface PolicyConfig {
   notifyErrors: boolean
   notifyMaxTokens: boolean
   /**
-   * Whether an agent that blocked on `ask_user_question` is notified (D018).
+   * Whether a question put to a human through `ask_user_question` is notified
+   * (D018). Covers both DSH question modes: the legacy blocking tool and the
+   * timed tool, whose foreground wait may close while the question stays
+   * answerable.
    *
    * Off by default: turning it on sends the question's own text — which DSH
    * defines as human-facing presentation and which may therefore quote the
@@ -712,7 +723,7 @@ export interface PolicyConfig {
    */
   notifyQuestions: boolean
   /**
-   * Whether an agent that blocked on an approval decision is notified (D018).
+   * Whether an approval request the agent is waiting on is notified (D018).
    *
    * Off by default, for the same reason as `notifyQuestions`. The tool name and
    * the asker's reason reach the mail; the approved tool's arguments never do.

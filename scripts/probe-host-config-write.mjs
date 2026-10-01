@@ -244,7 +244,7 @@ const mailNotifyEntry = join(profileDir, 'mail-notify-probe-entry.mjs')
  * `dsh-base` mounts it from inside the launcher's own `node_modules`, which no
  * bare specifier reaches from this checkout, so the probe resolves it by path:
  * the checkout's own tree first, the installation second. Whichever answers, the
- * release is DSH `0.1.7-rc.2`'s.
+ * release is DSH `0.2.0-rc.2`'s.
  *
  * @returns the absolute path of the module to mount.
  */
@@ -383,7 +383,7 @@ const ctx = await boot(
   //
   // Not the installation: since 0.1.7 the launcher nests its dependencies inside
   // itself, so `<install>/node_modules` holds the launcher and not the packages a
-  // row would name. This tree carries the same `0.1.7-rc.2` releases — it is what
+  // row would name. This tree carries the same `0.2.0-rc.2` releases — it is what
   // the suite is built and tested against — and, because it is one tree, the rows
   // share one Cordis and one Schemastery instance instead of each resolving its
   // own copy of the service registry.

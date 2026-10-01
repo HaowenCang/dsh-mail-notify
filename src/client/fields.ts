@@ -77,7 +77,7 @@ export const GENERAL_FIELDS: readonly FieldDef[] = [
  *
  * The two human-attention switches lead the list and are rendered as the
  * card's prominent block: they are the switches that decide whether the
- * operator learns that an agent is blocked and waiting for a person.
+ * operator learns that an agent has asked for a person's input.
  */
 export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
   {

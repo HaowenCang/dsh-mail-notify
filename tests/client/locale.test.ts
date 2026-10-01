@@ -140,10 +140,17 @@ test('L10N-02 the Simplified Chinese dictionary has exact key parity', () => {
     assert.equal(zh[key], chinese, `the Chinese copy of ${key} is mandated`)
   }
   // §15's human-attention copy is mandated verbatim in both languages.
+  //
+  // The question hint is phase-neutral since v0.5.0. DSH 0.2's timed
+  // `ask_user_question` can close its foreground wait while the question stays
+  // answerable, so "DSH is waiting for your answer" was false for exactly the
+  // late-answer case; "asks you a question" is true in both question modes. The
+  // approval hint is unchanged because the approval answerer chain does block
+  // until a decision.
   assert.equal(en.labelQuestions, 'Questions requiring input')
-  assert.equal(en.hintQuestions, 'Send an email immediately when DSH is waiting for your answer.')
+  assert.equal(en.hintQuestions, 'Send an email immediately when DSH asks you a question.')
   assert.equal(zh.labelQuestions, '需要用户回答')
-  assert.equal(zh.hintQuestions, '当 DSH 正在等待你的回答时立即发送邮件。')
+  assert.equal(zh.hintQuestions, '当 DSH 向你提问时立即发送邮件。')
   assert.equal(en.labelApprovals, 'Approval requests')
   assert.equal(en.hintApprovals, 'Send an email immediately when DSH is waiting for your approval.')
   assert.equal(zh.labelApprovals, '需要用户批准')
@@ -262,7 +269,7 @@ test('L10N-11 the canonical technical terms stay correct in both languages', asy
   assert.ok(zhText.includes('隐式 TLS'), 'the security hint names implicit TLS in Chinese')
   assert.ok(zhText.includes('STARTTLS'), 'STARTTLS keeps its canonical spelling')
   assert.ok(zhText.includes('SMTP 服务器'), 'SMTP stays SMTP in the Chinese label')
-  assert.ok(zhText.includes('当 DSH 正在等待你的回答时立即发送邮件。'), 'DSH stays DSH in the Chinese hint')
+  assert.ok(zhText.includes('当 DSH 向你提问时立即发送邮件。'), 'DSH stays DSH in the Chinese hint')
   assert.ok(!zhText.includes('TLS升级'), 'no glued pseudo-term replaces the canonical spacing')
   chinese.mounted.unmount()
   chinese.mounted.card.dispose()

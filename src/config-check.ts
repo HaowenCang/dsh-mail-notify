@@ -35,7 +35,7 @@
  * ## Why the mechanism is the standard-schema validator
  *
  * The pinned Schemastery — 3.18.4, the release both this checkout and the
- * installed DSH 0.1.7-rc.2 carry — has no `.check()` method: `Schema.prototype`
+ * installed DSH 0.2.0-rc.2 carry — has no `.check()` method: `Schema.prototype`
  * exposes `volatile`, `default`, `pattern`, `min`, `max`, `role`, `simplify`,
  * `toJSON` and `~standard`, and nothing else. A root `Schema.transform` is not an
  * alternative either: the settings form walks an object node's `dict`, so a

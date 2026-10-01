@@ -195,7 +195,7 @@ function script() {
 /**
  * Write the overlay this run composes.
  *
- * Every plugin row names a literal path or a bare specifier: DSH 0.1.7 checks a
+ * Every plugin row names a literal path or a bare specifier: the target checks a
  * row's plugin compatibility before interpolating `!!js` expressions in `name`,
  * and an unevaluated expression object fails that check. The plugin under test is
  * addressed by package so its real manifest is what the preflight reads.
@@ -212,8 +212,8 @@ function writeOverlay(port) {
     '    provider: probe',
     '    model: probe-scripted',
     '',
-    '# The headless template no longer composes the agent loop on its own under',
-    '# DSH 0.1.7; without it `ctx.agents` has no factory.',
+    '# The headless template does not compose the agent loop on its own;',
+    '# without it `ctx.agents` has no factory.',
     '- id: agent-loop',
     "  name: '@deepseek-ai/dsh-agent-loop'",
     '  config:',
@@ -324,7 +324,7 @@ function runProfile(overlay, port) {
 /**
  * Install the packed plugin into the disposable profile.
  *
- * A row named by absolute path has no package identity, so DSH 0.1.7's
+ * A row named by absolute path has no package identity, so the target's
  * compatibility preflight disables it before the Loader imports anything.
  * Installing the archive gives the row a real manifest — and makes the probe
  * exercise the artefact that ships.

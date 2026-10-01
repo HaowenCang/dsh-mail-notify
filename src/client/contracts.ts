@@ -10,8 +10,8 @@
  * therefore how a plugin states, in one auditable place, exactly which DSH
  * contracts it builds on.
  *
- * Every package on this graph is pinned to one exact `0.1.7-rc.2` release in
- * `devDependencies`. The pins matter because the whole `0.1.7-rc.2` client
+ * Every package on this graph is pinned to one exact `0.2.0-rc.2` release in
+ * `devDependencies`. The pins matter because the whole `0.2.0-rc.2` client
  * family is published but *not* the `latest` dist-tag of these packages: an
  * unpinned install resolves an older client family into the same program, and
  * the two disagree about `SlotMap` and about the form service. The contract
@@ -22,14 +22,26 @@
  * browser half requires exactly two modules at runtime — `react` and
  * `react/jsx-runtime` — both of which the shell's seed table supplies.
  *
- * ## What changed for DSH 0.1.7
+ * ## What changed for DSH 0.1.7, and what did not change for DSH 0.2.0-rc.2
  *
- * `ctx.settingsScope` and the `settings.plugin.item` slot are gone. The card now
- * reads and writes through `ctx.configForms` — the shared form service over the
- * Host's describe mirror — and registers into the Plugins page's bundle
- * configuration slot. Both replacements are declared by packages this module
- * imports for their augmentations, so the registration site below is checked
- * against the installed contract rather than against a local restatement.
+ * `ctx.settingsScope` and the `settings.plugin.item` slot were removed in
+ * `0.1.7-rc.2`. The card reads and writes through `ctx.configForms` — the shared
+ * form service over the Host's describe mirror — and registers into the Plugins
+ * page's bundle configuration slot. Both replacements are declared by packages
+ * this module imports for their augmentations, so the registration site below is
+ * checked against the installed contract rather than against a local
+ * restatement.
+ *
+ * The `0.2.0-rc.2` migration changed no client contract this module names. The
+ * form types, the slots package's `SlotMap`, the connection handle, the locale
+ * registry, and the settings-controller Remote are identical to `0.1.7-rc.2`,
+ * and the Plugins-page owner props differ only in type-only assembly imports.
+ * The `form` prop on `PluginConfigViewProps` is — and already was — optional;
+ * this card consequently reads its values from `ctx.configForms.get(...)` rather
+ * than from the page's optional owner-supplied form, and the compile probe
+ * states both the optionality and the field it does read. What *did* change in
+ * `0.2.0-rc.2` is the Host-side session and interaction vocabulary, which the
+ * companion probe `scripts/type-probes/host-contracts.compile.ts` asserts.
  *
  * @module dsh-mail-notify/client/contracts
  */

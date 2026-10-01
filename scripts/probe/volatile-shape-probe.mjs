@@ -1,6 +1,6 @@
 /**
  * Probe: which schema shapes accept `.volatile()`, under the exact
- * schemastery 3.18.4 that DSH 0.1.7-rc.2 ships.
+ * schemastery 3.18.4 that DSH 0.2.0-rc.2 ships.
  *
  * Schemastery refuses a volatile field that sits under another volatile field
  * or under a container node. The rule decides how a Config must be shaped, so

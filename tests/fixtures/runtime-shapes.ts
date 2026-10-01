@@ -38,6 +38,27 @@ export const SYSTEM_PROMPT_SENTINEL = 'SYSTEM_PROMPT_SENTINEL'
 export const USER_PROMPT_SENTINEL = 'USER_PROMPT_SENTINEL'
 
 /**
+ * The `MessageSource.kind` DSH 0.2 writes for a late answer to a timed question.
+ *
+ * Declared by `@deepseek-ai/dsh-user-questions` through a `MessageSourceMap`
+ * merge. The message is user-role and carries the human's own words, but it
+ * answers a question the agent already continued past — so it must never be read
+ * as the operator's ordinary prompt.
+ */
+export const USER_QUESTION_REPLY_SOURCE_KIND = 'user-question-reply'
+
+/**
+ * The number placed in a timed call's `timeout` parameter.
+ *
+ * `timeout` is the one additional tool-schema property a timed
+ * `ask_user_question` declares, and the question-mail allowlist does not carry
+ * it. The value is a distinctive integer rather than a plausible duration so a
+ * privacy test can search a rendered body, a subject, or a log line for its
+ * exact digits and fail on any occurrence.
+ */
+export const TIMED_QUESTION_TIMEOUT_SENTINEL = 918273645
+
+/**
  * The session `cwd` used by every fixture here.
  *
  * Synthetic on purpose: a fixture must not pin the machine a test happened to
@@ -223,6 +244,173 @@ export function toolCall(turn: number, step: number, time: number, name = 'pwsh'
     time,
     data: { turn, step, callId: `call-${turn}-${step}`, name, arguments: args },
   }
+}
+
+/**
+ * One `ask_user_question` call as the legacy blocking tool records it.
+ *
+ * @param turn - the turn number.
+ * @param step - the step number.
+ * @param time - the event time.
+ * @param questions - the raw `questions` array the model emitted.
+ * @param callId - override for the durable call id, when a test needs two calls.
+ * @returns the `tool/call` event.
+ */
+export function legacyAskUserCall(
+  turn: number,
+  step: number,
+  time: number,
+  questions: readonly Record<string, unknown>[],
+  callId?: string,
+): SessionEventLike {
+  const event = toolCall(turn, step, time, 'ask_user_question', JSON.stringify({ questions }))
+  if (callId !== undefined) (event.data as Record<string, unknown>)['callId'] = callId
+  return event
+}
+
+/**
+ * One `ask_user_question` call as DSH 0.2's opt-in **timed** tool records it.
+ *
+ * The only shape difference from {@link legacyAskUserCall} is the sibling
+ * `timeout` property that DSH's own `TIMED_WAIT_PARAMETER` names and that
+ * `isTimedAskUserQuestionSchema` detects. Everything the mail parser reads is
+ * unchanged — which is the whole claim being tested: the plugin needs no
+ * timed-specific parsing, and it must not start carrying the new field either.
+ *
+ * @param turn - the turn number.
+ * @param step - the step number.
+ * @param time - the event time.
+ * @param questions - the raw `questions` array the model emitted.
+ * @param timeout - the foreground wait in seconds, or the privacy sentinel.
+ * @param callId - override for the durable call id, when a test needs two calls.
+ * @returns the `tool/call` event.
+ */
+export function timedAskUserCall(
+  turn: number,
+  step: number,
+  time: number,
+  questions: readonly Record<string, unknown>[],
+  timeout: number = TIMED_QUESTION_TIMEOUT_SENTINEL,
+  callId?: string,
+): SessionEventLike {
+  const event = toolCall(turn, step, time, 'ask_user_question', JSON.stringify({ questions, timeout }))
+  if (callId !== undefined) (event.data as Record<string, unknown>)['callId'] = callId
+  return event
+}
+
+/**
+ * The `tool/result` a timed call settles with when its foreground wait expires.
+ *
+ * DSH records the pending outcome as an ordinary non-error tool result whose
+ * value is `{ pending: true, callId, message }`: `pending` means *no answer
+ * batch arrived before the timeout*, not that the question was skipped, and the
+ * question stays answerable. The plugin observes `tool/call` only, so this event
+ * must add no notification — and it must not be read as an explicit tool error
+ * either, which would turn a delivery question into a failure settlement.
+ *
+ * @param turn - the turn number.
+ * @param step - the step number.
+ * @param time - the event time.
+ * @param callId - the durable call id the pending questions remain keyed by.
+ * @returns the `tool/result` event.
+ */
+export function toolResultQuestionPending(turn: number, step: number, time: number, callId?: string): SessionEventLike {
+  const id = callId ?? `call-${turn}-${step}`
+  return {
+    type: 'tool/result',
+    seq: turn * 100 + step,
+    time,
+    data: {
+      turn,
+      step,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: id,
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  pending: true,
+                  callId: id,
+                  message: 'No answer batch arrived before the timeout.',
+                }),
+              },
+            ],
+          },
+        ],
+        source: { kind: 'tool', callId: id },
+      },
+    },
+  }
+}
+
+/**
+ * The `tool/result` a timed call settles with when the human answers in window.
+ *
+ * @param turn - the turn number.
+ * @param step - the step number.
+ * @param time - the event time.
+ * @param answers - the structured answer batch the tool returns.
+ * @param callId - the durable call id.
+ * @returns the `tool/result` event.
+ */
+export function toolResultQuestionAnswered(
+  turn: number,
+  step: number,
+  time: number,
+  answers: readonly Record<string, unknown>[],
+  callId?: string,
+): SessionEventLike {
+  const id = callId ?? `call-${turn}-${step}`
+  return {
+    type: 'tool/result',
+    seq: turn * 100 + step,
+    time,
+    data: {
+      turn,
+      step,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: id,
+            content: [{ type: 'text', text: JSON.stringify({ answers }) }],
+          },
+        ],
+        source: { kind: 'tool', callId: id },
+      },
+    },
+  }
+}
+
+/**
+ * The `user/message` DSH 0.2 steers in for a late answer to a timed question.
+ *
+ * The message is user-role and carries the human's own words, but its
+ * `source.kind` is `user-question-reply`, not `user`. It is the case the
+ * prompt-attribution rule exists for: `includeUserPrompt` must not present it as
+ * the operator's ordinary prompt for whatever turn happens to be open when it
+ * arrives.
+ *
+ * @param text - the answer text the human submitted.
+ * @param callId - the timed call the reply answers.
+ * @param time - the event time.
+ * @returns the `user/message` event.
+ */
+export function questionReplyMessage(
+  text: string,
+  callId: string,
+  time = 1_750_000_000_100,
+): SessionEventLike {
+  return userMessageWithSource(
+    text,
+    { kind: USER_QUESTION_REPLY_SOURCE_KIND, callId, outcome: 'answered' },
+    time,
+  )
 }
 
 /** A successful `tool/result`: `isError` absent, no `error` field. */
