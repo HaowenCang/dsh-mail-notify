@@ -47,9 +47,25 @@ import { parseMessage } from './probe/smtp-decode.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
-const probeHome = join(projectRoot, 'tmp', 'live-policy', 'home')
-const outDir = join(projectRoot, 'tmp', 'live-policy', 'out')
-const statusDir = join(projectRoot, 'tmp', 'live-policy', 'status')
+/**
+ * The disposable tree every writable path of a run lives under.
+ *
+ * The default keeps it inside the checkout, already outside the operator's own
+ * Harness home. `DSH_MAIL_NOTIFY_PROBE_ROOT` relocates it so a run can be
+ * pointed at one mandated, inspectable isolation root.
+ */
+const probeRoot = process.env['DSH_MAIL_NOTIFY_PROBE_ROOT'] ?? join(projectRoot, 'tmp', 'live-policy')
+const probeHome = join(probeRoot, 'home')
+const outDir = join(probeRoot, 'out')
+const statusDir = join(probeRoot, 'status')
+/**
+ * The profile the run boots, inside the disposable home above.
+ *
+ * `headless` is the shipped template and the default. A non-shipped name is
+ * created from that same template by the launcher, which is what an operator
+ * who reserves the shipped names needs.
+ */
+const probeProfile = process.env['DSH_MAIL_NOTIFY_PROBE_PROFILE'] ?? 'headless'
 
 const smtpPassword = 'PROBE_LIVE_POLICY_PASSWORD_NOT_A_REAL_SECRET'
 const credentialRef = 'DSH_MAIL_SMTP_PASSWORD'
@@ -109,8 +125,29 @@ for (const path of Object.values(paths)) {
 // credential document could otherwise make a mail this run did not produce look
 // like one it did.
 rmSync(probeHome, { recursive: true, force: true })
-for (const name of ['', 'sessions', 'storages', 'profiles', 'profiles/headless']) {
+for (const name of ['', 'sessions', 'storages', 'profiles']) {
   mkdirSync(join(probeHome, name), { recursive: true })
+}
+// A non-shipped profile name has no bundle list of its own; the launcher
+// creates it from the `headless` template. It refuses a target directory that
+// already exists, which is why the loop above does not create the profile.
+if (probeProfile !== 'headless') {
+  const init = spawnSync(
+    'dsh',
+    ['--profile', probeProfile, '--from-default-profile', 'headless', '--dump-config'],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, DSH_HOME: probeHome, DSH_INSTALL_ROOT: installRoot },
+      encoding: 'utf8',
+      shell: true,
+    },
+  )
+  if (!existsSync(join(probeHome, 'profiles', probeProfile, 'package.json'))) {
+    process.stderr.write(
+      `[probe] profile initialization failed (exit ${String(init.status)}):\n${init.stdout ?? ''}\n${init.stderr ?? ''}\n`,
+    )
+    process.exit(2)
+  }
 }
 writeFileSync(paths.credentialsFile, `version: 1\nrefs:\n  ${credentialRef}: ${smtpPassword}\nrecords: {}\n`, 'utf8')
 
@@ -276,7 +313,7 @@ function runProfile(overlay, port) {
   const task = 'probe: live policy switch'
   const child = spawn(
     process.execPath,
-    [join(here, 'dev-boot-probe.mjs'), '--profile', 'headless', '--patch', overlay, '--', task],
+    [join(here, 'dev-boot-probe.mjs'), '--profile', probeProfile, '--patch', overlay, '--', task],
     {
       cwd: projectRoot,
       env: {
@@ -334,7 +371,7 @@ function runProfile(overlay, port) {
 function installPlugin(tarball) {
   // `shell: true` because `dsh` is a `.cmd` shim on Windows; the same invocation
   // works on both platforms and is the command the README documents.
-  const result = spawnSync('dsh', ['plugin', '--profile', 'headless', 'add', tarball], {
+  const result = spawnSync('dsh', ['plugin', '--profile', probeProfile, 'add', tarball], {
     cwd: projectRoot,
     env: { ...process.env, DSH_HOME: probeHome, DSH_INSTALL_ROOT: installRoot },
     encoding: 'utf8',

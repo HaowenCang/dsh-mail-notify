@@ -69,7 +69,7 @@ import { boot, loadLayeredEnv, readProfilePatches } from '@deepseek-ai/dsh-app-b
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
 /** Every writable path this probe uses, and nothing outside it. */
-const root = join(projectRoot, 'tmp', 'host-config-write')
+const root = process.env['DSH_MAIL_NOTIFY_PROBE_ROOT'] ?? join(projectRoot, 'tmp', 'host-config-write')
 const home = join(root, 'home')
 const outDir = join(root, 'out')
 const profileDir = join(home, 'profiles', 'probe')

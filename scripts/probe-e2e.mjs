@@ -50,9 +50,29 @@ import { parseMessage } from './probe/smtp-decode.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
-const probeHome = join(projectRoot, 'tmp', 'probe', 'home')
-const outDir = join(projectRoot, 'tmp', 'probe', 'out')
-const statusDir = join(projectRoot, 'tmp', 'probe', 'status')
+/**
+ * The disposable tree every writable path of a run lives under.
+ *
+ * The default keeps the tree inside the checkout, which is already outside the
+ * operator's own Harness home. `DSH_MAIL_NOTIFY_PROBE_ROOT` relocates it, so an
+ * operator who mandates one dedicated, inspectable isolation root — and who
+ * must be able to *prove* from the command output that no other profile was
+ * touched — can point every run at that root without editing the probe.
+ */
+const probeRoot = process.env['DSH_MAIL_NOTIFY_PROBE_ROOT'] ?? join(projectRoot, 'tmp', 'probe')
+const probeHome = join(probeRoot, 'home')
+const outDir = join(probeRoot, 'out')
+const statusDir = join(probeRoot, 'status')
+/**
+ * The profile the run boots, inside the disposable home above.
+ *
+ * `headless` is the shipped template and the default. A non-shipped name is
+ * created from that same template by the launcher, which is what an operator
+ * who reserves the shipped names needs: the profile is then a *new* profile at
+ * a name nothing else uses, rather than one that could collide with a profile
+ * the operator already has.
+ */
+const probeProfile = process.env['DSH_MAIL_NOTIFY_PROBE_PROFILE'] ?? 'headless'
 /** The synthetic SMTP password the probe resolves; never a real secret. */
 const smtpPassword = 'PROBE_SMTP_PASSWORD_NOT_A_REAL_SECRET'
 /** The reference the plugin's configuration names, in the DSH CredentialRef grammar. */
@@ -188,8 +208,31 @@ for (const path of Object.values(paths)) {
 // An earlier run's state could otherwise let a notification this run did not
 // produce look like one it did.
 rmSync(probeHome, { recursive: true, force: true })
-for (const name of ['', 'sessions', 'storages', 'profiles', 'profiles/headless']) {
+for (const name of ['', 'sessions', 'storages', 'profiles']) {
   mkdirSync(join(probeHome, name), { recursive: true })
+}
+// A shipped template name needs no initialization: the launcher composes it
+// from the template it ships. A non-shipped name has no bundle list of its own,
+// so it is created from the `headless` template here. The launcher refuses a
+// `--from-default-profile` whose target directory already exists, which is why
+// the loop above stops at `profiles` and does not create the profile itself.
+if (probeProfile !== 'headless') {
+  const init = spawnSync(
+    'dsh',
+    ['--profile', probeProfile, '--from-default-profile', 'headless', '--dump-config'],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, DSH_HOME: probeHome, DSH_INSTALL_ROOT: installRoot },
+      encoding: 'utf8',
+      shell: true,
+    },
+  )
+  if (!existsSync(join(probeHome, 'profiles', probeProfile, 'package.json'))) {
+    process.stderr.write(
+      `[probe] profile initialization failed (exit ${String(init.status)}):\n${init.stdout ?? ''}\n${init.stderr ?? ''}\n`,
+    )
+    process.exit(2)
+  }
 }
 
 /**
@@ -216,7 +259,7 @@ function installPlugin(tarball) {
   // `shell: true` because `dsh` is a `.cmd` shim on Windows rather than an
   // executable; the same invocation works on both platforms and is the command
   // the README documents.
-  const result = spawnSync('dsh', ['plugin', '--profile', 'headless', 'add', tarball], {
+  const result = spawnSync('dsh', ['plugin', '--profile', probeProfile, 'add', tarball], {
     cwd: projectRoot,
     env: { ...process.env, DSH_HOME: probeHome, DSH_INSTALL_ROOT: installRoot },
     encoding: 'utf8',
@@ -438,7 +481,7 @@ function startSmtp(onMessage) {
  * @returns the child's exit code and its captured stdio.
  */
 function runProfile(patches, scriptPath, mailConfig, extraEnv) {
-  const args = ['--profile', 'headless']
+  const args = ['--profile', probeProfile]
   for (const patch of patches) args.push('--patch', patch)
 
   // The operator's own environment must not be able to supply the reference:
