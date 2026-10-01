@@ -1320,3 +1320,67 @@ D007 的候选在实现中增加两个**可选**字段：`sawTurnStart?: boolean
 | `PHASE3_REPORT.md` | 实现与验证的逐项结果（Phase 3 新增） |
 | `PHASE8_REPORT.md` | D018 的实现与验证的逐项结果（Phase 8 新增） |
 | `PHASE8_1_REPORT.md` | D019 的取证与裁决，approval E2E 的补齐，以及 Phase 8 遗留三项的处置（Phase 8.1 新增） |
+
+---
+
+## D022 — v0.5.0 迁移到 DSH `0.2.0-rc.2`：门禁即 peer 声明，timed question 不新增分支（2026-10）
+
+### 背景
+
+D020／D021 把 v0.4.0 固定在 DSH `0.1.7-rc.2`。DSH `0.2.0-rc.2` 发布后，同一份插件在目标运行时上必须重新取得资格。本节记录迁移的**判断**，而不是过程；逐项证据见 [`V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)。
+
+### 1. 兼容性门禁读的是 `peerDependencies`，不是 `engines.dsh`
+
+`dsh-app-boot`（已安装 `0.2.0-rc.2`）的 README 写明：profiles 在 import 任何插件之前，会把插件对 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 的 `peerDependencies` 与 `getDshRuntimeVersion()` 返回的**单一**运行时版本逐一比对；每条范围都必须匹配，prerelease 参与范围匹配；缺失的 DSH peer 不构成约束；非法范围视为不兼容；**且该检查使用 peer 声明而非 `engines.dsh`**。
+
+据此有两条结论，二者都不是推测：
+
+1. `@deepseek-ai/cordis`、`@deepseek-ai/schemastery`、`react` **不在**判定范围内，因此它们的范围保持不变。把它们一并"迁移"到 `0.2.0-rc.2` 既无必要，也会把一条本不存在的兼容性主张写进清单。
+2. 判定针对一个精确版本，因此范围必须保持精确。**一个能同时容纳 `0.1.7-rc.2` 与 `0.2.0-rc.2` 的范围不会被 Host 拒绝，而会被 Host 接受**——这正是危险所在：它把"未经测试的配对"从一次拒装变成一次静默加载。v0.4.0 的 `peerDependencies` 因此原样保留在 `0.1.7-rc.2`。
+
+### 2. 依赖迁移的边界
+
+只迁移 `@deepseek-ai/dsh*` 的开发与 peer 依赖；`devDependencies` 新增 `dsh-llm`、`dsh-llm-retry`、`dsh-user-approval`、`dsh-user-questions`。新增的理由是**探针**：编译探针要断言 0.2 的宿主词汇（timed question schema、question 应答路径、approval 审计记录、LLM 重试与遥测形状），而断言某个契约的探针必须针对声明该契约的包编译。插件运行时不 import 这四个包，它们因此只出现在 devDependencies。
+
+### 3. timed `ask_user_question` 不引入 timed 专用分支
+
+`0.2.0-rc.2` 在同一个工具名下提供两种模式：传统的阻塞式调用，以及可选的 timed 调用——后者的前台等待可能以 `pending` 结束，而问题仍可回答；此后再作答的人会产生一条 `source.kind === 'user-question-reply'` 的 user 角色消息。
+
+插件观察的是 `tool/call`，并按 `source.kind` 分类用户消息，因此**不需要**为 timed 模式增加分支。该结论被当作待验证命题处理，并被四条不变量围住：
+
+- `pending` 结算是一次普通的非错误 `tool/result`，既不得新增 question 通知，也不得被读成显式工具错误；
+- 迟到答复是 user 角色消息，因此不得成为该 Turn 的 `includeUserPrompt` 内容——**只有 `source.kind === 'user'` 才是 operator prompt**；
+- 该答复既不得消费也不得重建每次调用的去重键，重复调用仍只算一次交互；
+- timed schema 多出的 `timeout` 属性不得进入任何邮件、任务或日志行。
+
+四条均有 TQ 矩阵（`tests/integration/timed-question.test.ts`）与真实装配探针 `probe:timed-questions`（含一条迟答复，以及一条取 `2147483` 秒、永不超时的窗口，使"超时值泄漏"在正文中不可混淆）双向覆盖。
+
+### 4. 措辞改为相位中立（这是 v0.5.0 唯一的行为无关改动）
+
+`src/subject.ts` 与 `src/types.ts` 中「Waiting for a human」改为「Human input requested」，两处中文/英文提示同步调整。理由是**准确性**而非风格：timed question 可能已经返回 `pending` 且 agent 已继续执行，"DSH 仍在阻塞"对迟到答复这一情形就是假的。通知描述的是**已观察到的请求**，而不是某一等待相位。
+
+### 5. 浏览器 E2E 的两条方法论约束
+
+v0.4.0 报告 §18 曾撤回一个由「控件计数」得出的结论，§27 用「键集合比较」取代了它。本版把这两条写进工具本身：
+
+1. **控件计数不是字段校验。** 浏览器探针比较标签集合与 Host 实际提供的字段集合，因此某个字段消失不可能被两个无关新增控件抵消。
+2. **HTTP 状态码不是提交判决。** 写路径在**拒绝时同样返回 HTTP 200**，真正的判决在 RPC envelope 的 `ok` 字段。首次提交即被 Host 拒绝（`smtpUser is required...`），而页面显示「The host did not accept the save.」。探针因此读取 envelope 正文，并在 `ok:false` 时以 Host 自己的措辞失败。
+
+第二条同时校正了一个更一般的假设：**任何把 2xx 当作成功的写路径断言，在这里都是无效证据。**
+
+### 6. 隔离是运行方式的一部分，不是习惯
+
+所有实机测试同时满足：独立 `DSH_HOME`（位于 `E:\Projects\DSHarness\_isolated\`）、非 shipped 名称的独立 profile（`mail-notify-v050-test` 由 `headless` 模板经 `--from-default-profile` 创建；`mail-notify-v050-web` 由 `web` 模板同法创建）、以及独立端口（浏览器实例 `51231`，headless 探针不监听 HTTP 端口）。隔离根与 profile 名通过 `DSH_MAIL_NOTIFY_PROBE_ROOT` / `DSH_MAIL_NOTIFY_PROBE_PROFILE` 在命令行显式给出，因此**可从命令输出自证**，而不是从源码默认值推断。
+
+凭据隔离双向取证：合成口令出现在隔离 home 的 `.credentials.yaml`（阳性对照），且**不**出现在 `C:\Users\20659\.dsh\.credentials.yaml`（该文件仍只含操作者自己的三个引用）。未复制任何现有 profile、会话或凭据文档。
+
+### 影响
+
+- `package.json`：版本 `0.5.0`；dev/peer 依赖分线；新增 `probe:timed-questions`。
+- `scripts/type-probes/host-contracts.compile.ts`、`tests/compatibility/contracts.compile.ts`：覆盖 0.2 会话与交互词汇。
+- `tests/integration/timed-question.test.ts`（TQ 矩阵）、`tests/fixtures/runtime-shapes.ts`：timed 形状与迟到答复。
+- `scripts/probe-e2e.mjs`、`scripts/probe-live-policy.mjs`、`scripts/probe-host-config-write.mjs`：隔离根与 profile 名可显式指定。
+- `scripts/probe/browser-e2e.mjs`（新增）：DevTools Protocol 驱动的真实 Chrome E2E。
+- `README.md`、`00_MASTER.md`、[`V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)（新增）。
+- v0.4.0 的 peer 范围与 `v0.4.0` tag 均未改动；未合并、未打标签、未发布。
+

@@ -60,3 +60,48 @@
 # in `probe-e2e.mjs` and travels to the plugin as one JSON document, so "the
 # settings that took effect" and "the settings the probe printed" are the same
 # fact rather than two that could disagree.
+#
+#   timed-questions       the two DSH 0.2 question modes under one tool name
+#     An expiring wait (`timeout: 3`), a late answer to it, and a wait that can
+#     never expire (`timeout: 2147483`). Asserts two question mails and one
+#     completion, that the late reply is in no body and heads no user-prompt
+#     section, and that neither the timed wait value nor a raw `pending` payload
+#     reaches a mail. The unmistakable timeout value is what makes the negative
+#     scan non-vacuous: a leak would be readable, not merely present.
+#
+# Isolation, and why it is on the command line
+#
+# Every probe above writes only inside its own disposable tree and boots a
+# profile from a shipped template. That is safe by default, but a default is not
+# evidence: an operator who must show that no profile of theirs was touched needs
+# the two facts that decide it to appear in the command's own output. Both are
+# therefore overridable, and the probes print the paths they use.
+#
+#   DSH_MAIL_NOTIFY_PROBE_ROOT     the disposable tree (DSH_HOME lives under it)
+#   DSH_MAIL_NOTIFY_PROBE_PROFILE  the profile name
+#
+# A non-shipped profile name has no bundle list of its own, so the probe creates
+# it from the `headless` template with the launcher's own
+# `--from-default-profile`. That is what lets an operator who reserves the
+# shipped names (`web`, `headless`, `default`) still run the full matrix. The
+# launcher refuses a target directory that already exists, so a probe must not
+# create the profile directory itself.
+#
+# The browser half
+#
+# `browser-e2e.mjs` is the one probe that does not boot anything: the caller owns
+# the instance. Boot a disposable web profile on a port that is not the
+# operator's, install the packed archive, and hand the probe the URL the
+# launcher printed — the one carrying the instance token.
+#
+#   PROBE_WEB_URL=<url with token> PROBE_SMTP_PORT=25101 \
+#   PROBE_CHROME_DATA=<dir> PROBE_OUT=<dir> \
+#   node scripts/probe/browser-e2e.mjs
+#
+# It drives real Chrome over the DevTools Protocol (through Node's own
+# `WebSocket`, so it adds no dependency) and asserts what the page rendered. Two
+# constraints are built in, both learned from a retracted conclusion and a
+# misread status code in the v0.4.0 work: the field assertion compares a *key
+# set* rather than a control count, and a commit is judged by the RPC envelope's
+# `ok` field rather than by the HTTP status, because the write path answers 200
+# on refusal too.

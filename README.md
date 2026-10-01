@@ -5,9 +5,9 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.4.0`
+- Version: `0.5.0`
 - Host plugin plus a browser half: a configuration card on the DSH Plugins page
-- Requires DSH `0.1.7-rc.2`, and Node `^22.19.0 || >=24.0.0`
+- Requires DSH `0.2.0-rc.2`, and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
 
 **Verified DSH version.** Exactly one release has been exercised against this plugin, and it is the
@@ -15,10 +15,15 @@ only one this document claims.
 
 | DSH version | Status | Evidence |
 | --- | --- | --- |
-| `0.1.7-rc.2` | Verified | Full suite; both compatibility compile probes; six real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract) plus the two-Turn user-prompt attribution probe; the live-policy probe; isolated `npm pack` install into a disposable web profile with browser verification of the configuration card, Save/Reset, credential badge, Test Email, live activation without restart, and Host rejection of invalid writes |
+| `0.2.0-rc.2` | Verified | Full suite (575 tests, 0 skipped); both compatibility compile probes; eight real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract, timed questions with a late answer, two-Turn user-prompt attribution); the live-policy probe; the Host config-write probe; the schema/volatile/config-check probes; real Chrome via the DevTools Protocol against an isolated `dsh web` instance, verifying the plugin row, the single configuration card, all 24 labelled fields, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption |
 
-`0.1.5-rc.1`, `0.1.5-rc.2`, `0.1.6`, a hypothetical `0.1.7` final, and every later release are
-**untested with `0.4.0`**. They are not merely unclaimed: the configuration surface this version is
+`0.4.0` is the DSH `0.1.7-rc.2` line and stays that way: its peers are pinned to
+`0.1.7-rc.2`, so DSH `0.2.0-rc.2` refuses to install it, naming the two peers that
+failed. See [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md) for that line and
+[`V0.5.0_COMPAT_REPORT.md`](V0.5.0_COMPAT_REPORT.md) for this one.
+
+`0.1.5-rc.1`, `0.1.5-rc.2`, `0.1.6`, `0.1.7-rc.2` and every other release are
+**untested with `0.5.0`**. They are not merely unclaimed: the configuration surface this version is
 built on (`ctx.configForms`, `plugins.bundle.config`, volatile Config) does not exist in the
 `0.1.5` generation, and the `0.1.5` surface it replaced (`ctx.settings.installSection`,
 `settings.plugin.item`, `ctx.settingsScope`) does not exist in `0.1.7`. The break is bidirectional, so
@@ -26,7 +31,9 @@ there is no shared-support range to advertise and no dual-generation shim in the
 
 The `peerDependencies` ranges are pinned to the validated release for that reason: a range wide
 enough to admit an untested prerelease would be a compatibility claim this repository cannot
-evidence. See [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md).
+evidence. DSH checks exactly those peers — `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` — against its
+own runtime version before it imports a plugin, so a wider range would not merely be optimistic: the
+Host would accept it. See [`V0.5.0_COMPAT_REPORT.md`](V0.5.0_COMPAT_REPORT.md).
 
 **Nodemailer 10.** Phase 6's telemetry release candidate originally retained Nodemailer 7.x; the
 pre-release security review upgraded it to the supported major. Nodemailer supports only its current
@@ -221,7 +228,7 @@ The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so
 package also mounts it.
 
 ```powershell
-dsh plugin --profile web add dsh-mail-notify@0.4.0
+dsh plugin --profile web add dsh-mail-notify@0.5.0
 ```
 
 For development, or on a machine without registry access, install the packed archive instead:
@@ -528,7 +535,7 @@ npm install
 npm run typecheck     # tsc --noEmit, sources and tests
 npm test              # node --test, no network
 npm run build         # tsc -> lib/
-npm pack              # dsh-mail-notify-0.4.0.tgz
+npm pack              # dsh-mail-notify-0.5.0.tgz
 npm run pack:check    # audit the archive's contents
 ```
 
@@ -579,7 +586,7 @@ remove that injection instead.
 | A question call produced no email although the switch is on | Look for `question.unparsable`, which carries `dropReason` and `argumentsReadable` and nothing else — the argument text is deliberately not logged. |
 | No approval email arrived | `notifyApprovals` is `false` by default. Check that the ask actually appended an `approval/asked` audit event: nothing is mailed from `approval/request`, and nothing at all from `approval/decided`. |
 | A Save is refused and says the configuration is invalid | The message names the offending field, e.g. `$.smtpPort expected number <= 65535`. Nothing was written and the running configuration is untouched. Fix the value and Save again. |
-| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is `0.1.7-rc.2`; the card is contributed only while the entry is composed. |
+| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is `0.2.0-rc.2`; the card is contributed only while the entry is composed. |
 | A `settings.yaml` from an older release | DSH `0.1.7` imports its sections into the profile automatically at boot and renames the file to `settings.yaml.imported`. The original is never deleted, and no migration step is needed. See below. |
 
 ### Upgrading from a `0.3.x` install
