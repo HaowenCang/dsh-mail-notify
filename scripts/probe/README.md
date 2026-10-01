@@ -101,7 +101,14 @@
 # It drives real Chrome over the DevTools Protocol (through Node's own
 # `WebSocket`, so it adds no dependency) and asserts what the page rendered. Two
 # constraints are built in, both learned from a retracted conclusion and a
-# misread status code in the v0.4.0 work: the field assertion compares a *key
-# set* rather than a control count, and a commit is judged by the RPC envelope's
-# `ok` field rather than by the HTTP status, because the write path answers 200
-# on refusal too.
+# misread status code in the v0.4.0 work: the field assertion names each
+# expected *display label* — the 23 Config labels plus the separate write-only
+# password Credential label — instead of counting controls, and a commit is
+# judged by the RPC envelope's `ok` field rather than by the HTTP status, because
+# the write path answers 200 on refusal too.
+#
+# Naming the labels is rendering evidence, not a key-set comparison: the list is
+# handwritten page copy, so it cannot notice a Host Config field that nobody
+# added to it. Host/Web Config *key-set* equality is enforced separately, by
+# `tests/client/config-surface.test.ts` PAR-01 in the unit suite, which derives
+# the Host side from `Config.toJSON()`.

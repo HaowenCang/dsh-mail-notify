@@ -13,14 +13,24 @@
  * This probe drives **real Chrome** over the DevTools Protocol, against a real
  * `dsh web` instance the caller has already booted. It asserts what the page
  * actually rendered: the plugin is listed as installed at the version under
- * test, exactly one `section[data-plugin-config]` exists, every configuration
- * field the Host serves has a labelled control, a Save commits, and *Send test
- * email* delivers a message the loopback sink receives.
+ * test, exactly one `section[data-plugin-config]` exists, all 23 expected Config
+ * controls carry their rendered labels beside the separate write-only password
+ * Credential control, a Save commits, and *Send test email* delivers a message
+ * the loopback sink receives.
  *
- * It deliberately asserts a **key set** rather than a control count. A count
- * cannot distinguish "all fields rendered" from "one field went missing and two
- * unrelated controls appeared", and the v0.4.0 report had to retract a
- * conclusion drawn from exactly such a tally.
+ * It asserts an explicit list of **expected display labels**, not a bare control
+ * count. A count cannot distinguish "the expected controls rendered" from "one
+ * went missing and two unrelated controls appeared", and the v0.4.0 report had
+ * to retract a conclusion drawn from exactly such a tally.
+ *
+ * That list is evidence about **rendering only**. It is handwritten page copy
+ * matched against the rendered `<label>` text, so it would keep passing if the
+ * Host schema gained a field nobody added here: it is not a Host-derived key set
+ * and must not be described as one. The complementary invariant — Host Config
+ * keys == Web `ALL_FIELDS` keys, in both directions — is enforced by the unit
+ * suite at `tests/client/config-surface.test.ts` PAR-01, which derives the Host
+ * side from `Config.toJSON()`. Neither check substitutes for the other, and
+ * neither one alone closes the "a field was added and the card omits it" gap.
  *
  * ## Isolation
  *
@@ -65,8 +75,15 @@ if (!existsSync(chromePath)) {
 mkdirSync(outDir, { recursive: true })
 mkdirSync(chromeData, { recursive: true })
 
-/** Every field the Host's describe mirror is expected to serve for this plugin. */
-const EXPECTED_FIELDS = [
+/**
+ * The 23 Config controls the expanded card is expected to render, by their
+ * rendered English display labels.
+ *
+ * These are the card's *own* labels, not Host Config keys and not a set derived
+ * from the Host's describe mirror: the assertion below only asks whether each of
+ * these strings appears as the start of a rendered `<label>`.
+ */
+const EXPECTED_CONFIG_FIELD_LABELS = [
   'Questions requiring input',
   'Approval requests',
   'Enable mail notifications',
@@ -81,7 +98,6 @@ const EXPECTED_FIELDS = [
   'Username',
   'From',
   'Recipients',
-  'Set password',
   'Credential reference',
   'Include metadata',
   'Include user prompt',
@@ -92,6 +108,18 @@ const EXPECTED_FIELDS = [
   'Retry base delay',
   'Dedupe cache size',
 ]
+
+/**
+ * The one write-only password Credential control the expanded card is expected
+ * to render.
+ *
+ * `smtpPasswordSecret` is a Credential **value** written through the
+ * `credentials` domain, not a Config field, so it is a separate class of
+ * expected label and is never counted as a 24th Config control. The Config
+ * *reference* name — `smtpPasswordCredential` — is one of the 23 above and
+ * renders as `Credential reference`.
+ */
+const EXPECTED_CREDENTIAL_CONTROL_LABELS = ['Set password']
 
 /** The receipt file the loopback sink appends to, one line per accepted message. */
 const receiptsPath = join(outDir, 'browser-smtp.json')
@@ -291,13 +319,34 @@ const card = await evaluate(`(() => ({
 }))()`)
 check('exactly one configuration card exists', card?.sections === 1, `count=${String(card?.sections)}`)
 
-const missing = EXPECTED_FIELDS.filter(
-  (field) => !(card?.labels ?? []).some((label) => label.startsWith(field)),
+// Two separately evaluated claims, because they are two different things: all
+// 23 expected Config controls rendered their labels, and the one expected
+// write-only Credential control rendered its label. The Config claim is never
+// derived from the total: 24 labelled controls could equally be 22 + 2, which is
+// the exact shape of the v0.4.0 defect this harness exists to catch.
+//
+// Both claims are reported through one recorded assertion so the probe's
+// assertion count — and therefore the 26/26 result already recorded for this
+// harness — stays comparable across this terminology correction.
+const renderedLabels = card?.labels ?? []
+const missingConfigLabels = EXPECTED_CONFIG_FIELD_LABELS.filter(
+  (field) => !renderedLabels.some((label) => label.startsWith(field)),
 )
+const missingCredentialLabels = EXPECTED_CREDENTIAL_CONTROL_LABELS.filter(
+  (control) => !renderedLabels.some((label) => label.startsWith(control)),
+)
+const labelsOk = missingConfigLabels.length === 0 && missingCredentialLabels.length === 0
 check(
-  'every configuration field has a labelled control',
-  missing.length === 0,
-  missing.length === 0 ? `${EXPECTED_FIELDS.length}/${EXPECTED_FIELDS.length}` : `missing: ${missing.join(', ')}`,
+  'all 23 expected Config controls have labelled browser controls, and the 1 expected write-only password Credential control is present',
+  labelsOk,
+  labelsOk
+    ? `config ${EXPECTED_CONFIG_FIELD_LABELS.length}/${EXPECTED_CONFIG_FIELD_LABELS.length}, credential ${EXPECTED_CREDENTIAL_CONTROL_LABELS.length}/${EXPECTED_CREDENTIAL_CONTROL_LABELS.length}`
+    : [
+        missingConfigLabels.length === 0 ? '' : `missing Config labels: ${missingConfigLabels.join(', ')}`,
+        missingCredentialLabels.length === 0 ? '' : `missing Credential labels: ${missingCredentialLabels.join(', ')}`,
+      ]
+        .filter((part) => part !== '')
+        .join('; '),
 )
 
 /**
