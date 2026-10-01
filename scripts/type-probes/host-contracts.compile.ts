@@ -307,12 +307,20 @@ export function sessionEventPayloadsAreIntact(): void {
  * The message-source kinds prompt attribution is decided by are published.
  *
  * Two facts matter and both are properties of the target's own tables rather
- * than of this plugin's care. `MessageSourceMap['user']` is the *only* kind that
- * may populate the ordinary user-prompt field, and DSH 0.2 adds
- * `'user-question-reply'` for a late answer to a timed `ask_user_question` — a
- * user-role message that must never be read as the operator's own prompt. An
- * absent augmentation would make that guarantee unstateable, which is why the
- * kind is named here.
+ * than of this plugin's care.
+ *
+ * The first is that the discriminator is the `kind` **value**, not the member
+ * name. Two members carry `kind: 'user'` — `user`, the queued prompt a terminal
+ * session claims for its turn, and `user-rpc`, the browser's prompt with its
+ * correlation id — and both are the operator's own words, so a reader that
+ * matched on the member name would drop every prompt typed in the Web UI. The
+ * plugin matches on the value, which is what makes both admissible and what
+ * makes every injected-context kind inadmissible.
+ *
+ * The second is that DSH 0.2 adds `'user-question-reply'` for a late answer to
+ * a timed `ask_user_question` — a user-role message that must never be read as
+ * the operator's own prompt. An absent augmentation would make that guarantee
+ * unstateable, which is why the kind is named here.
  */
 export function userMessageSourceKindsArePublished(): void {
   const direct: MessageSourceMap['user'] = { kind: 'user' }
@@ -323,6 +331,14 @@ export function userMessageSourceKindsArePublished(): void {
   }
   const replyOutcome: MessageSourceMap['user-question-reply']['outcome'] = 'answered'
   void [direct, lateReply, replyOutcome]
+
+  // The second member whose kind value is `'user'` — `user-rpc`, the browser's
+  // prompt with its correlation id — is declared by `dsh-api-session-controller`,
+  // which this checkout does not depend on. The fact is therefore stated in the
+  // comment above from the installed 0.2.0-rc.2 typings rather than asserted
+  // here; importing a package this plugin otherwise never touches, purely to
+  // name one member, would make the probe's dependency list claim more than the
+  // plugin uses.
 
   // The `user/message` payload *is* the message: the adapter's resolver accepts a
   // wrapper as a fallback, and these are the fields it treats as the direct form.
