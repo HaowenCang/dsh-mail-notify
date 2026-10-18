@@ -6,7 +6,7 @@
    * `noEmit` on purpose: the client bundle is produced by tsdown, which applies
    * the lazy-CJS envelope DSH's module loader requires. This program exists to
    * type-check the client sources against the *published* DSH client
-   * declarations — every one of them pinned to an exact `0.1.5-rc.2` release.
+   * declarations — every one of them pinned to an exact `0.2.1-rc.2` release.
    *
    * It is a program of its own rather than a widening of the host program
    * because `ctx.connection` is typed differently by the connection package's

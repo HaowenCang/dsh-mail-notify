@@ -10,19 +10,18 @@
  * therefore how a plugin states, in one auditable place, exactly which DSH
  * contracts it builds on.
  *
- * Every package on this graph is pinned to one exact `0.2.0-rc.2` release in
- * `devDependencies`. The pins matter because the whole `0.2.0-rc.2` client
- * family is published but *not* the `latest` dist-tag of these packages: an
- * unpinned install resolves an older client family into the same program, and
- * the two disagree about `SlotMap` and about the form service. The contract
- * probe in `tests/compatibility/contracts.compile.ts` fails to compile if any
- * contract below is renamed, moved, or withdrawn.
+ * Every package on this graph is pinned to one exact `0.2.1-rc.2` release in
+ * `devDependencies`. The pins matter because an unpinned install can resolve a
+ * different client generation into the same program, and the two can disagree
+ * about `SlotMap` and about the form service. The contract probe in
+ * `tests/compatibility/contracts.compile.ts` fails to compile if any contract
+ * below is renamed, moved, or withdrawn.
  *
  * The imports are type-only, so none of them reaches the emitted bundle: the
  * browser half requires exactly two modules at runtime — `react` and
  * `react/jsx-runtime` — both of which the shell's seed table supplies.
  *
- * ## What changed for DSH 0.1.7, and what did not change for DSH 0.2.0-rc.2
+ * ## What changed for DSH 0.1.7, and what changed again for DSH 0.2.1-rc.2
  *
  * `ctx.settingsScope` and the `settings.plugin.item` slot were removed in
  * `0.1.7-rc.2`. The card reads and writes through `ctx.configForms` — the shared
@@ -32,16 +31,21 @@
  * checked against the installed contract rather than against a local
  * restatement.
  *
- * The `0.2.0-rc.2` migration changed no client contract this module names. The
- * form types, the slots package's `SlotMap`, the connection handle, the locale
- * registry, and the settings-controller Remote are identical to `0.1.7-rc.2`,
- * and the Plugins-page owner props differ only in type-only assembly imports.
- * The `form` prop on `PluginConfigViewProps` is — and already was — optional;
- * this card consequently reads its values from `ctx.configForms.get(...)` rather
- * than from the page's optional owner-supplied form, and the compile probe
- * states both the optionality and the field it does read. What *did* change in
- * `0.2.0-rc.2` is the Host-side session and interaction vocabulary, which the
- * companion probe `scripts/type-probes/host-contracts.compile.ts` asserts.
+ * The `0.2.1-rc.2` migration removed one client contract this module names:
+ * `ConfigFormSnapshot.mode` disappeared together with the client memory
+ * persistence mode. The compile probe keeps the six remaining snapshot fields
+ * pinned and states the removal as a checked `@ts-expect-error`, so a
+ * reintroduction fails the build rather than silently coming back. The rest of
+ * the client surface this module names — the `ConfigForm` types, the slots
+ * package's `SlotMap`, the connection handle, the locale registry, and the
+ * settings-controller Remote — keeps every member this card calls. The `form`
+ * prop on `PluginConfigViewProps` remains optional; this card consequently reads
+ * its values from `ctx.configForms.get(...)` rather than from the page's optional
+ * owner-supplied form, and the compile probe states both the optionality and the
+ * field it does read. What changed on the Host side in `0.2.1-rc.2` — the install
+ * gate, HMR reload, credential read priority — is the companion probe's subject
+ * (`scripts/type-probes/host-contracts.compile.ts`) and is recorded in
+ * `docs/compat/01_CONTRACT_DIFF.md`.
  *
  * @module dsh-mail-notify/client/contracts
  */

@@ -15,7 +15,7 @@
  * Like its companion, this file is never executed. It fails `npm run typecheck`
  * when a host contract this plugin builds on changes shape.
  *
- * ## The DSH 0.2.0-rc.2 generation
+ * ## The DSH 0.2.1-rc.2 generation
  *
  * The sections below the retired-surface checks state the *target's* contracts
  * by name rather than by comment: the session event vocabulary the adapter
@@ -220,7 +220,7 @@ export function retiredBindingIsGone(): void {
   void bindVolatileConfig.bindEffectiveConfig
 }
 
-/* == The exact DSH 0.2.0-rc.2 session vocabulary == */
+/* == The exact DSH 0.2.1-rc.2 session vocabulary == */
 
 /**
  * The target stamps session logs with format version 4.
@@ -335,7 +335,7 @@ export function userMessageSourceKindsArePublished(): void {
   // The second member whose kind value is `'user'` — `user-rpc`, the browser's
   // prompt with its correlation id — is declared by `dsh-api-session-controller`,
   // which this checkout does not depend on. The fact is therefore stated in the
-  // comment above from the installed 0.2.0-rc.2 typings rather than asserted
+  // comment above from the installed 0.2.1-rc.2 typings rather than asserted
   // here; importing a package this plugin otherwise never touches, purely to
   // name one member, would make the probe's dependency list claim more than the
   // plugin uses.

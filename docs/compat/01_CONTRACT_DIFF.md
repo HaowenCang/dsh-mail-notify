@@ -426,3 +426,34 @@ For each required surface, the repo tree was enumerated at both tags and the fil
 | `@deepseek-ai/dsh-session` | 0.2.0-rc.2 | 0.2.1-rc.2 |
 | `@deepseek-ai/dsh-api-remotes` | 0.2.0-rc.2 | 0.2.1-rc.2 |
 | `@deepseek-ai/dsh-plugin-market` | absent | 0.2.1-rc.2 (new) |
+
+---
+
+## Appendix C — Lead reconciliation: the FINAL v0.5.1 declaration
+
+This report was produced while the release declaration was still being decided. Its §10 advisory
+metadata ledger records a then-proposed root `@deepseek-ai/dsh` peer. The **final** `package.json`
+does not include that peer, and this appendix is the authoritative reconciliation; nothing in the
+contract analysis above changes.
+
+Final declaration:
+
+- `engines.dsh: "0.2.1-rc.2"`, exactly. Per the NEW gate
+  (`packages/boot/app-boot/src/plugin-compatibility.ts:55-61`), an own `engines.dsh` decides alone;
+  the DSH-peer check at `:62-73` is the fallback consulted only when no `engines.dsh` is declared.
+- `@deepseek-ai/dsh-credentials` and `@deepseek-ai/dsh-session` peers are exact `0.2.1-rc.2`. They
+  name the service instance the plugin resolves through and the declarations it type-imports; with
+  `engines.dsh` present the gate does not read them, so they are an instance declaration rather than
+  a second compatibility range.
+- **No `@deepseek-ai/dsh` peer is declared**, for three evidenced reasons: (1) the NEW tag's own
+  plugin-authoring guide, `docs/user/develop/basic/publish.md`, designates `engines.dsh` as the
+  host-range declaration and names DSH peer ranges as its fallback only; (2) the plugin imports no
+  host package (see `docs/compat/02_PLUGIN_USAGE_AUDIT.md` §1); (3) npm/pnpm install a root host
+  peer, so declaring it pulls the whole DSH application into a consumer's production dependency
+  tree — in this repository's dev tree it changed the install from 700 to 163 packages and
+  `npm audit --omit=dev` from 8 moderate host-tooling advisories to 0.
+- No dual range is claimed. `engines.dsh` is exact, so `0.2.1-rc.2` accepts and any other runtime
+  refuses. Separately, a `0.2.0-rc.2` host reads no engines rule and applies the peer fallback,
+  which mismatches the 0.2.1 peers — so `0.5.1` is not installable there by its own declaration,
+  and the published `0.5.0` remains the `0.2.0-rc.2` line.
+
