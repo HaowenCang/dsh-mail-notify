@@ -65,6 +65,7 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { boot, loadLayeredEnv, readProfilePatches } from '@deepseek-ai/dsh-app-boot'
+import { packageDirectory } from './probe/dsh-modules.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
@@ -241,33 +242,21 @@ const mailNotifyEntry = join(profileDir, 'mail-notify-probe-entry.mjs')
 /**
  * The shipped file-backed credential provider.
  *
- * `dsh-base` mounts it from inside the launcher's own `node_modules`, which no
- * bare specifier reaches from this checkout, so the probe resolves it by path:
- * the checkout's own tree first, the installation second. Whichever answers, the
- * release is DSH `0.2.0-rc.2`'s.
+ * `dsh-base` mounts it from inside the launcher's modules, which no bare
+ * specifier reaches from this probe, so the probe resolves the package to a
+ * path and mounts that. Two installation layouts occur — hoisted beside the
+ * launcher (through DSH 0.1.5) and nested inside the launcher's own
+ * `node_modules` (from 0.1.7) — and a probe that assumed either layout would
+ * report a missing package, and a missing package reads exactly like a failed
+ * contract. The shared resolver in `scripts/probe/dsh-modules.mjs` exists for
+ * exactly that reason: it resolves through the launcher's own manifest, so the
+ * module mounted here is the release installed as the host under test
+ * (`0.2.1-rc.2`), not a copy from another tree.
  *
  * @returns the absolute path of the module to mount.
  */
 function resolveCredentialsEntry() {
-  const candidates = [
-    join(projectRoot, 'node_modules', '@deepseek-ai', 'dsh-credentials-local', 'lib', 'index.js'),
-    join(
-      process.env['DSH_INSTALL_ROOT'] ?? 'C:\\Users\\20659\\AppData\\Roaming\\npm',
-      'node_modules',
-      '@deepseek-ai',
-      'dsh',
-      'node_modules',
-      '@deepseek-ai',
-      'dsh-credentials-local',
-      'lib',
-      'index.js',
-    ),
-  ]
-  const found = candidates.find((candidate) => existsSync(candidate))
-  if (found === undefined) {
-    throw new Error(`probe-host-config-write: cannot locate @deepseek-ai/dsh-credentials-local; tried ${candidates.join(', ')}`)
-  }
-  return found
+  return join(packageDirectory('dsh-credentials-local'), 'lib', 'index.js')
 }
 writeFileSync(
   patchPath,
