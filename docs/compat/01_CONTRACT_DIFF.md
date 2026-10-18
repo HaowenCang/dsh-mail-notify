@@ -220,6 +220,7 @@ Both `packages/interaction/tool-ask-user/src` and `packages/interaction/user-que
 - Public signatures **unchanged**: `packages/credentials/credentials/src/index.ts:171-209` (same four abstract methods, same parameter/return types); `CredentialInfo` unchanged at `credentials/src/types.ts:67-73`. Event names unchanged; `INVARIANT` rethrow exception removed from the fan-out (`index.ts:259-300` → NEW `:256-297`) and from the service docs, but that is internal error plumbing, not an API change.
 - Provider implementation `credentials-local/src/index.ts`: precedence **inverted** — managed store wins, then inherited env, then dotenv fallbacks (`:1-27`; header table `:6-10`). `resolve()` checks `this.values` first (`:624-633`); `describe()` reports stored `writable: true` first and now also env-sourced refs `writable: true` (`:634-643`); `assertUnshadowed` is gone, so `set`/`unset` no longer refuse env-shadowed references (`:645-659`). Unknown top-level document keys are kept and only warned about (`:176,184,211,228,797,872,883-888`); unversioned root and malformed internals still throw.
 - The remote façade the plugin's browser half uses (`remote.credentials.describe/set/unset` via `@deepseek-ai/dsh-api-settings-controller`) only had comment changes: `packages/api/settings-controller/src/credentials.ts:132-137` and `types.ts:20-30` reword the `credential/rejected` documentation (a provider refusal, e.g. unparsable stored document, is what a settings page shows); method surface unchanged; no source change in the resolved method signatures.
+- **Runtime confirmation (R1, 2026-10-17):** the installed `0.2.1-rc.2` provider was driven in an isolated child process with a synthetic value A in the managed file and a *different* synthetic value B in the inherited environment. `resolve()` returned A with `source: file`; after `unset(A)` it returned B with `source: env`; after `set(C)` it returned C with `source: file`. `describe()` reported `configured: true`, `writable: true` and the expected `source` in each phase. This confirms the NEW order above as behavior, not merely as source. Evidence and the separate PASS records: `V0.5.1_COMPAT_R1_REPORT.md`.
 
 ### 3.3 Semantic change note / CHANGE_CLASS
 
@@ -228,7 +229,7 @@ CHANGE_CLASS: **compatible** (public API), with an observable behavior change:
 2. `describe().writable` is now true for env-sourced refs; the plugin's card renders the secret field disabled when `!writable` (`src/client/controller.ts:511-526`, `src/client/Card.tsx:371,378`), so a previously read-only field becomes editable.
 3. Writes that OLD rejected ("supplied read-only by the launching environment") now succeed.
 4. A foreign top-level key in `.credentials.yaml` no longer prevents boot.
-No plugin code change is required for the plugin to keep working; the plugin's credential contract test/doc claims about precedence/read-only env should be reviewed (advisory).
+No plugin code change is required for the plugin to keep working; R1 corrected the plugin's credential-precedence/read-only environment documentation and added a conflict test that distinguishes precedence, fallback and rotation (`V0.5.1_COMPAT_R1_REPORT.md`).
 
 ---
 

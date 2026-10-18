@@ -69,7 +69,7 @@ npm tarball
 
 **服务句柄同样不缓存**：`ctx.get('credentials')` 必须在每次发送尝试内求值。Cordis 的服务发布顺序不保证本插件 `apply()` 运行时 `credentials` 已可用，且此时 `ctx.get()` 返回 `undefined` 而非抛错；在装配期读取一次会把「服务尚未发布」固化为「永久无服务」。
 
-**`.credentials.yaml` 的边界**：DSH file credential provider 的目标是让 secret 不进入普通配置文件与日志，而不是把 secret 保护起来使其对以同一 OS 用户身份运行的所有进程不可见。该文件是明文 YAML，权限取决于文件系统 ACL。**不得**把它描述为对 Agent 或对本机其他进程的密码学安全边界；需要更强隔离时应改用进程环境变量层或操作系统级隔离，而不是依赖该文件。
+**`.credentials.yaml` 的边界**：DSH file credential provider 的目标是让 secret 不进入普通配置文件与日志，而不是把 secret 保护起来使其对以同一 OS 用户身份运行的所有进程不可见。该文件是明文 YAML，权限取决于文件系统 ACL。**不得**把它描述为对 Agent 或对本机其他进程的密码学安全边界；需要更强隔离时应把值只放在进程环境变量层（并确保托管文件中没有同名条目——DSH `0.2.1-rc.2` 中托管文件优先，文件里有值会覆盖环境值），或采用操作系统级隔离，而不是依赖该文件。
 
 **解析失败（`resolve` 返回 `undefined`）**：按永久错误处理——不重试、不发送、写结构化 warning。诊断信息可包含引用名与 `credentials.describe(ref)` 的结果（`configured` / `source` / `writable`），**不得**包含 secret 值。
 

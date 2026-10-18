@@ -86,17 +86,22 @@ claim, and it does not claim any harness release other than `0.2.1-rc.2`.
   not). This was confirmed on the real `0.2.1-rc.2` host during verification. On a stock one-shot
   profile a `CredentialRef` cannot resolve: the plugin refuses to send and reports
   `credential-missing` rather than failing open or sending unauthenticated. The remedy is a profile
-  change documented by the host — restore the three rows per the `dsh-headless` README's Credentials
-  section, or supply the password through the launch environment. Web and desktop profiles keep the
-  credential service and are unaffected. This is a host-behaviour change with a documented remedy,
-  not a plugin defect.
+  change documented by the host: restore the three rows per the `dsh-headless` README's Credentials
+  section. Supplying the SMTP password only through the launch environment does **not** fix this
+  plugin: the host's headless environment fallback serves DSH's own model API-key routes, while this
+  plugin resolves its `smtpPasswordCredential` reference only through the Credential service; with
+  `credentials` disabled there is no service to call. Web and desktop profiles keep the credential
+  service and are unaffected. This is a host-behaviour change with a documented remedy, not a plugin
+  defect.
 
 ### Verification
 
 Recorded on the `0.2.1-rc.2` dependency set:
 
 - `npm run typecheck` — PASS, all three programs, both compatibility compile probes.
-- `npm test` — **575 tests, 575 pass, 0 fail, 0 cancelled, 0 skipped, 0 todo**.
+- `npm test` — **580 tests, 580 pass, 0 fail, 0 cancelled, 0 skipped, 0 todo**, including the
+  isolated credential-conflict test (real `0.2.1-rc.2` provider, file value A vs inherited
+  environment value B; precedence, fallback and rotation asserted separately).
 - `npm run build` — PASS.
 - `npm audit --omit=dev` — 0 vulnerabilities.
 

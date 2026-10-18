@@ -330,9 +330,12 @@ accepted; dashed, path-shaped and digit-leading names rejected; the `CredentialR
 both ways; the document admits the ref in `refs` and rejects a key). The live resolution path was exercised
 against the disposable `.credentials.yaml`: the value is absent from every environment layer, `resolve()`
 returns the exact stored value `source: file`, and `describe()` returns `configured: true, source: file,
-writable: true`. That is the `0.2.1` **file-over-env priority inversion** observed at runtime, and it shows the
-plugin's named-reference resolution still works with no plugin code change. No value is printed, only
-presence/layer/length.
+writable: true`. **Scope:** because the probe deletes the reference from the inherited environment before
+boot, this proves **file-layer read** on the new provider — not that the file outranks a *present* environment
+value. The precedence, fallback and rotation claims are established separately by the R1 conflict test
+(three distinct PASS records in `V0.5.1_COMPAT_R1_REPORT.md`), which leaves a conflicting value in the child's
+environment. The plugin's named-reference resolution still works with no plugin code change. No value is
+printed, only presence/layer/length.
 
 ### 5.7 `user-prompt` — two-turn attribution
 

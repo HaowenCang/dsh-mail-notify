@@ -74,9 +74,13 @@ rows `credentials` / `authorization` / `deepseek-account` at tag `dsh-v0.2.1-rc.
 `0.2.0-rc.2` did not carry). On a stock one-shot profile a `CredentialRef` therefore cannot resolve:
 this plugin's per-send resolution reports `credential-missing` and refuses to send rather than
 falling back to unauthenticated SMTP. The remedy is a profile change documented by the host —
-restore those rows per `packages/bundle/headless/README.md` §Credentials at the tag — or supply the
-password through the launch environment. Web and desktop profiles keep the credential service and are
-unaffected. This is a DSH `0.2.1-rc.2` host-behaviour change, not a plugin defect.
+restore those rows per `packages/bundle/headless/README.md` §Credentials at the tag. Supplying the
+password only through the launch environment is **not** a substitute: that headless environment
+fallback resolves DSH's own model API-key routes, while this plugin resolves
+`smtpPasswordCredential` exclusively through the Credential service (`ctx.get('credentials')` →
+`resolve()`/`describe()` in `src/credentials.ts`); with `credentials` disabled there is no service
+to resolve against. Web and desktop profiles keep the credential service and are unaffected. This is
+a DSH `0.2.1-rc.2` host-behaviour change, not a plugin defect.
 
 `inject` is deliberately empty. Declaring `credentials` or `timer` there would make them hard
 dependencies, and a profile mounting neither would never activate the plugin at all. Both are read

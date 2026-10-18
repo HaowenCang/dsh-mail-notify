@@ -121,6 +121,8 @@ console.log(`[host-write] disposable home: ${home}`)
 // about the wire rather than about a configuration object.
 // ---------------------------------------------------------------------------
 const received = []
+/** Whether the client attempted SMTP authentication; recorded, never logged with a value. */
+let authAttempted = false
 const smtp = await new Promise((resolvePromise, rejectPromise) => {
   const server = createServer((socket) => {
     let inData = false
@@ -149,7 +151,10 @@ const smtp = await new Promise((resolvePromise, rejectPromise) => {
         const upper = line.toUpperCase()
         if (upper.startsWith('EHLO') || upper.startsWith('HELO')) {
           socket.write('250-host-write.local\r\n250-AUTH PLAIN LOGIN\r\n250-SIZE 10485760\r\n250 8BITMIME\r\n')
-        } else if (upper.startsWith('AUTH')) socket.write('235 2.7.0 Authentication successful\r\n')
+        } else if (upper.startsWith('AUTH')) {
+          authAttempted = true
+          socket.write('235 2.7.0 Authentication successful\r\n')
+        }
         else if (upper.startsWith('MAIL FROM') || upper.startsWith('RCPT TO')) socket.write('250 2.1.0 Ok\r\n')
         else if (upper.startsWith('DATA')) {
           inData = true
@@ -518,6 +523,7 @@ try {
   check('the Test Email path reports a delivery', false, error instanceof Error ? error.message : String(error))
 }
 await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000))
+check('the Test Email authenticated with the resolved credential', authAttempted, authAttempted ? 'AUTH attempted' : 'no AUTH attempt observed')
 check('the loopback SMTP server received the message', received.length > 0, `${received.length} message(s)`)
 
 smtp.server.close()
