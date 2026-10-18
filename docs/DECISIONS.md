@@ -1384,3 +1384,42 @@ v0.4.0 报告 §18 曾撤回一个由「控件计数」得出的结论，§27 �
 - `README.md`、`00_MASTER.md`、[`V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)（新增）。
 - v0.4.0 的 peer 范围与 `v0.4.0` tag 均未改动；未合并、未打标签、未发布。
 
+---
+
+## D023 — v0.5.1 迁移到 DSH `0.2.1-rc.2`：`engines.dsh` 即宿主范围声明，凭据读优先级反转不新增代码分支（2026-10）
+
+### 背景
+
+D022 把 v0.5.0 固定在 DSH `0.2.0-rc.2`。DSH `0.2.1-rc.2`（tag `dsh-v0.2.1-rc.2`，commit `687f282e8625c6b8d11ff58211a90524be2e4317`）发布后，同一份插件必须在目标运行时上重新取得资格。本节只记录**判断**，不记录过程；宿主侧契约 diff 与插件侧用法审计分别是 [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) 与 [`compat/02_PLUGIN_USAGE_AUDIT.md`](compat/02_PLUGIN_USAGE_AUDIT.md)。
+
+### 1. `engines.dsh` 精确值 `0.2.1-rc.2` 是唯一的宿主范围声明
+
+D022 §1 记录的规则——"门禁只读 `peerDependencies`，不读 `engines.dsh`"——在 `0.2.1-rc.2` 上已被门禁本身改写：新的判定先读插件自己的 `engines.dsh`，该字段存在时**只**用它决定准入，`@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的 peer 完全不参与；只有缺失 `engines.dsh` 时才回退到 peer 判定。v0.5.0 没有 `engines.dsh`，其 `dsh-credentials` / `dsh-session` peer 钉在 `0.2.0-rc.2`，因此在 `0.2.1-rc.2` 宿主上沿回退路径被拒——与 v0.4.0 在 `0.2.0-rc.2` 上被拒属同一类事实。
+
+据此：
+
+1. 声明 `engines.dsh: "0.2.1-rc.2"`，**精确值**，不写区间。一个同时容纳 `0.2.0-rc.2` 与 `0.2.1-rc.2` 的范围不会被 Host 拒绝，而会被 Host 接受——这正是危险所在：它把"未经测试的配对"从一次拒装变成一次静默加载。
+2. `dsh-credentials` 与 `dsh-session` 的 peer 仍钉同一精确版本。它们是本插件共享运行实例的两个包：前者是每次发送时解析口令的服务，后者只为声明合并提供类型。`engines.dsh` 存在时门禁不读这两个 peer，因此它们是一条实例声明，不是第二条兼容性范围。
+3. **不声明 `@deepseek-ai/dsh` peer。** 上游 0.2.1 的插件编写指南（`docs/user/develop/basic/publish.md`）把 `engines.dsh` 指定为宿主范围机制、把 DSH peer 仅作回退；本插件运行时不 import 任何宿主包；且根级宿主 peer 会把整个 DSH 宿主应用拖进使用者的生产依赖树。
+4. 不提供双区间；不在 `engines.dsh` 里写 `workspace:` 形式（按门禁语义恒不满足）。
+
+### 2. `ConfigFormSnapshot.mode` 的移除用受检断言固定，而不是删掉契约断言
+
+`0.2.1-rc.2` 连同客户端 memory 持久化一起移除了快照的 `mode` 字段。`tests/compatibility/contracts.compile.ts` 保留对余下六个快照字段的逐一命名，并把这次移除写成带 `@ts-expect-error` 的**受检缺席**：字段若回归，构建失败。直接删掉该断言只会让"少了一个契约"变成沉默，而编译探针的职责正是把宿主契约的变化变成构建期的一句话（D021 的方法论延续）。
+
+### 3. 凭据读取优先级反转：对"按名解析"的插件兼容，但改变哪个值胜出
+
+`0.2.1-rc.2` 的 file-backed provider 把优先级反转为"托管存储 → 继承环境 → dotenv 回退"，且 `describe().writable` 对 env 来源的引用也报 `true`。插件侧不实现优先级、不缓存口令、每次发送尝试调用一次 `resolve(ref)`，因此**无需代码改动**；但同一引用同时存在于多层时，胜出值由宿主决定，不由插件决定。可观察后果有二：网页写入的口令不再必然被环境变量遮蔽；此前只读的 env 引用在卡片上变为可写。证据见 [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) §3。
+
+### 4. 精确钉版策略不变：只声明真正验证过的版本
+
+v0.5.1 只主张 `0.2.1-rc.2`；v0.5.0 仍是 `0.2.0-rc.2` 线，两者互不延伸，也不合并为双区间。devDependencies 随宿主安装树迁到 `0.2.1-rc.2`；`@deepseek-ai/cordis` 4.0.5、`@deepseek-ai/schemastery` 3.18.5 是宿主实际安装的版本。`cordis` / `schemastery` 的 peer 区间（`^4.0.4` / `^3.18.4`）不在 DSH 门禁的判定范围内，且已被新版本满足，故保持不变。
+
+### 影响
+
+- `package.json`：版本 `0.5.1`；新增 `engines.dsh: "0.2.1-rc.2"`；`dsh-credentials` / `dsh-session` peer 精确到 `0.2.1-rc.2`；15 个 `@deepseek-ai/dsh-*` devDependencies 迁到 `0.2.1-rc.2`（`cordis` 4.0.5、`schemastery` 3.18.5）；不新增 `@deepseek-ai/dsh` peer；`package-lock.json` 重新生成，不再含 `0.2.0-rc.2` 条目。
+- `tests/compatibility/contracts.compile.ts`：钉住六个剩余快照字段，`mode` 的移除写成受检 `@ts-expect-error`。
+- `scripts/check-text-integrity.mjs`：把 gitignore 的 `tmp/` 排除出文本门禁，使门禁不依赖上一会话遗留的临时副本。
+- `README.md`、`docs/DSH_INTEGRATION.md`、`RELEASE_NOTES_V0.5.1.md`（新增）：当前目标声明与发布候选说明。
+- v0.5.0 的 peer 声明与 `v0.5.0` 发布物未改动；本版未发布、未打标签。
+

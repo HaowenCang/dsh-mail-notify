@@ -38,8 +38,18 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 /** File extensions treated as text. */
 const EXTENSIONS = ['.md', '.ts', '.js', '.mjs', '.json', '.yml', '.yaml']
 
-/** Directories and artefacts that are generated, vendored, or examined elsewhere. */
-const SKIP_DIRECTORIES = new Set(['node_modules', '.git', 'lib', 'out', 'dist', 'coverage'])
+/**
+ * Directories and artefacts that are generated, vendored, or examined elsewhere.
+ *
+ * `tmp` is listed because `.gitignore` declares the whole directory disposable
+ * scratch: probes and operator diagnostics write there, including byte-for-byte
+ * copies of files this guard is meant to audit at their real locations. A
+ * scratch copy is not a source file, and auditing one would make the gate depend
+ * on whatever a previous session happened to leave behind (the v0.5.1
+ * verification found two such stale copies whose BOMs failed this gate while the
+ * tracked sources were clean).
+ */
+const SKIP_DIRECTORIES = new Set(['node_modules', '.git', 'lib', 'out', 'dist', 'coverage', 'tmp'])
 
 /** Generated archives are binary. */
 const SKIP_EXTENSIONS = new Set(['.tgz', '.gz', '.map'])

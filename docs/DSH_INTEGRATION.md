@@ -9,11 +9,12 @@ Verified against:
 
 | Item | Value |
 | --- | --- |
-| DSH | `0.1.7-rc.2` (the only version verified with `0.4.0`; see [`../V0.4.0_COMPAT_REPORT.md`](../V0.4.0_COMPAT_REPORT.md)) |
-| Cordis | `4.0.4` |
-| Schemastery | `3.18.4` |
+| DSH | `0.2.1-rc.2` (tag `dsh-v0.2.1-rc.2`, commit `687f282e8625c6b8d11ff58211a90524be2e4317`; the only host release `0.5.1` claims) |
+| Host-range declaration | `engines.dsh: "0.2.1-rc.2"` — DSH `0.2.1-rc.2` reads an own `engines.dsh` first and decides on it alone; the `@deepseek-ai/dsh*` peer check is its fallback |
+| Cordis | `4.0.5` |
+| Schemastery | `3.18.5` |
 | Node | `v24.13.0` |
-| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events); v0.4.0 inspection of the exact `0.1.7-rc.2` installed sources plus six real-assembly end-to-end probes, a live-policy probe, and a browser run against a disposable profile |
+| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events); the host contract diff and plugin usage audit for `0.2.1-rc.2` ([`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md), [`compat/02_PLUGIN_USAGE_AUDIT.md`](compat/02_PLUGIN_USAGE_AUDIT.md)); `0.5.1` inspection of the exact `0.2.1-rc.2` installed sources plus the real-assembly, live-policy, Host config-write and browser runs recorded in [`../V0.5.1_COMPAT_REPORT.md`](../V0.5.1_COMPAT_REPORT.md). `0.5.0` remains the DSH `0.2.0-rc.2` line ([`../V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)) |
 
 ## 0. The configuration surface (rewritten for DSH 0.1.7)
 
@@ -30,9 +31,18 @@ which DSH 0.1.7 replaced wholesale and which the plugin's Web card is built on.
 | `ctx.remote.credentials.{describe,set,unset}` (browser) | `@deepseek-ai/dsh-api-settings-controller/remote` | Credential state and write-only password management | Yes, for the card |
 | `connection.fetch.register` | `ctx.connection` through a scoped `ctx.inject(['connection'], …)` | The two `/api` exact routes the card calls: status and delivery test | Yes, for the card |
 
+**Install/compat gate (DSH `0.2.1-rc.2`).** The plugin declares `engines.dsh: "0.2.1-rc.2"` and no
+`@deepseek-ai/dsh` peer. At `0.2.1-rc.2` the gate reads an own `engines.dsh` first and, when it is
+present, decides on it alone; the `@deepseek-ai/dsh*` `peerDependencies` check is the fallback,
+consulted only when no `engines.dsh` is declared. This replaces the previous generation's rule, under
+which only peers were read — the reason the published `0.5.0` (peers `0.2.0-rc.2`, no `engines.dsh`)
+is not admitted by a `0.2.1-rc.2` host. The two shared-instance peers
+(`@deepseek-ai/dsh-credentials`, `@deepseek-ai/dsh-session`) stay pinned to the same exact release.
+See [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) §1.
+
 **Retired and gone from the source:** `ctx.settings.installSection` (0.1.5's namespace
 registration), `ctx.settingsScope` and the `settings.plugin.item` slot (0.1.5's browser half). None
-of them exists in `0.1.7-rc.2`, and `tests/compatibility/contracts.compile.ts` plus
+of them exists in `0.1.7-rc.2` or `0.2.1-rc.2`, and `tests/compatibility/contracts.compile.ts` plus
 `scripts/type-probes/host-contracts.compile.ts` assert their absence so a reintroduction fails a
 build rather than a profile.
 
@@ -48,6 +58,29 @@ build rather than a profile.
 | `ctx.logger(name)` | `ctx.logger('dsh-mail-notify')` | The single structured logging exit | Yes |
 | `ctx.on` | Registration | Listener ownership and disposal with the fiber | Yes |
 | `ctx.effect(fn, label)` | Disposal hook | Releasing the queue and state on unload | Yes |
+
+**Credential read priority (DSH `0.2.1-rc.2`).** The provider's effective-source order is now managed
+store → inherited process environment → dotenv fallbacks, and `describe().writable` is `true` for
+environment-sourced references too. The plugin is priority-agnostic: it resolves one named reference
+per send attempt and treats the provider's answer as authoritative, so no code change was needed —
+but for a reference present in more than one layer, which stored value wins is the host's decision,
+not the plugin's. See [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) §3 and
+[`compat/02_PLUGIN_USAGE_AUDIT.md`](compat/02_PLUGIN_USAGE_AUDIT.md) §1.6.
+
+**One-shot `headless` profiles (DSH `0.2.1-rc.2`).** The shipped `headless` bundle disables the
+managed credential store and its `authorization` / `deepseek-account` consumers for one-shot jobs
+(this was verified on the real `0.2.1-rc.2` host; source: `packages/bundle/headless/cordis.patch.yml`
+rows `credentials` / `authorization` / `deepseek-account` at tag `dsh-v0.2.1-rc.2`, which
+`0.2.0-rc.2` did not carry). On a stock one-shot profile a `CredentialRef` therefore cannot resolve:
+this plugin's per-send resolution reports `credential-missing` and refuses to send rather than
+falling back to unauthenticated SMTP. The remedy is a profile change documented by the host —
+restore those rows per `packages/bundle/headless/README.md` §Credentials at the tag. Supplying the
+password only through the launch environment is **not** a substitute: that headless environment
+fallback resolves DSH's own model API-key routes, while this plugin resolves
+`smtpPasswordCredential` exclusively through the Credential service (`ctx.get('credentials')` →
+`resolve()`/`describe()` in `src/credentials.ts`); with `credentials` disabled there is no service
+to resolve against. Web and desktop profiles keep the credential service and are unaffected. This is
+a DSH `0.2.1-rc.2` host-behaviour change, not a plugin defect.
 
 `inject` is deliberately empty. Declaring `credentials` or `timer` there would make them hard
 dependencies, and a profile mounting neither would never activate the plugin at all. Both are read

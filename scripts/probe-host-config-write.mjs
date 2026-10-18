@@ -65,6 +65,7 @@ import { createServer } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { boot, loadLayeredEnv, readProfilePatches } from '@deepseek-ai/dsh-app-boot'
+import { packageDirectory } from './probe/dsh-modules.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
@@ -120,6 +121,8 @@ console.log(`[host-write] disposable home: ${home}`)
 // about the wire rather than about a configuration object.
 // ---------------------------------------------------------------------------
 const received = []
+/** Whether the client attempted SMTP authentication; recorded, never logged with a value. */
+let authAttempted = false
 const smtp = await new Promise((resolvePromise, rejectPromise) => {
   const server = createServer((socket) => {
     let inData = false
@@ -148,7 +151,10 @@ const smtp = await new Promise((resolvePromise, rejectPromise) => {
         const upper = line.toUpperCase()
         if (upper.startsWith('EHLO') || upper.startsWith('HELO')) {
           socket.write('250-host-write.local\r\n250-AUTH PLAIN LOGIN\r\n250-SIZE 10485760\r\n250 8BITMIME\r\n')
-        } else if (upper.startsWith('AUTH')) socket.write('235 2.7.0 Authentication successful\r\n')
+        } else if (upper.startsWith('AUTH')) {
+          authAttempted = true
+          socket.write('235 2.7.0 Authentication successful\r\n')
+        }
         else if (upper.startsWith('MAIL FROM') || upper.startsWith('RCPT TO')) socket.write('250 2.1.0 Ok\r\n')
         else if (upper.startsWith('DATA')) {
           inData = true
@@ -241,33 +247,21 @@ const mailNotifyEntry = join(profileDir, 'mail-notify-probe-entry.mjs')
 /**
  * The shipped file-backed credential provider.
  *
- * `dsh-base` mounts it from inside the launcher's own `node_modules`, which no
- * bare specifier reaches from this checkout, so the probe resolves it by path:
- * the checkout's own tree first, the installation second. Whichever answers, the
- * release is DSH `0.2.0-rc.2`'s.
+ * `dsh-base` mounts it from inside the launcher's modules, which no bare
+ * specifier reaches from this probe, so the probe resolves the package to a
+ * path and mounts that. Two installation layouts occur — hoisted beside the
+ * launcher (through DSH 0.1.5) and nested inside the launcher's own
+ * `node_modules` (from 0.1.7) — and a probe that assumed either layout would
+ * report a missing package, and a missing package reads exactly like a failed
+ * contract. The shared resolver in `scripts/probe/dsh-modules.mjs` exists for
+ * exactly that reason: it resolves through the launcher's own manifest, so the
+ * module mounted here is the release installed as the host under test
+ * (`0.2.1-rc.2`), not a copy from another tree.
  *
  * @returns the absolute path of the module to mount.
  */
 function resolveCredentialsEntry() {
-  const candidates = [
-    join(projectRoot, 'node_modules', '@deepseek-ai', 'dsh-credentials-local', 'lib', 'index.js'),
-    join(
-      process.env['DSH_INSTALL_ROOT'] ?? 'C:\\Users\\20659\\AppData\\Roaming\\npm',
-      'node_modules',
-      '@deepseek-ai',
-      'dsh',
-      'node_modules',
-      '@deepseek-ai',
-      'dsh-credentials-local',
-      'lib',
-      'index.js',
-    ),
-  ]
-  const found = candidates.find((candidate) => existsSync(candidate))
-  if (found === undefined) {
-    throw new Error(`probe-host-config-write: cannot locate @deepseek-ai/dsh-credentials-local; tried ${candidates.join(', ')}`)
-  }
-  return found
+  return join(packageDirectory('dsh-credentials-local'), 'lib', 'index.js')
 }
 writeFileSync(
   patchPath,
@@ -529,6 +523,7 @@ try {
   check('the Test Email path reports a delivery', false, error instanceof Error ? error.message : String(error))
 }
 await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000))
+check('the Test Email authenticated with the resolved credential', authAttempted, authAttempted ? 'AUTH attempted' : 'no AUTH attempt observed')
 check('the loopback SMTP server received the message', received.length > 0, `${received.length} message(s)`)
 
 smtp.server.close()

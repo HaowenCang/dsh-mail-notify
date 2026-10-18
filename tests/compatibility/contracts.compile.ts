@@ -56,7 +56,7 @@ export function configFormsAreReachable(ctx: ClientContext): void {
   const forms: ConfigForms = ctx.configForms
   const form: ConfigForm<Record<string, unknown>> = forms.get(SETTINGS_NAMESPACE)
   const snapshot: ConfigFormSnapshot<Record<string, unknown>> = form.getSnapshot()
-  // The five snapshot fields the card reads, named individually so a rename is a
+  // The six snapshot fields the card reads, named individually so a rename is a
   // compile error rather than an `undefined` at render time.
   const status: 'loading' | 'ready' | 'unavailable' = snapshot.status
   const value: Record<string, unknown> | undefined = snapshot.value
@@ -64,8 +64,15 @@ export function configFormsAreReachable(ctx: ClientContext): void {
   const user: unknown = snapshot.user
   const revision: number | undefined = snapshot.revision
   const writable: boolean = snapshot.writable
-  const mode: 'host' | 'memory' = snapshot.mode
-  void [form, status, value, base, user, revision, writable, mode]
+  void [form, status, value, base, user, revision, writable]
+
+  // DSH 0.2.1-rc.2 removed the client memory persistence mode together with the
+  // snapshot's `mode`; the removal is therefore stated as a checked fact, in the
+  // same form as the removals this file pins for 0.1.7. The build fails the day
+  // the field comes back, so a reintroduction cannot pass unnoticed.
+  // @ts-expect-error - `mode` is absent from `ConfigFormSnapshot` as of DSH 0.2.1-rc.2
+  const removedMode: 'host' | 'memory' = snapshot.mode
+  void removedMode
 
   // The two write shapes the controller queues: one atomic mutation fenced by a
   // revision, and the per-field writes the card does not use.
