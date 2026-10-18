@@ -49,7 +49,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -196,7 +196,9 @@ const mutateRequestIds = []
 const pluginRequestIds = []
 /** Request ids whose response body this probe still has to read. */
 const bodiesToRead = []
-/** The decoded `settings/mutate` envelopes, in order. */
+/** Request id -> HTTP status for `settings/mutate` responses, for the evidence dump. */
+const mutateHttpStatus = new Map()
+/** The decoded `settings/mutate` envelopes, each paired with its request id. */
 const mutateEnvelopes = []
 /** The decoded plugin-RPC envelopes, in order. */
 const pluginEnvelopes = []
@@ -221,6 +223,9 @@ socket.onmessage = (event) => {
     !bodiesToRead.includes(message.params.requestId)
   ) {
     bodiesToRead.push(message.params.requestId)
+    if (mutateRequestIds.includes(message.params.requestId)) {
+      mutateHttpStatus.set(message.params.requestId, message.params.response.status)
+    }
   }
   if (message.id === undefined) return
   const entry = pending.get(message.id)
@@ -288,13 +293,55 @@ async function clickText(needle, exact = false) {
 
 check('the shell booted', (await evaluate('typeof window.__DSH_BOOT__ !== "undefined"')) === true)
 
-await clickText('Continue')
-await sleep(2500)
+// The 0.2.1-rc.2 first-boot "Preview Notice" modal is acknowledged Host-side,
+// so the runbook-verified recipe is click-then-poll rather than a fixed sleep.
+// The poll is bounded and adds no assertion: the existing 26 are unchanged.
+for (let attempt = 0; attempt < 60; attempt++) {
+  if ((await evaluate(`document.body.innerText.includes('Preview Notice')`)) === false) break
+  await clickText('Continue', true)
+  await sleep(500)
+}
+await sleep(500)
 check('the Plugins page opened', (await clickText('Plugins')) === true)
-await sleep(3500)
-await clickText('Configure later')
+await sleep(4000)
+
+// The Plugins route renders asynchronously on 0.2.1-rc.2; wait for the page
+// shell (or the account panel that the first visit raises) before acting.
+for (let attempt = 0; attempt < 30; attempt++) {
+  const ready = await evaluate(`(() => {
+    const text = document.body.innerText
+    return text.includes('Installed plugins') || text.includes('Get started') || text.includes('Built-in plugin settings')
+  })()`)
+  if (ready === true) break
+  await sleep(500)
+}
+
+// 0.2.1-rc.2 first-Plugins flow: the account "Get started" panel (not present
+// in 0.2.0) is dismissed by its aria-label="Close" control, and 0.2.0's
+// "Configure later" control no longer exists. This is harness flow, not a
+// weakened assertion: the panel must be gone before the row can be clicked.
+const accountPanel = await evaluate(`(() => {
+  const dialog = [...document.querySelectorAll('dialog, [role=dialog]')]
+    .find((element) => (element.innerText || '').includes('Get started'))
+  if (dialog === undefined) return 'absent'
+  const close = [...dialog.querySelectorAll('button')]
+    .find((element) => (element.getAttribute('aria-label') || '') === 'Close')
+  if (close === undefined) return 'no-close-control'
+  close.click()
+  return 'closed'
+})()`)
+if (accountPanel !== 'closed') await clickText('Configure later')
 await sleep(1500)
-check('the installed plugin row was found', (await clickText('dsh-mail-notify', true)) === true)
+
+/** Poll until the installed plugin row has rendered, then click it. */
+async function clickInstalledRow() {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (await clickText('dsh-mail-notify', true)) return true
+    await sleep(500)
+  }
+  return false
+}
+check('the installed plugin row was found', (await clickInstalledRow()) === true)
 await sleep(3500)
 
 const listed = await evaluate(`(() => {
@@ -310,8 +357,36 @@ check('the page does not report a plugin load failure', listed?.failed === false
 check('the plugin is listed as installed', listed?.hasName === true)
 check('the listed version is the candidate version', listed?.hasVersion === true)
 
-check('the configuration card was expanded', (await clickText('Mail notifications')) === true)
-await sleep(2500)
+// On 0.2.1-rc.2 the row may already open the card expanded, in which case
+// clicking its title would collapse it (observed shape: section count 1, zero
+// labels after the click). Read the state first and click only when collapsed.
+const cardBeforeClick = await evaluate(`(() => ({
+  sections: document.querySelectorAll('section[data-plugin-config]').length,
+  labels: document.querySelectorAll('section[data-plugin-config] label').length,
+}))()`)
+const expandedBeforeClick = cardBeforeClick?.sections === 1 && cardBeforeClick?.labels > 0
+const expandClicked = expandedBeforeClick ? false : await clickText('Mail notifications')
+check(
+  'the configuration card was expanded',
+  expandedBeforeClick || expandClicked === true,
+  `alreadyExpanded=${String(expandedBeforeClick)} clicked=${String(expandClicked)}`,
+)
+
+// The expanded card's controls render asynchronously after the detail view
+// mounts; a fixed sleep was observed to sample the card before its `label`
+// elements exist. Poll the exact surface the next assertion reads, and retry
+// the expansion click if the card stayed collapsed. Nothing is weakened: the
+// assertion below still requires the same 23 named Config labels and the one
+// separate write-only Credential label in a single rendered card.
+for (let attempt = 0; attempt < 40; attempt++) {
+  const state = await evaluate(`(() => ({
+    sections: document.querySelectorAll('section[data-plugin-config]').length,
+    labels: [...document.querySelectorAll('label')].length,
+  }))()`)
+  if (state?.sections === 1 && state?.labels > 0) break
+  if (attempt > 0 && attempt % 10 === 0) await clickText('Mail notifications')
+  await sleep(500)
+}
 
 const card = await evaluate(`(() => ({
   sections: document.querySelectorAll('section[data-plugin-config]').length,
@@ -414,6 +489,11 @@ check(
 )
 check('the Save control is enabled once the form is dirty', formState?.saveDisabled === false, `disabled=${String(formState?.saveDisabled)}`)
 
+// On 0.2.1-rc.2 the first boot also commits settings of its own (the Preview
+// Notice acknowledgement, for one), so "some mutate envelope was accepted" is
+// not evidence about *this* Save. Snapshot the request ids seen so far and judge
+// the commit only by envelopes belonging to requests issued after this point.
+const mutateRequestCountAtSave = mutateRequestIds.length
 check('the Save button exists', (await clickText('Save', true)) === true)
 await sleep(5000)
 
@@ -422,16 +502,24 @@ await sleep(5000)
 for (const requestId of bodiesToRead) {
   try {
     const body = await send('Network.getResponseBody', { requestId })
-    mutateEnvelopes.push(JSON.parse(body.body))
+    mutateEnvelopes.push({ requestId, envelope: JSON.parse(body.body) })
   } catch {
-    mutateEnvelopes.push({ unreadable: requestId })
+    mutateEnvelopes.push({ requestId, envelope: { unreadable: requestId } })
   }
 }
-const accepted = mutateEnvelopes.filter((envelope) => envelope?.result?.ok === true)
-const refusals = mutateEnvelopes
+const saveRequestIds = new Set(mutateRequestIds.slice(mutateRequestCountAtSave))
+const saveEnvelopes = mutateEnvelopes
+  .filter((entry) => saveRequestIds.has(entry.requestId))
+  .map((entry) => entry.envelope)
+const accepted = saveEnvelopes.filter((envelope) => envelope?.result?.ok === true)
+const refusals = saveEnvelopes
   .filter((envelope) => envelope?.result?.ok === false)
   .map((envelope) => envelope.result.error?.message ?? 'refused')
-check('the Host accepted the commit', accepted.length >= 1, `envelopes=${mutateEnvelopes.length}`)
+check(
+  'the Host accepted the commit',
+  accepted.length >= 1,
+  `save-scoped envelopes=${saveEnvelopes.length} (all mutate requests=${mutateRequestIds.length})`,
+)
 check(
   'no commit was refused by the Host',
   refusals.length === 0,
@@ -476,6 +564,31 @@ check(
 )
 
 check('the page produced no uncaught error or console error', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '))
+
+// Evidence dump: every RPC envelope this run observed, so a report can cite the
+// Host's own words and HTTP statuses instead of the rendered status line. The
+// assertions above never read this file; it exists for the audit trail.
+try {
+  writeFileSync(
+    join(outDir, 'rpc-envelopes.json'),
+    JSON.stringify(
+      {
+        mutate: mutateEnvelopes.map((entry) => ({
+          requestId: entry.requestId,
+          httpStatus: mutateHttpStatus.get(entry.requestId) ?? null,
+          saveScoped: saveRequestIds.has(entry.requestId),
+          envelope: entry.envelope,
+        })),
+        plugin: pluginEnvelopes,
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+} catch {
+  // A failed dump does not change any result.
+}
 
 socket.close()
 chrome.kill()
