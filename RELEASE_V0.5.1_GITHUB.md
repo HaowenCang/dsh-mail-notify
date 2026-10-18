@@ -149,8 +149,9 @@ frozen archive:
 | SHA-256 | `82B8A99F31EA158FF5EC4E4C8E97367BF3EA5F43CEF7DE0668F3864AD5E54FA5` | same | same | same | PASS |
 | SHA-1 | `0A8E00BCC1DF9E8835A6104BD03EEB0B9182AF1B` | same | same | same | PASS |
 
-The original frozen archive was not overwritten. The two downloads were taken after the release was
-published (and after the release-notes body was finalized); bytes are identical in all three copies.
+The original frozen archive was not overwritten. Both downloads were taken after the release was
+published; the second was taken after the release-notes body was finalized. Bytes are identical in
+all three copies.
 
 ## 8. `v0.5.0` historical invariance
 
@@ -206,13 +207,14 @@ release notes are the recorded development-phase results, not results produced d
 
 ## 11. Post-release documentation
 
-`RELEASE_BODY_V0.5.1.md` and this report are added by a post-release documentation commit on
-`main`, after the GitHub Release was created and verified. That commit:
+`RELEASE_BODY_V0.5.1.md` and this report are added by post-release documentation commits on
+`main`, after the GitHub Release was created and verified (the initial commit, then a correction
+to this report's download-timing sentence). Those commits:
 
-- is **not** part of `RELEASE_SOURCE` (`103cdb90b8cd93196c5288f52d8163e499bc4dc5`);
-- does **not** move tag `v0.5.1` (tag object `679ef593d5c3e080281a578f012052c37c44e93a`, peeled
+- are **not** part of `RELEASE_SOURCE` (`103cdb90b8cd93196c5288f52d8163e499bc4dc5`);
+- do **not** move tag `v0.5.1` (tag object `679ef593d5c3e080281a578f012052c37c44e93a`, peeled
   target unchanged);
-- does not alter the Release or its asset.
+- do not alter the Release or its asset.
 
 ## 12. Handoff
 
