@@ -9,12 +9,12 @@ Verified against:
 
 | Item | Value |
 | --- | --- |
-| DSH | `0.2.1-rc.2` (tag `dsh-v0.2.1-rc.2`, commit `687f282e8625c6b8d11ff58211a90524be2e4317`; the only host release `0.5.1` claims) |
-| Host-range declaration | `engines.dsh: "0.2.1-rc.2"` — DSH `0.2.1-rc.2` reads an own `engines.dsh` first and decides on it alone; the `@deepseek-ai/dsh*` peer check is its fallback |
+| DSH | Declared range `>=0.2.1-rc.2 <0.2.2-0`; minimum supported host `0.2.1-rc.2` (tag `dsh-v0.2.1-rc.2`, commit `687f282e8625c6b8d11ff58211a90524be2e4317`). Verified hosts: `0.2.1-rc.2` (`0.5.1` and re-verified by `0.5.2`) and `0.2.1-rc.3` (tag `dsh-v0.2.1-rc.3`, commit `1f81c047fc48fa190a683e469daa699857e9afe8`; `0.5.2` only). `0.2.2` is not supported. Later `0.2.1-*` releases and `0.2.1` final are admitted by the range but untested and not claimed |
+| Host-range declaration | `engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"` — DSH `0.2.1-rc.2` reads an own `engines.dsh` first and decides on it alone; the `@deepseek-ai/dsh*` peer check is its fallback, and both DSH shared-service peers carry the same range |
 | Cordis | `4.0.5` |
 | Schemastery | `3.18.5` |
 | Node | `v24.13.0` |
-| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events); the host contract diff and plugin usage audit for `0.2.1-rc.2` ([`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md), [`compat/02_PLUGIN_USAGE_AUDIT.md`](compat/02_PLUGIN_USAGE_AUDIT.md)); `0.5.1` inspection of the exact `0.2.1-rc.2` installed sources plus the real-assembly, live-policy, Host config-write and browser runs recorded in [`../V0.5.1_COMPAT_REPORT.md`](../V0.5.1_COMPAT_REPORT.md). `0.5.0` remains the DSH `0.2.0-rc.2` line ([`../V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)) |
+| Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events); the host contract diff and plugin usage audit for `0.2.1-rc.2` ([`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md), [`compat/02_PLUGIN_USAGE_AUDIT.md`](compat/02_PLUGIN_USAGE_AUDIT.md)); `0.5.1` inspection of the exact `0.2.1-rc.2` installed sources plus the real-assembly, live-policy, Host config-write and browser runs recorded in [`../V0.5.1_COMPAT_REPORT.md`](../V0.5.1_COMPAT_REPORT.md); `0.5.2`'s `rc.2`→`rc.3` source diff and version-range evidence in [`../../_phase052-compat/analysis/API_DIFF.md`](../../_phase052-compat/analysis/API_DIFF.md) and [`../../_phase052-compat/analysis/SEMVER_MATRIX.md`](../../_phase052-compat/analysis/SEMVER_MATRIX.md), with the runtime record in [`../V0.5.2_COMPAT_AUDIT.md`](../V0.5.2_COMPAT_AUDIT.md). `0.5.0` remains the DSH `0.2.0-rc.2` line ([`../V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)) |
 
 ## 0. The configuration surface (rewritten for DSH 0.1.7)
 
@@ -31,14 +31,22 @@ which DSH 0.1.7 replaced wholesale and which the plugin's Web card is built on.
 | `ctx.remote.credentials.{describe,set,unset}` (browser) | `@deepseek-ai/dsh-api-settings-controller/remote` | Credential state and write-only password management | Yes, for the card |
 | `connection.fetch.register` | `ctx.connection` through a scoped `ctx.inject(['connection'], …)` | The two `/api` exact routes the card calls: status and delivery test | Yes, for the card |
 
-**Install/compat gate (DSH `0.2.1-rc.2`).** The plugin declares `engines.dsh: "0.2.1-rc.2"` and no
-`@deepseek-ai/dsh` peer. At `0.2.1-rc.2` the gate reads an own `engines.dsh` first and, when it is
-present, decides on it alone; the `@deepseek-ai/dsh*` `peerDependencies` check is the fallback,
-consulted only when no `engines.dsh` is declared. This replaces the previous generation's rule, under
-which only peers were read — the reason the published `0.5.0` (peers `0.2.0-rc.2`, no `engines.dsh`)
-is not admitted by a `0.2.1-rc.2` host. The two shared-instance peers
-(`@deepseek-ai/dsh-credentials`, `@deepseek-ai/dsh-session`) stay pinned to the same exact release.
-See [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) §1.
+**Install/compat gate (DSH `0.2.1` line).** The plugin declares
+`engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"` and no
+`@deepseek-ai/dsh` peer. At `0.2.1-rc.2` and `0.2.1-rc.3` the gate reads an own `engines.dsh` first
+and, when it is present, decides on it alone; the `@deepseek-ai/dsh*` `peerDependencies` check is the
+fallback, consulted only when no `engines.dsh` is declared. This replaces the previous generation's
+rule, under which only peers were read — the reason the published `0.5.0` (peers `0.2.0-rc.2`, no
+`engines.dsh`) is not admitted by a `0.2.1-rc.2` host, and the reason `0.5.1`'s exact `0.2.1-rc.2`
+pin is not admitted by a `0.2.1-rc.3` host. The two shared-instance peers
+(`@deepseek-ai/dsh-credentials`, `@deepseek-ai/dsh-session`) carry the same range: with
+`engines.dsh` present they are an instance declaration rather than a second compatibility range, but
+npm ignores `engines.dsh` and resolves the peers. `0.2.2` (and its prereleases) is outside the range
+and is not supported; later `0.2.1-*` releases are admitted by the range without being claimed as
+tested.
+See [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) §1 and, for the rc.3 source identity
+of the gate file and the range matrix, `_phase052-compat/analysis/API_DIFF.md` §7 and
+`_phase052-compat/analysis/SEMVER_MATRIX.md` §1.
 
 **Retired and gone from the source:** `ctx.settings.installSection` (0.1.5's namespace
 registration), `ctx.settingsScope` and the `settings.plugin.item` slot (0.1.5's browser half). None
