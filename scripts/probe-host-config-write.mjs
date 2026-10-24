@@ -168,7 +168,10 @@ const smtp = await new Promise((resolvePromise, rejectPromise) => {
     socket.on('error', () => undefined)
   })
   server.once('error', rejectPromise)
-  server.listen(0, '127.0.0.1', () => resolvePromise({ server, port: server.address().port }))
+  // `PROBE_SMTP_PORT` pins the listener to a caller-reserved port; 0 keeps the
+  // original OS-chosen behaviour.
+  const requestedPort = Number(process.env['PROBE_SMTP_PORT'] ?? '0')
+  server.listen(requestedPort, '127.0.0.1', () => resolvePromise({ server, port: server.address().port }))
 })
 console.log(`[host-write] loopback SMTP on 127.0.0.1:${smtp.port}`)
 

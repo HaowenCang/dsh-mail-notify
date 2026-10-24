@@ -5,48 +5,69 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.5.1`
+- Version: `0.5.2` (release candidate — not published; `0.5.1` is the latest released version)
 - Host plugin plus a browser half: a configuration card on the DSH Plugins page
-- Requires DSH `0.2.1-rc.2`, and Node `^22.19.0 || >=24.0.0`
+- Requires DSH `>=0.2.1-rc.2 <0.2.2-0` (minimum supported host: `0.2.1-rc.2`), and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
 
-**Verified DSH versions.** Each plugin release claims exactly one host release, and neither claim
-extends to any other.
+**Verified DSH versions.** A release's host range states which DSH releases are *admitted*; it is
+not a claim that every admitted release was tested. The table records the hosts a release was
+actually measured against, and those measurements are per host — they are not inherited from a
+range.
 
 | Plugin version | DSH version | Status | Evidence |
 | --- | --- | --- | --- |
+| `0.5.2` (candidate) | `0.2.1-rc.2` and `0.2.1-rc.3`; declared range `>=0.2.1-rc.2 <0.2.2-0` | Verified on both hosts in this phase | Isolated rc.2 and rc.3 hosts: native plugin-manager install with no version exemption, the real-assembly probe matrix, the Host config-write and Test Email path, and a real-browser Web UI run on the rc.3 host. The source-level API diff between the two DSH tags found no host surface used by the plugin changed; the executable bytes are identical to the released `0.5.1` `lib/**`. Full record: [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md). |
 | `0.5.1` | `0.2.1-rc.2` | Verified | Full suite (580 tests, 0 skipped; including an isolated real-provider conflict test that proves file-over-environment precedence, fallback and rotation separately); both compatibility compile probes; the eight real-assembly end-to-end probes; the live-policy and Host config-write probes; the schema/volatile/config-check probes; a real Chrome browser run against an isolated `dsh web` instance covering the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption. Runtime details: see [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) and the R1 correction [`V0.5.1_COMPAT_R1_REPORT.md`](V0.5.1_COMPAT_R1_REPORT.md). |
 | `0.5.0` | `0.2.0-rc.2` | Verified | Full suite (575 tests, 0 skipped); both compatibility compile probes; eight real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract, timed questions with a late answer, two-Turn user-prompt attribution); the live-policy probe; the Host config-write probe; the schema/volatile/config-check probes; real Chrome via the DevTools Protocol against an isolated `dsh web` instance, verifying the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption |
+
+**Release state.** `0.5.1` is the latest released version (GitHub Release `v0.5.1`; its npm
+publication was handed off to the maintainer — see [`RELEASE_V0.5.1_GITHUB.md`](RELEASE_V0.5.1_GITHUB.md)).
+`0.5.2` is a release candidate: nothing in this phase was published, tagged, merged to `main`, or
+released, and the `0.5.2` archive below is the candidate artifact under review.
 
 `0.4.0` is the DSH `0.1.7-rc.2` line and stays that way: its peers are pinned to
 `0.1.7-rc.2`, so DSH `0.2.0-rc.2` refuses to install it, naming the two peers that
 failed. `0.5.0` remains the DSH `0.2.0-rc.2` line: `0.5.1` declares `0.2.1-rc.2`
-only and does not extend that line. See
+only and does not extend that line, while `0.5.2` spans the `0.2.1` line from
+`0.2.1-rc.2` up to but excluding `0.2.2`. See
 [`V0.4.0_COMPAT_REPORT.md`](V0.4.0_COMPAT_REPORT.md) and
 [`V0.5.0_COMPAT_REPORT.md`](V0.5.0_COMPAT_REPORT.md) for those lines, and
 [`docs/compat/01_CONTRACT_DIFF.md`](docs/compat/01_CONTRACT_DIFF.md) for the
-`0.2.0-rc.2` → `0.2.1-rc.2` host contract diff behind this one.
+`0.2.0-rc.2` → `0.2.1-rc.2` host contract diff behind this one. The `0.2.1-rc.2` →
+`0.2.1-rc.3` source diff and the version-range evidence are in
+[`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md).
 
 `0.1.5-rc.1`, `0.1.5-rc.2`, `0.1.6`, `0.1.7-rc.2` and every other release are
-**untested with `0.5.1`**. They are not merely unclaimed: the configuration surface this version is
+**untested with `0.5.x`**. They are not merely unclaimed: the configuration surface this version is
 built on (`ctx.configForms`, `plugins.bundle.config`, volatile Config) does not exist in the
 `0.1.5` generation, and the `0.1.5` surface it replaced (`ctx.settings.installSection`,
 `settings.plugin.item`, `ctx.settingsScope`) does not exist in `0.1.7`. The break is bidirectional, so
 there is no shared-support range to advertise and no dual-generation shim in the source.
 
-The host range is declared exactly, for the same reason: a range wide enough to admit an untested
-prerelease would be a compatibility claim this repository cannot evidence, and DSH would accept it
-rather than refuse the pairing. `0.5.1` declares `engines.dsh: "0.2.1-rc.2"` and no
-`@deepseek-ai/dsh` peer. DSH `0.2.1-rc.2` reads an own `engines.dsh` first and, when it is present,
-decides on it alone; its `@deepseek-ai/dsh*` `peerDependencies` check is the fallback, consulted only
-when no `engines.dsh` is declared. The two shared-instance peers `0.5.1` does declare —
-`@deepseek-ai/dsh-credentials` and `@deepseek-ai/dsh-session` — name the same exact release as the
-service instance the plugin resolves through and the declarations it type-imports; with
-`engines.dsh` present they are an instance declaration, not a second compatibility range. A root
-`@deepseek-ai/dsh` peer is deliberately absent: the plugin imports no host package, and a host-app
-peer would pull the whole DSH application into a consumer's production dependency tree. See
-[`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) and
-[`docs/compat/01_CONTRACT_DIFF.md`](docs/compat/01_CONTRACT_DIFF.md) §1.
+The host range is a **range over the `0.2.1` line, not an exact pin.** `0.5.2` declares
+`engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"`, and the same range on the two shared-instance peers
+`@deepseek-ai/dsh-credentials` and `@deepseek-ai/dsh-session`. The lower bound is the minimum
+supported host, `0.2.1-rc.2`. The upper bound deliberately excludes the next line with a
+prerelease-safe comparator: `<0.2.2-0` rejects every `0.2.2` prerelease and `0.2.2` itself, so
+**`0.2.2` is not supported.** DSH `0.2.1-rc.2` reads an own `engines.dsh` first and, when it is
+present, decides on it alone; its `@deepseek-ai/dsh*` `peerDependencies` check is the fallback,
+consulted only when no `engines.dsh` is declared. With `engines.dsh` present the two peers are an
+instance declaration, not a second compatibility range — but they carry the same range because npm
+ignores `engines.dsh` entirely and resolves the peers. A root `@deepseek-ai/dsh` peer is
+deliberately absent: the plugin imports no host package, and a host-app peer would pull the whole
+DSH application into a consumer's production dependency tree.
+
+The range also admits later `0.2.1-*` releases and `0.2.1` final **without publishing a new plugin
+version.** Admitting a host is **not** a claim that it was tested: the hosts this phase actually
+measured are `0.2.1-rc.2` and `0.2.1-rc.3`, while `0.2.1-rc.4` and `0.2.1` final are admitted but
+untested and are not claimed. `0.5.1` pinned the exact string `0.2.1-rc.2`; that policy cannot be
+kept for a release that must admit `0.2.1-rc.3` — the version matrix evaluates the exact pin as a
+DSH-gate REJECT on `0.2.1-rc.3`, and npm returns `ERESOLVE` to a consumer installing that pin on
+`0.2.1-rc.3`. See [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md) for the version matrix and the
+resolution evidence, [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) for the previous exact-pin
+record, and [`docs/compat/01_CONTRACT_DIFF.md`](docs/compat/01_CONTRACT_DIFF.md) §1 for the gate
+rule itself.
 
 **Nodemailer 10.** Phase 6's telemetry release candidate originally retained Nodemailer 7.x; the
 pre-release security review upgraded it to the supported major. Nodemailer supports only its current
@@ -241,8 +262,11 @@ The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so
 package also mounts it.
 
 ```powershell
-dsh plugin --profile web add dsh-mail-notify@0.5.1
+dsh plugin --profile web add dsh-mail-notify@0.5.2
 ```
+
+`0.5.2` is a release candidate and is not published yet, so that registry command becomes usable
+only once the release is published. Until then install the packed archive shown below.
 
 **One-shot `headless` profiles on DSH `0.2.1-rc.2`.** The shipped `headless` bundle now disables the
 managed credential store for one-shot jobs — `credentials`, `authorization` and `deepseek-account`
@@ -492,8 +516,8 @@ into a turn is exactly the case the mail exists for, and a turn-length floor wou
 ## Credential
 
 Put the password in one of the layers the DSH Credential service reads, naming it with the value
-you gave `smtpPasswordCredential`. On DSH `0.2.1-rc.2` the provider resolves them in this order, and
-the first place with a non-empty value wins:
+you gave `smtpPasswordCredential`. On DSH `0.2.1-rc.2` (the minimum supported host) the provider
+resolves them in this order, and the first place with a non-empty value wins:
 
 ```text
 $DSH_HOME/.credentials.yaml                   (provider-managed, writable)
@@ -509,7 +533,9 @@ stored value reveals the environment fallback again. `describe()` reports the su
 because a write always lands in the managed store. `resolve()` is consulted inside every send
 attempt; nothing is cached.
 
-**Version note.** This is the DSH `0.2.1-rc.2` order used by `dsh-mail-notify` `0.5.1`. On DSH
+**Version note.** This is the DSH `0.2.1-rc.2` order used by `dsh-mail-notify` `0.5.1`; the
+credential packages are source-identical between `0.2.1-rc.2` and `0.2.1-rc.3`, so the `0.5.2` host
+range does not change it. On DSH
 `0.2.0-rc.2` (`dsh-mail-notify` `0.5.0`) the order was the opposite: the inherited process
 environment won and was read-only, and the managed store was the fallback. That older behavior is
 preserved as history in [`V0.5.0_COMPAT_REPORT.md`](V0.5.0_COMPAT_REPORT.md) and
@@ -575,7 +601,7 @@ npm install
 npm run typecheck     # tsc --noEmit, sources and tests
 npm test              # node --test, no network
 npm run build         # tsc -> lib/
-npm pack              # dsh-mail-notify-0.5.1.tgz
+npm pack              # dsh-mail-notify-0.5.2.tgz
 npm run pack:check    # audit the archive's contents
 ```
 
@@ -626,7 +652,7 @@ remove that injection instead.
 | A question call produced no email although the switch is on | Look for `question.unparsable`, which carries `dropReason` and `argumentsReadable` and nothing else — the argument text is deliberately not logged. |
 | No approval email arrived | `notifyApprovals` is `false` by default. Check that the ask actually appended an `approval/asked` audit event: nothing is mailed from `approval/request`, and nothing at all from `approval/decided`. |
 | A Save is refused and says the configuration is invalid | The message names the offending field, e.g. `$.smtpPort expected number <= 65535`. Nothing was written and the running configuration is untouched. Fix the value and Save again. |
-| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is `0.2.1-rc.2`; the card is contributed only while the entry is composed. |
+| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is inside the declared range `>=0.2.1-rc.2 <0.2.2-0`; the card is contributed only while the entry is composed. |
 | A one-shot `headless` run sends no mail and logs `credential-missing` | DSH `0.2.1-rc.2`'s shipped `headless` bundle disables the managed credential store by design for one-shot jobs, so this plugin's `CredentialRef` cannot resolve. Supplying `DSH_MAIL_SMTP_PASSWORD` only through the launch environment is not a substitute: the host's headless environment fallback covers DSH's own model API-key routes, while this plugin reads the password only through the Credential service. Restore the `credentials` / `authorization` / `deepseek-account` rows (the `dsh-headless` README's Credentials section documents the recipe), or run a profile that keeps the service. The plugin refuses to send rather than failing open; Web and desktop profiles are unaffected. |
 | A `settings.yaml` from an older release | DSH `0.1.7` imports its sections into the profile automatically at boot and renames the file to `settings.yaml.imported`. The original is never deleted, and no migration step is needed. See below. |
 
@@ -723,9 +749,11 @@ is the separate conflict test: it writes a synthetic value A to the managed file
 different synthetic value B in the launching environment of an isolated child process, then asserts
 **precedence** (A wins, `source: file`), **fallback** (removing A reveals B, `source: env`) and
 **rotation** (a new stored value C is seen by the next `resolve()`) as three distinct results against
-the installed `0.2.1-rc.2` provider. It also asserts `describe()`'s `configured`, `source` and
+the installed provider of the host it runs on (`0.2.1-rc.3` in this phase's `0.5.2` dependency set;
+`0.2.1-rc.2` for the `0.5.1` record). It also asserts `describe()`'s `configured`, `source` and
 `writable` values for each phase. See
-[`V0.5.1_COMPAT_R1_REPORT.md`](V0.5.1_COMPAT_R1_REPORT.md).
+[`V0.5.1_COMPAT_R1_REPORT.md`](V0.5.1_COMPAT_R1_REPORT.md) and
+[`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md).
 
 Each scenario enables only the switch it is about; the other two interaction switches stay off, so a
 message can only have come from the family under test. The same switch set is the one the probe

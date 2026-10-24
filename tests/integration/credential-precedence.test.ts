@@ -10,7 +10,8 @@
  * - it spawns a child whose inherited environment carries a different synthetic
  *   value B for the same `CredentialRef`;
  * - the child mounts the **installed** `@deepseek-ai/dsh-credentials-local`
- *   (`0.2.1-rc.2`, the target host's provider) and resolves three times:
+ *   (the exact version declared in `devDependencies`, i.e. the package
+ *   generation the verified target host ships) and resolves three times:
  *   A wins over B (`source: file`), removing A reveals B (`source: env`), and a
  *   new stored value C is seen by the next resolve (`source: file`).
  *
@@ -18,6 +19,13 @@
  * single pass, and each phase also checks `describe()`'s `configured`, `source`
  * and `writable`. The report is scanned to prove no synthetic value was written
  * to it.
+ *
+ * The expected provider version is not a literal. It is derived from the exact
+ * `@deepseek-ai/dsh-*` version declared in `devDependencies` (the compile and
+ * verification baseline), may be overridden with `DSH_COMPAT_EXPECTED_VERSION`
+ * for an ad-hoc probe, and is always required to fall inside the host range the
+ * manifest declares in `engines.dsh`. Moving the baseline therefore moves the
+ * expectation instead of leaving a stale release asserted.
  *
  * @module dsh-mail-notify/tests/integration/credential-precedence
  */
@@ -40,6 +48,116 @@ const projectRoot = resolve(here, '..', '..')
 /** Every writable path this test uses lives below this gitignored root. */
 const scratchRoot = join(projectRoot, 'tmp', 'phase051-r1', 'credential-precedence-tests')
 const childPath = join(projectRoot, 'tests', 'support', 'credential-precedence-child.mjs')
+
+/** The parts of the manifest this test verifies its expectation against. */
+interface Manifest {
+  version: string
+  engines: { dsh?: string }
+  devDependencies: Record<string, string>
+}
+
+/** The manifest as declared in the repository, not as installed. */
+const manifest = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')) as Manifest
+
+/**
+ * The declared compile and verification baseline for the DSH packages.
+ *
+ * Reading it from `devDependencies` rather than restating a literal is what
+ * keeps the expectation from going stale when the baseline moves.
+ */
+const declaredBaselineVersion = manifest.devDependencies['@deepseek-ai/dsh-credentials-local'] ?? ''
+
+/** The one host range the manifest claims support for. */
+const declaredHostRange = manifest.engines.dsh ?? ''
+
+/**
+ * An optional ad-hoc override for probing another installed provider build.
+ *
+ * It does not weaken the check: the version it names is still required to fall
+ * inside `declaredHostRange`, so it cannot be used to assert an unsupported
+ * provider.
+ */
+const versionOverride = process.env['DSH_COMPAT_EXPECTED_VERSION'] ?? ''
+const expectedVersion = versionOverride === '' ? declaredBaselineVersion : versionOverride
+
+/** A parsed `major.minor.patch[-prerelease]` version. */
+interface ParsedVersion {
+  core: [number, number, number]
+  prerelease: string[]
+}
+
+/** Parse the version shape the engine range is written in, rejecting anything else. */
+function parseVersion(version: string): ParsedVersion {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version)
+  if (match === null) throw new Error(`not a supported version literal: ${version}`)
+  return {
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] === undefined ? [] : match[4].split('.'),
+  }
+}
+
+/**
+ * Compare two versions by SemVer 2.0.0 precedence.
+ *
+ * The manifest's range is written in SemVer syntax, so the test has to evaluate
+ * it with the same ordering rules the host gate uses rather than comparing
+ * strings.
+ */
+function compareVersions(left: string, right: string): number {
+  const a = parseVersion(left)
+  const b = parseVersion(right)
+  for (let index = 0; index < a.core.length; index += 1) {
+    const delta = (a.core[index] ?? 0) - (b.core[index] ?? 0)
+    if (delta !== 0) return delta
+  }
+  // A release ranks above any of its prereleases.
+  if (a.prerelease.length === 0 && b.prerelease.length === 0) return 0
+  if (a.prerelease.length === 0) return 1
+  if (b.prerelease.length === 0) return -1
+  const length = Math.max(a.prerelease.length, b.prerelease.length)
+  for (let index = 0; index < length; index += 1) {
+    const x = a.prerelease[index]
+    const y = b.prerelease[index]
+    // A shorter prerelease ranks below a longer one with an equal prefix.
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const xNumeric = /^\d+$/.test(x)
+    const yNumeric = /^\d+$/.test(y)
+    if (xNumeric && yNumeric) {
+      const delta = Number(x) - Number(y)
+      if (delta !== 0) return delta
+      continue
+    }
+    // Numeric identifiers rank below alphanumeric ones.
+    if (xNumeric !== yNumeric) return xNumeric ? -1 : 1
+    if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
+}
+
+/**
+ * Whether `version` satisfies a declared two-sided host range such as
+ * `>=0.2.1-rc.2 <0.2.2-0`.
+ *
+ * The shape is asserted rather than guessed: if the manifest stops expressing
+ * the range as a lower and an upper bound, this fails loudly instead of
+ * silently approving the version.
+ */
+function satisfiesDeclaredRange(version: string, range: string): boolean {
+  const bounds = range.split(' ')
+  const lowerText = bounds[0]
+  const upperText = bounds[1]
+  if (
+    bounds.length !== 2 ||
+    lowerText === undefined ||
+    upperText === undefined ||
+    !lowerText.startsWith('>=') ||
+    !upperText.startsWith('<')
+  ) {
+    throw new Error(`the declared engines.dsh range is not a two-sided bound: ${range}`)
+  }
+  return compareVersions(version, lowerText.slice(2)) >= 0 && compareVersions(version, upperText.slice(1)) < 0
+}
 
 /** One phase as the child records it. */
 interface PhaseReport {
@@ -125,10 +243,35 @@ after(() => {
   rmSync(resolvedCase, { recursive: true, force: true })
 })
 
-describe('credential conflict on the installed 0.2.1 provider', () => {
-  it('ran on the target provider in an isolated child', () => {
-    assert.equal(report.versions.credentialsLocal, '0.2.1-rc.2')
-    assert.equal(report.versions.launchEnvironment, '0.2.1-rc.2')
+describe('credential conflict on the declared target provider', () => {
+  it('declares a derivable expected version inside the declared host range', () => {
+    assert.notEqual(declaredBaselineVersion, '', 'package.json declares no @deepseek-ai/dsh-credentials-local baseline')
+    assert.equal(
+      manifest.devDependencies['@deepseek-ai/dsh-credentials'],
+      declaredBaselineVersion,
+      'the two provider devDependencies must share one exact compile baseline',
+    )
+    assert.equal(
+      manifest.devDependencies['@deepseek-ai/dsh-launch-environment'],
+      declaredBaselineVersion,
+      'the launch-environment devDependency must share the provider compile baseline',
+    )
+    assert.notEqual(declaredHostRange, '', 'package.json declares no engines.dsh range')
+    assert.equal(
+      satisfiesDeclaredRange(declaredBaselineVersion, declaredHostRange),
+      true,
+      `the declared baseline ${declaredBaselineVersion} is outside the declared host range ${declaredHostRange}`,
+    )
+    assert.equal(
+      satisfiesDeclaredRange(expectedVersion, declaredHostRange),
+      true,
+      `the expected version ${expectedVersion} is outside the declared host range ${declaredHostRange}`,
+    )
+  })
+
+  it('ran on the declared target provider in an isolated child', () => {
+    assert.equal(report.versions.credentialsLocal, expectedVersion)
+    assert.equal(report.versions.launchEnvironment, expectedVersion)
     assert.equal(report.dshHomeIsolated, true)
     assert.equal(report.conflictPresent, true, 'the child did not inherit the conflicting environment value')
   })
