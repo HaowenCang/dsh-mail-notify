@@ -5,7 +5,8 @@
  * `DSH_MAIL_SMTP_PASSWORD` B inherited from its parent. The parent has already
  * written a different synthetic value A to `$DSH_HOME/.credentials.yaml`. The
  * child then mounts the **installed** `@deepseek-ai/dsh-credentials-local`
- * provider — the same 0.2.1-rc.2 package the target host ships — and asks it to
+ * provider — the package generation the verified target host ships, at the
+ * exact version the repository declares in `devDependencies` — and asks it to
  * resolve the reference three times:
  *
  * ```text

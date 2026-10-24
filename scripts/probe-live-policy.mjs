@@ -406,7 +406,10 @@ if (!existsSync(archivePath)) {
   process.exit(2)
 }
 
-const smtpPort = await freePort()
+// A caller that reserved a port (the isolation runbook reserves 25101-25199 for
+// loopback SMTP) pins it here; otherwise the OS chooses one, as before.
+const requestedSmtpPort = Number(process.env['PROBE_SMTP_PORT'] ?? '0')
+const smtpPort = requestedSmtpPort === 0 ? await freePort() : requestedSmtpPort
 const smtp = await startSmtp(smtpPort)
 process.stdout.write(`[probe] loopback SMTP listening on 127.0.0.1:${smtpPort}\n`)
 process.stdout.write(`[probe] installing ${archivePath} into the disposable profile\n`)

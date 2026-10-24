@@ -350,7 +350,7 @@ DSH `0.1.7` 的 `UserMessage` 带一个必填的 `source`，其 `kind` 由生产
     includeUserPrompt: false
 ```
 
-`DSH_MAIL_SMTP_PASSWORD` 是**引用名**，且只能是引用名。**不得**写成存储寻址形式 `dsh/mail-smtp-password`：那是凭据 seam 的另一个键空间 `CredentialKey`，寻址 `.credentials.yaml` 的 `records` 段，而 `resolve()` 与 `describe()` 只读 `refs` 段与继承环境，因此该形式的引用永远解析不到（D019）。字段级 `pattern()` 只接受 DSH 的 `CredentialRef` 文法 `^[A-Za-z_][A-Za-z0-9_]*$`。真实 secret 由 DSH Credential 的来源层提供：在 DSH `0.2.1-rc.2` 中顺序为 provider 管理的存储 → 继承的进程环境变量 → `<invocation cwd>/.env` → `$DSH_HOME/.env`（DSH `0.2.0-rc.2` 的顺序相反，进程环境变量优先）；插件在每次发送操作时重新解析，不缓存（D010）。
+`DSH_MAIL_SMTP_PASSWORD` 是**引用名**，且只能是引用名。**不得**写成存储寻址形式 `dsh/mail-smtp-password`：那是凭据 seam 的另一个键空间 `CredentialKey`，寻址 `.credentials.yaml` 的 `records` 段，而 `resolve()` 与 `describe()` 只读 `refs` 段与继承环境，因此该形式的引用永远解析不到（D019）。字段级 `pattern()` 只接受 DSH 的 `CredentialRef` 文法 `^[A-Za-z_][A-Za-z0-9_]*$`。真实 secret 由 DSH Credential 的来源层提供：在 DSH `0.2.1` 的已声明主机范围内（`engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"`，最低支持 `0.2.1-rc.2`；`0.2.2` 不受支持）顺序为 provider 管理的存储 → 继承的进程环境变量 → `<invocation cwd>/.env` → `$DSH_HOME/.env`（DSH `0.2.0-rc.2` 的顺序相反，进程环境变量优先）；插件在每次发送操作时重新解析，不缓存（D010）。
 
 ---
 

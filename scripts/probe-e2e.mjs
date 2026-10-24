@@ -475,7 +475,11 @@ function startSmtp(onMessage) {
 
   return new Promise((resolvePromise, rejectPromise) => {
     server.once('error', rejectPromise)
-    server.listen(0, '127.0.0.1', () => resolvePromise({ server, port: server.address().port }))
+    // `PROBE_SMTP_PORT` pins the listener to a port the caller reserved (the
+    // isolation runbook reserves 25101-25199 for loopback SMTP); 0 keeps the
+    // probe's original OS-chosen behaviour for callers that pin nothing.
+    const requestedPort = Number(process.env['PROBE_SMTP_PORT'] ?? '0')
+    server.listen(requestedPort, '127.0.0.1', () => resolvePromise({ server, port: server.address().port }))
   })
 }
 
