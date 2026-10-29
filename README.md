@@ -5,7 +5,7 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.5.2` (release candidate — not published; `0.5.1` is the latest released version)
+- Version: `0.5.3` (see [release notes](RELEASE_NOTES_V0.5.3.md); npm publication is managed separately)
 - Host plugin plus a browser half: a configuration card on the DSH Plugins page
 - Requires DSH `>=0.2.1-rc.2 <0.2.2-0` (minimum supported host: `0.2.1-rc.2`), and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
@@ -17,14 +17,43 @@ range.
 
 | Plugin version | DSH version | Status | Evidence |
 | --- | --- | --- | --- |
-| `0.5.2` (candidate) | `0.2.1-rc.2` and `0.2.1-rc.3`; declared range `>=0.2.1-rc.2 <0.2.2-0` | Verified on both hosts in this phase | Isolated rc.2 and rc.3 hosts: native plugin-manager install with no version exemption, the real-assembly probe matrix, the Host config-write and Test Email path, and a real-browser Web UI run on the rc.3 host. The source-level API diff between the two DSH tags found no host surface used by the plugin changed; the executable bytes are identical to the released `0.5.1` `lib/**`. Full record: [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md). |
+| `0.5.2` | `0.2.1-rc.2` and `0.2.1-rc.3`; declared range `>=0.2.1-rc.2 <0.2.2-0` | Verified on both hosts in this phase | Isolated rc.2 and rc.3 hosts: native plugin-manager install with no version exemption, the real-assembly probe matrix, the Host config-write and Test Email path, and a real-browser Web UI run on the rc.3 host. The source-level API diff between the two DSH tags found no host surface used by the plugin changed; the executable bytes are identical to the released `0.5.1` `lib/**`. Full record: [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md). |
 | `0.5.1` | `0.2.1-rc.2` | Verified | Full suite (580 tests, 0 skipped; including an isolated real-provider conflict test that proves file-over-environment precedence, fallback and rotation separately); both compatibility compile probes; the eight real-assembly end-to-end probes; the live-policy and Host config-write probes; the schema/volatile/config-check probes; a real Chrome browser run against an isolated `dsh web` instance covering the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption. Runtime details: see [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) and the R1 correction [`V0.5.1_COMPAT_R1_REPORT.md`](V0.5.1_COMPAT_R1_REPORT.md). |
 | `0.5.0` | `0.2.0-rc.2` | Verified | Full suite (575 tests, 0 skipped); both compatibility compile probes; eight real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract, timed questions with a late answer, two-Turn user-prompt attribution); the live-policy probe; the Host config-write probe; the schema/volatile/config-check probes; real Chrome via the DevTools Protocol against an isolated `dsh web` instance, verifying the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption |
 
-**Release state.** `0.5.1` is the latest released version (GitHub Release `v0.5.1`; its npm
-publication was handed off to the maintainer — see [`RELEASE_V0.5.1_GITHUB.md`](RELEASE_V0.5.1_GITHUB.md)).
-`0.5.2` is a release candidate: nothing in this phase was published, tagged, merged to `main`, or
-released, and the `0.5.2` archive below is the candidate artifact under review.
+**Release channels.** Version `0.5.3` ships as a GitHub release archive; npm
+publication is performed separately by the maintainer with interactive 2FA.
+Use the archive installation below until npm publication is verified. The
+compatibility measurements in the table above belong to their named releases
+and do not constitute fresh runtime verification of `0.5.3`. See
+[`V0.5.3_VALIDATION.md`](V0.5.3_VALIDATION.md) for this version's checks and
+[`release/v0.5.3/NPM_PUBLISH.md`](release/v0.5.3/NPM_PUBLISH.md) for publication.
+
+### Mute a workspace or session (v0.5.3)
+
+Expand the plugin's configuration card and use **Muted workspaces** or
+**Muted sessions** (Chinese: **免通知工作区** / **免通知会话**), then Save:
+
+- Workspaces: one absolute path per line, matching the session's recorded
+  workspace directory (`header.cwd`). This suppresses all automatic email for
+  every session with that directory, including future sessions. Windows paths
+  ignore case and normalize slash direction and trailing separators; POSIX
+  paths keep case. Matches are exact directories, without prefix/glob matching.
+- Sessions: one complete, case-sensitive session ID per line. This suppresses
+  all automatic email for that session, regardless of its workspace.
+
+Either list can suppress completion, token-limit, terminal-failure, question and
+approval mail. Empty lists preserve the existing policy. A manual **Send test
+email** is unaffected. No filesystem lookup or symlink resolution is performed;
+unknown workspace metadata cannot match a workspace exclusion.
+
+Use one entry per line: commas and semicolons remain part of a path or ID.
+Enter `[]` to explicitly clear a list, including inherited mutes; leaving it
+blank or clicking Reset restores the composition layer's list. Settings persist
+in the DSH profile. Save uses the plugin's existing configuration-update
+behavior: the runtime is replaced and waiting jobs are discarded; an already
+started send may still finish. Removing a matching entry restores eligibility
+for subsequent events; suppressed events are not replayed.
 
 `0.4.0` is the DSH `0.1.7-rc.2` line and stays that way: its peers are pinned to
 `0.1.7-rc.2`, so DSH `0.2.0-rc.2` refuses to install it, naming the two peers that
@@ -262,11 +291,11 @@ The plugin ships as a DSH bundle: `package.json` declares `dsh.bundle.patch`, so
 package also mounts it.
 
 ```powershell
-dsh plugin --profile web add dsh-mail-notify@0.5.2
+dsh plugin --profile web add ./dsh-mail-notify-0.5.3.tgz
 ```
 
-`0.5.2` is a release candidate and is not published yet, so that registry command becomes usable
-only once the release is published. Until then install the packed archive shown below.
+Download the archive from the GitHub Release, or build and pack it using the
+commands below. Installing the archive does not depend on npm publication.
 
 **One-shot `headless` profiles on DSH `0.2.1-rc.2`.** The shipped `headless` bundle now disables the
 managed credential store for one-shot jobs — `credentials`, `authorization` and `deepseek-account`
@@ -309,8 +338,8 @@ notifications** (邮件通知). Every value in the patch example below can be se
 needs no YAML editing and takes effect without restarting DSH. Your edits are persisted into the
 profile's own `cordis.patch.yml`, which is the only configuration document a plugin has.
 
-The form carries exactly the Host Config's **23 fields** as 23 controls, plus **one separate
-write-only password control**. The password is not a 24th Config field: it is a Credential value
+The form carries exactly the Host Config's **25 fields** as 25 controls, plus **one separate
+write-only password control**. The password is not a 26th Config field: it is a Credential value
 written through the `credentials` domain, and the card's editable field table deliberately excludes
 it, so nothing in the form ever reads it back or resets it as configuration. The field list is not
 maintained by hand on either side — the card's table and the Host schema are compared field for field
@@ -369,19 +398,20 @@ could not see it.
 | --- | --- |
 | Human attention | `notifyQuestions`, `notifyApprovals` — rendered apart because they are the switches that decide whether you learn an agent is blocked |
 | General | `enabled`, `includeSubagents` |
-| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, `minTurnDurationMs` |
+| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, `minTurnDurationMs`, `mutedWorkspaces`, `mutedSessions` |
 | SMTP | `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, `from`, `to` |
 | Credential | `smtpPasswordCredential` (a reference **name**), and the write-only password control |
 | Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter`, `maxBodyChars` |
 | Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
 | Status | live host facts: whether the runtime is mounted, whether the credential reference is configured, the queue depth and counters, and — prominently — the **effective** `notifyQuestions` and `notifyApprovals` values |
 
-The field rows above are the complete set: 23 Config fields, each rendered as exactly one control. The
+The field rows above are the complete set: 25 Config fields, each rendered as exactly one control. The
 two switches that decide whether you learn an agent is blocked — `notifyQuestions` and
 `notifyApprovals` — form the Human attention group and appear nowhere else; the Notifications group
-carries the four turn-level policy fields, `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, and
-`minTurnDurationMs`. The password control is the one extra control on the card and belongs to no Config
-field: it is a write-only Credential control, not a 24th Config field. `minTurnDurationMs` sits in the
+carries four turn-level policy fields (`notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, and
+`minTurnDurationMs`) plus the two scope exclusion lists (`mutedWorkspaces`, `mutedSessions`).
+The password control is the one extra control on the card and belongs to no Config
+field: it is a write-only Credential control, not a 26th Config field. `minTurnDurationMs` sits in the
 Notifications group rather than in the human-attention block, because it applies only to settled Turn
 notifications.
 
@@ -411,7 +441,7 @@ back to the schema defaults.
 
 This remains fully supported, and the two routes are the *same* document: the Web card writes this
 file, so a hand edit and a Save are indistinguishable afterwards, and a hand edit is what a Save will
-show as that field's override. Every key in the example below is one of the 23 the card exposes, so
+show as that field's override. Every key in the example below is one of the 25 the card exposes, so
 the whole document is configurable from the Web UI.
 
 ```yaml
@@ -601,7 +631,7 @@ npm install
 npm run typecheck     # tsc --noEmit, sources and tests
 npm test              # node --test, no network
 npm run build         # tsc -> lib/
-npm pack              # dsh-mail-notify-0.5.2.tgz
+npm pack              # dsh-mail-notify-0.5.3.tgz
 npm run pack:check    # audit the archive's contents
 ```
 
@@ -638,6 +668,7 @@ remove that injection instead.
 | `plugin.config-invalid` | The log payload names every failing field and its reason. `to` and the SMTP fields are the common ones. |
 | `credential-missing` in the log | The reference name in `smtpPasswordCredential` is not configured in any credential layer, or the value is empty. The log line names the reference and its `describe()` state. |
 | `notification.suppressed {"suppressedReason":"no-visible-text"}` | The turn produced no user-visible text. This is the most common reason for "nothing happened", and it is not an error. |
+| `suppressedReason":"workspace-muted"` or `"session-muted"` | The workspace path or session ID matches an exclusion list. Remove the entry and Save to restore notifications. |
 | `suppressedReason":"below-min-duration"` | `minTurnDurationMs` is set above the turn's real duration. |
 | `suppressedReason":"disabled-by-policy"` | The status has no switch, or its switch is off. |
 | `suppressedReason":"subagent-excluded"` | The turn was a subagent turn and `includeSubagents` is false. |

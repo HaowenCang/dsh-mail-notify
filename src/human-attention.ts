@@ -20,6 +20,7 @@
  */
 
 import { sanitizeDetail } from './completion.ts'
+import { scopeSuppression, type NotificationScope } from './notification-scope.ts'
 import type {
   ApprovalNotification,
   QuestionItem,
@@ -340,18 +341,18 @@ export type AttentionDecision =
  * turn-length floor would suppress it. For the same reason there is no
  * visible-text rule — the questions *are* the content.
  *
- * There is no parameter for the notification itself. A question that reached
- * this function has already been parsed into allowlisted fields, and whether it
- * is *worth* sending depends only on configuration and on whether the same call
- * was already notified; accepting the payload would invite a future condition on
- * its content that no rule in this phase authorizes.
+ * Only session identity and workspace participate in the scope gate. No
+ * question text or options are inspected by the policy.
  *
  * @param config - the resolved configuration.
  * @param isDuplicate - whether this call id already produced a job.
+ * @param scope - session identity/workspace for the exclusion lists.
  * @returns the decision; never enqueues and never marks.
  */
-export function decideQuestionNotification(config: ResolvedConfig, isDuplicate: boolean): AttentionDecision {
+export function decideQuestionNotification(config: ResolvedConfig, isDuplicate: boolean, scope?: NotificationScope): AttentionDecision {
   if (!config.enabled) return { notify: false, reason: 'disabled' }
+  const scopeReason = scopeSuppression(scope, config.policy)
+  if (scopeReason !== undefined) return { notify: false, reason: scopeReason }
   if (!config.policy.notifyQuestions) {
     return { notify: false, reason: 'disabled-by-policy', detail: 'notifyQuestions is switched off' }
   }
@@ -364,10 +365,13 @@ export function decideQuestionNotification(config: ResolvedConfig, isDuplicate: 
  *
  * @param config - the resolved configuration.
  * @param isDuplicate - whether this approval id already produced a job.
+ * @param scope - session identity/workspace for the exclusion lists.
  * @returns the decision; never enqueues and never marks.
  */
-export function decideApprovalNotification(config: ResolvedConfig, isDuplicate: boolean): AttentionDecision {
+export function decideApprovalNotification(config: ResolvedConfig, isDuplicate: boolean, scope?: NotificationScope): AttentionDecision {
   if (!config.enabled) return { notify: false, reason: 'disabled' }
+  const scopeReason = scopeSuppression(scope, config.policy)
+  if (scopeReason !== undefined) return { notify: false, reason: scopeReason }
   if (!config.policy.notifyApprovals) {
     return { notify: false, reason: 'disabled-by-policy', detail: 'notifyApprovals is switched off' }
   }

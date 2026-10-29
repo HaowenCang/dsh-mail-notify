@@ -12,6 +12,7 @@
  */
 
 import { policySwitchFor } from './subject.ts'
+import { scopeSuppression } from './notification-scope.ts'
 import type { NotificationCandidate, ResolvedConfig, SuppressionReason } from './types.ts'
 
 /**
@@ -129,7 +130,7 @@ export type NotifyDecision =
 /**
  * Apply the frozen policy order to one candidate.
  *
- * The order is: master switch, subagent scope, status switch, empty visible
+ * The order is: master switch, session/workspace exclusions, status switch, empty visible
  * text, duration floor, duplicate. `aborted`, `blocked`, `interrupted`, and the
  * defensive `unknown` have no enabling switch at all, so they always land on
  * `disabled-by-policy`.
@@ -158,6 +159,9 @@ export function decideNotification(
   isDuplicate: boolean,
 ): NotifyDecision {
   if (!config.enabled) return { notify: false, reason: 'disabled' }
+
+  const scopeReason = scopeSuppression(candidate, config.policy)
+  if (scopeReason !== undefined) return { notify: false, reason: scopeReason }
 
   const statusSwitch = policySwitchFor(candidate.status)
   if (statusSwitch === undefined) {

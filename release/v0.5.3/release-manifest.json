@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "package": "dsh-mail-notify",
+  "version": "0.5.3",
+  "gitTag": "v0.5.3",
+  "registry": "https://registry.npmjs.org/",
+  "distTag": "latest",
+  "npmPublishMode": "maintainer-local-interactive-2fa",
+  "archive": {
+    "file": "dsh-mail-notify-0.5.3.tgz",
+    "bytes": 209019,
+    "sha256": "06c6b24587ed76c8c35217d44f812705db940dfe74865d96d325768166577bad",
+    "integrity": "sha512-wXQnJsJ0EAcRK7x0mfouZRg/kOWVAawTl/2pzMZoJj5IQFmD1YQkL6kNawVR+cfHF1Qh5l7c4/4NBVip9+WTyQ=="
+  },
+  "validation": {
+    "testsPassed": 603,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "browserHostServices": "simulated",
+    "freshFullDshDeployment": false
+  },
+  "githubRelease": "https://github.com/HaowenCang/dsh-mail-notify/releases/tag/v0.5.3"
+}

@@ -83,7 +83,7 @@ export { CREDENTIAL_REF_PATTERN }
 /**
  * The field-level plugin configuration schema.
  *
- * Every field is a volatile scalar with a default, so the schema can resolve a
+ * Every field is a volatile value with a default, so the schema can resolve a
  * completely absent configuration and the form always has a value to render.
  * The defaults are the frozen safe defaults of `docs/CONFIG_SPEC.md §3`.
  */
@@ -124,6 +124,14 @@ const fieldSchema = Schema.object({
     .default(false)
     .volatile()
     .description('Whether subagent turns are notified too.'),
+  mutedWorkspaces: Schema.array(Schema.string().required())
+    .default([])
+    .volatile()
+    .description('Workspace absolute paths whose sessions receive no automatic email notifications. Exact directory match.'),
+  mutedSessions: Schema.array(Schema.string().required())
+    .default([])
+    .volatile()
+    .description('Complete session IDs that receive no automatic email notifications.'),
   notifyCompleted: Schema.boolean().default(true).volatile().description('Notify on completed turns.'),
   notifyErrors: Schema.boolean()
     .default(false)
@@ -227,6 +235,8 @@ export type ConfigValue = ReturnType<typeof Config>
  * without a matching entry here fails to compile.
  */
 export interface ConfigSnapshot {
+  mutedWorkspaces: string[]
+  mutedSessions: string[]
   enabled: boolean
   smtpHost: string
   smtpPort: number
@@ -284,6 +294,8 @@ export function snapshotOf(config: ConfigValue): ConfigSnapshot {
     // downstream may hold a reference into the live configuration.
     to: [...config.to.get()],
     includeSubagents: config.includeSubagents.get(),
+    mutedWorkspaces: [...config.mutedWorkspaces.get()],
+    mutedSessions: [...config.mutedSessions.get()],
     notifyCompleted: config.notifyCompleted.get(),
     notifyErrors: config.notifyErrors.get(),
     notifyMaxTokens: config.notifyMaxTokens.get(),
@@ -422,6 +434,8 @@ export function resolveConfig(raw: RawConfig | ConfigSnapshot | unknown): Config
       to: [...check.recipients],
     },
     policy: {
+      mutedWorkspaces: validated.mutedWorkspaces.map((entry) => entry.trim()).filter(Boolean),
+      mutedSessions: validated.mutedSessions.map((entry) => entry.trim()).filter(Boolean),
       includeSubagents: validated.includeSubagents,
       notifyCompleted: validated.notifyCompleted,
       notifyErrors: validated.notifyErrors,
@@ -477,6 +491,8 @@ function emptyResolved(): ResolvedConfig {
  */
 function disabledPolicy(): ResolvedConfig['policy'] {
   return {
+    mutedWorkspaces: [],
+    mutedSessions: [],
     includeSubagents: false,
     notifyCompleted: true,
     notifyErrors: false,

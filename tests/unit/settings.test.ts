@@ -196,7 +196,7 @@ test('CFG-11 the schema exposes every field the Web card edits', () => {
   // edits is a set of live fields — without carrying a copy of the field list.
   const derived = hostConfigFields()
   assert.deepEqual(derived.map((entry) => entry.field).sort(), [...EDITABLE_FIELDS].sort())
-  assert.equal(derived.length, 23, 'the Host Config declares 23 fields')
+  assert.equal(derived.length, 25, 'the Host Config declares 25 fields')
   for (const { field, volatile } of derived) {
     assert.equal(volatile, true, `${field} is not volatile, so a Web edit could not reach the running plugin without a restart`)
   }

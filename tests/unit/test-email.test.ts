@@ -51,6 +51,14 @@ test('TST-01 the production configuration is addressed through the real delivere
   assert.deepEqual(request.log, { notificationKind: 'test-email' })
 })
 
+test('explicit Test Email remains available while workspace and session exclusions are configured', async () => {
+  const { resolved } = resolveConfig({ ...VALID_RAW_CONFIG, mutedWorkspaces: ['C:\\Muted'], mutedSessions: ['session-muted'] })
+  const { deliver, requests } = recordingDeliverer({ ok: true })
+  const outcome = await sendTestEmail({ deliver, config: resolved, logger: quietLogger() })
+  assert.equal(outcome.delivered, true)
+  assert.equal(requests.length, 1)
+})
+
 test('TST-02 an unusable configuration is refused before the credential is read', async () => {
   const { resolved } = resolveConfig({ ...VALID_RAW_CONFIG, to: [] })
   const { deliver, requests } = recordingDeliverer({ ok: true })

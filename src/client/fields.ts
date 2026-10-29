@@ -25,7 +25,7 @@
 import { en, formatMailText, type MailNotifyLocaleKey } from './locale.ts'
 
 /** How one control converts between its stored value and its draft text. */
-export type FieldKind = 'boolean' | 'natural' | 'text' | 'addresses'
+export type FieldKind = 'boolean' | 'natural' | 'text' | 'addresses' | 'lines'
 
 /** One field of the settings namespace, as the card renders it. */
 export interface FieldDef {
@@ -119,6 +119,18 @@ export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
     max: 3_600_000,
     labelKey: 'labelMinTurnDuration',
     hintKey: 'hintMinTurnDuration',
+  },
+  {
+    field: 'mutedWorkspaces',
+    kind: 'lines',
+    labelKey: 'labelMutedWorkspaces',
+    hintKey: 'hintMutedWorkspaces',
+  },
+  {
+    field: 'mutedSessions',
+    kind: 'lines',
+    labelKey: 'labelMutedSessions',
+    hintKey: 'hintMutedSessions',
   },
 ]
 
@@ -336,6 +348,8 @@ export function formatField(def: FieldDef, value: unknown): string {
       return typeof value === 'string' ? value : ''
     case 'addresses':
       return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string').join(', ') : ''
+    case 'lines':
+      return Array.isArray(value) ? (value.length === 0 ? '[]' : value.filter((entry) => typeof entry === 'string').join('\n')) : ''
   }
 }
 
@@ -379,6 +393,9 @@ export function parseField(def: FieldDef, text: string): ParsedField {
 
     case 'text':
       return { kind: 'value', value: trimmed }
+
+    case 'lines':
+      return { kind: 'value', value: trimmed === '[]' ? [] : trimmed.split(/\r?\n|\r/).map((entry) => entry.trim()).filter(Boolean) }
 
     case 'addresses': {
       const addresses = trimmed
