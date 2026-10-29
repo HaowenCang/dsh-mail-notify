@@ -316,5 +316,5 @@ test('the volatile tree survives collapsing into primitives', () => {
   const collapsed = collapseVolatile(Config({ ...VALID_RAW_CONFIG } as never)) as Record<string, unknown>
   assert.equal(collapsed['enabled'], true)
   assert.deepEqual(collapsed['to'], ['recipient@example.com'])
-  assert.equal(Object.keys(collapsed).length, 23)
+  assert.equal(Object.keys(collapsed).length, 25)
 })

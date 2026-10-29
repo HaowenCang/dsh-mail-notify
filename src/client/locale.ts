@@ -92,6 +92,10 @@ export type MailNotifyLocaleKey =
   | 'hintMaxTokens'
   | 'labelMinTurnDuration'
   | 'hintMinTurnDuration'
+  | 'labelMutedWorkspaces'
+  | 'hintMutedWorkspaces'
+  | 'labelMutedSessions'
+  | 'hintMutedSessions'
   | 'labelSmtpHost'
   | 'hintSmtpHost'
   | 'labelSmtpPort'
@@ -258,6 +262,10 @@ export const en: Record<MailNotifyLocaleKey, string> = {
   labelMaxTokens: 'Token-limit termination',
   hintMaxTokens: 'A turn that stopped because it reached the token limit.',
   labelMinTurnDuration: 'Minimum turn duration',
+  labelMutedWorkspaces: 'Muted workspaces',
+  hintMutedWorkspaces: 'One absolute workspace path per line. Exact directory match; suppresses all automatic emails for its sessions. Windows paths ignore case. Enter [] for no mutes; leave blank to inherit.',
+  labelMutedSessions: 'Muted sessions',
+  hintMutedSessions: 'One complete, case-sensitive session ID per line. Suppresses all automatic emails for that session. Enter [] for no mutes; leave blank to inherit. Test Email is unaffected.',
   hintMinTurnDuration:
     'Suppresses settled Turn notifications whose known duration is below this many milliseconds. 0 disables duration filtering, and an unknown duration is never suppressed. Question and approval notifications ignore it.',
   labelSmtpHost: 'SMTP host',
@@ -386,6 +394,10 @@ export const zh: Record<MailNotifyLocaleKey, string> = {
   labelMaxTokens: '达到 Token 上限',
   hintMaxTokens: '因达到 Token 上限而停止的任务。',
   labelMinTurnDuration: '最短任务时长',
+  labelMutedWorkspaces: '免通知工作区',
+  hintMutedWorkspaces: '每行一个工作区绝对路径。精确匹配目录，屏蔽其中会话的全部自动邮件；Windows 路径不区分大小写。输入 [] 表示无免通知项；留空表示继承。',
+  labelMutedSessions: '免通知会话',
+  hintMutedSessions: '每行一个完整会话 ID，区分大小写。屏蔽该会话的全部自动邮件。输入 [] 表示无免通知项；留空表示继承。测试邮件不受影响。',
   hintMinTurnDuration:
     '已知耗时低于该毫秒数的已结算任务通知会被抑制。0 表示不按耗时过滤；耗时未知时不抑制。提问与批准通知不受该项影响。',
   labelSmtpHost: 'SMTP 服务器',

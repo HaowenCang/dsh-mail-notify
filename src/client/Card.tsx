@@ -213,6 +213,16 @@ function FieldControl(props: {
             <option value="true">{t('factOn')}</option>
             <option value="false">{t('factOff')}</option>
           </select>
+        ) : def.kind === 'lines' ? (
+          <textarea
+            style={{ ...INPUT, width: 420, maxWidth: '100%', resize: 'vertical' }}
+            name={def.field}
+            rows={3}
+            value={state.text}
+            disabled={disabled}
+            spellCheck={false}
+            onChange={(event) => { onChange(event.target.value) }}
+          />
         ) : (
           <input
             style={INPUT}

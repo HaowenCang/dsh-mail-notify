@@ -202,6 +202,8 @@ export type TurnEndKind =
 /** Why a candidate was not turned into a queued job. */
 export type SuppressionReason =
   | 'disabled'
+  | 'session-muted'
+  | 'workspace-muted'
   | 'subagent-excluded'
   | 'disabled-by-policy'
   | 'no-visible-text'
@@ -662,6 +664,8 @@ export type MailSink = (job: MailJob) => Promise<SendResult>
  * `ConfigSnapshot`, and the resolved form is {@link ResolvedConfig}.
  */
 export interface RawConfig {
+  mutedWorkspaces?: unknown
+  mutedSessions?: unknown
   enabled?: unknown
   smtpHost?: unknown
   smtpPort?: unknown
@@ -707,6 +711,8 @@ export interface RetryPolicy {
 
 /** Notification policy switches. */
 export interface PolicyConfig {
+  mutedWorkspaces: string[]
+  mutedSessions: string[]
   includeSubagents: boolean
   notifyCompleted: boolean
   notifyErrors: boolean

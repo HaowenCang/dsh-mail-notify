@@ -1,6 +1,6 @@
 {
   "name": "dsh-mail-notify",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "DeepSeek Harness plugin: email a top-level Agent turn's final output, its terminal failures, and its mid-turn human-attention requests over SMTP, configured from the Web UI.",
   "type": "module",
   "main": "lib/index.js",

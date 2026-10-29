@@ -46,10 +46,10 @@ v0.4.0 更换了配置的**载体、编辑面与校验边界**，本节的结论
 
 **可编辑配置文档就是插件自己的 Cordis `Config`。** DSH `0.1.7` 移除了插件注册独立 settings namespace 的整套接缝，改为由 `Config` schema 直接投影出表单（`dsh-settings` 的 `volatileForm` / `projectForm`）。因此：
 
-| 关注点 | v0.4.0 的事实 |
+| 关注点 | 当前配置机制（自 v0.4.0 起） |
 | --- | --- |
 | 可编辑来源 | 本插件导出的 `Config`（`src/config.ts`），不是 `$DSH_HOME/settings.yaml` |
-| 字段数 | **23 个顶层 `.volatile()` 字段**；schema 必须保持扁平，因为 Schemastery 拒绝「volatile 字段位于 volatile 祖先或容器节点之下」 |
+| 字段数 | v0.5.3 为 **25 个顶层 `.volatile()` 字段**，含两个免通知列表；schema 必须保持扁平，因为 Schemastery 拒绝「volatile 字段位于 volatile 祖先或容器节点之下」 |
 | 默认值 | **每个字段都有 schema 默认值**，没有「无默认值」字段：`smtpHost` / `smtpUser` / `from` 为 `''`，`to` 为 `[]`，`smtpPasswordCredential` 为引用名 `DSH_MAIL_SMTP_PASSWORD`。逐字段取值见第 2 节，汇总见第 3 节 |
 | 持久化 | profile 的 `cordis.patch.yml` 中该条目的 `config` 段，由 `dsh-config-editor` 写入 |
 | 浏览器表单 | `ctx.configForms.get(entryId)`；卡片经 `plugins.bundle.config`（key 为包名）注册，并以 `whileServed([entryId], …)` 门控 |
@@ -150,6 +150,18 @@ description, max, min, step, volatile
 | 字段 | 类型 | 默认 | 校验 | 说明 |
 | --- | --- | --- | --- | --- |
 | `includeSubagents` | `boolean` | `false` | — | 为 `true` 时 subagent 的 Turn 也产生通知 |
+| `mutedWorkspaces` | `string[]` | `[]` | 字符串数组 | 免通知工作区的绝对路径，屏蔽匹配工作区全部会话的自动邮件 |
+| `mutedSessions` | `string[]` | `[]` | 字符串数组 | 免通知会话的完整 ID，屏蔽该会话的自动邮件 |
+
+`mutedWorkspaces` 和 `mutedSessions` 任意一项匹配即屏蔽完成、Token 上限、失败、提问和审批通知，
+不入队，也不占用去重键。工作区匹配会话 `header.cwd` 的精确目录，规范化 `.`、`..` 和尾部分隔符；
+Windows 盘符路径与 UNC 路径不区分大小写并兼容两种分隔符，POSIX 路径区分大小写。
+不按目录前缀、通配符、父会话匹配，也不访问文件系统或解析符号链接。工作目录未知时只能按会话 ID 匹配。
+会话 ID 区分大小写；配置条目两侧空白会去除，空白条目忽略。
+
+配置卡中每行一个条目，逗号和分号属于条目内容。输入 `[]` 显式保存空数组，清除继承来的免通知项；
+留空或重置则移除用户层覆盖、恢复继承。保存通过现有配置机制持久化并重建运行实例，等待队列会丢弃，
+已开始的发送可能继续完成。明确点击的测试邮件不绑定工作区或会话，不受这两个列表影响。
 
 `includeSubagents: true` 会使子会话（通常是为父 Agent 消费的中间产物）内容外发，隐私影响见 `SECURITY.md` 第 5 节。
 
@@ -237,6 +249,8 @@ from: ''
 to: []
 
 includeSubagents: false
+mutedWorkspaces: []
+mutedSessions: []
 
 notifyCompleted: true
 notifyErrors: false
@@ -257,7 +271,7 @@ retryBaseDelayMs: 1000
 maxDedupeEntries: 1000
 ```
 
-**schema 级默认值的实际取值（v0.4.0）。** 每个字段都有默认值，因此表单在任何时候都有可渲染的值；第 2 节的表格逐字段列出了这些默认值，本节是它们的汇总：`smtpHost`、`smtpUser`、`from` 的默认值是空串，`to` 的默认值是空数组，**`smtpPasswordCredential` 的默认值是引用名 `DSH_MAIL_SMTP_PASSWORD`**（不是空串：字段级 `pattern()` 不接受空串，而表单必须能保存一份「尚未配置」的文档；该默认值是引用名，绝不是密码）。空串与空数组在 `enabled === true` 时会被产品语义校验拒绝（第 4 节），因此「漏配」表现为一条带字段路径的拒绝信息，而不是一次发送期的意外失败；`enabled === false` 时这四个字段的取值不影响装载。
+**schema 级默认值的实际取值（v0.5.3）。** 每个字段都有默认值，因此表单在任何时候都有可渲染的值；第 2 节的表格逐字段列出了这些默认值，本节是它们的汇总：`smtpHost`、`smtpUser`、`from` 的默认值是空串，`to` 的默认值是空数组，**`smtpPasswordCredential` 的默认值是引用名 `DSH_MAIL_SMTP_PASSWORD`**（不是空串：字段级 `pattern()` 不接受空串，而表单必须能保存一份「尚未配置」的文档；该默认值是引用名，绝不是密码）。空串与空数组在 `enabled === true` 时会被产品语义校验拒绝（第 4 节），因此「漏配」表现为一条带字段路径的拒绝信息，而不是一次发送期的意外失败；`enabled === false` 时这四个字段的取值不影响装载。
 
 五个隐私相关默认值的方向性由 D012 冻结；后两项为 Phase 8 新增，其方向性由 D018 冻结（`notifyErrors` 的语义与 `includeSubagents` 的覆盖面同样由 D018 补充）：
 
@@ -360,6 +374,7 @@ DSH `0.1.7` 的 `UserMessage` 带一个必填的 `source`，其 `kind` 由生产
 | --- | --- | --- |
 | `enabled` | 挂载 + 实时重配置 | 为假时不注册任何通知监听器；由真改假或由假改真都经 `loader/volatile-update` 实时生效，无需重启 |
 | `smtpHost` / `smtpPort` / `smtpSecure` / `smtpUser` / `smtpPasswordCredential` / `from` / `to` | 发送阶段 | 构造 transport 与信封 |
+| `mutedWorkspaces` / `mutedSessions` | 全部自动通知的策略阶段 | 精确匹配即抑制，记录 `workspace-muted` / `session-muted`，不入队、不占用去重键 |
 | `includeSubagents` | 事件处理阶段 | 决定 subagent 是否创建 `TurnState`；Phase 8 起同一判据覆盖全部三个通知族 |
 | `notifyCompleted` / `notifyErrors` / `notifyMaxTokens` | 策略阶段 | 决定终局 Turn 的 `disabled-by-policy` 抑制 |
 | `notifyQuestions` / `notifyApprovals` | 策略阶段（回合中） | 决定 question / approval 通知的 `disabled-by-policy` 抑制；两者彼此独立 |

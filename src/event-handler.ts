@@ -711,7 +711,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
     }
 
     const key = DedupeCache.questionKeyFor(sessionId, event.callId, event.turn, event.step)
-    const decision = decideQuestionNotification(config, dedupe.has(key))
+    const decision = decideQuestionNotification(config, dedupe.has(key), payload)
     if (!decision.notify) {
       noteSuppressed(decision.reason)
       logger.info('notification.suppressed', {
@@ -773,7 +773,7 @@ export function createSessionHandlers(options: EventHandlerOptions): SessionHand
     // deduplicated even when the id was unusable.
     const approvalId = readApprovalId(data) ?? `tool:${notification.toolName}`
     const key = DedupeCache.approvalKeyFor(facts.sessionId, approvalId)
-    const decision = decideApprovalNotification(config, dedupe.has(key))
+    const decision = decideApprovalNotification(config, dedupe.has(key), notification)
     if (!decision.notify) {
       noteSuppressed(decision.reason)
       logger.info('notification.suppressed', {

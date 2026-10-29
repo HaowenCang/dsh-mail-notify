@@ -99,7 +99,7 @@ test('PAR-01 the Web field set equals the Host Config field set, in both directi
   assert.deepEqual([...web].sort(), [...host].sort())
 })
 
-test('PAR-02 the parity comparison is not vacuous, and the expected size is 23', () => {
+test('PAR-02 the parity comparison is not vacuous, and the expected size is 25', () => {
   const host = hostConfigFieldNames()
   const web = webFieldNames(ALL_FIELDS)
 
@@ -108,10 +108,10 @@ test('PAR-02 the parity comparison is not vacuous, and the expected size is 23',
   // shipped schema and card actually have. The number is a second, independent
   // statement about *this* release; the invariant itself remains the key-set
   // equality above, which no count can satisfy on its own.
-  assert.equal(host.length, 23, 'the Host Config declares 23 fields')
-  assert.equal(new Set(host).size, 23)
-  assert.equal(web.length, 23, 'the Web card exposes 23 Config fields')
-  assert.equal(new Set(web).size, 23)
+  assert.equal(host.length, 25, 'the Host Config declares 25 fields')
+  assert.equal(new Set(host).size, 25)
+  assert.equal(web.length, 25, 'the Web card exposes 25 Config fields')
+  assert.equal(new Set(web).size, 25)
 
   // The specific field the omission defect removed. Named here because the
   // count-based smoke proved unable to see it.
@@ -128,7 +128,7 @@ test('PAR-03 every Host field is volatile, so a Web edit reaches the running plu
   assert.deepEqual(notVolatile, [], 'every editable Config field must be volatile')
 })
 
-test('PAR-04 the write-only password is a credential, not a 24th Config field', () => {
+test('PAR-04 the write-only password is a credential, not a 26th Config field', () => {
   // The distinction the previous smoke conflated. `smtpPasswordCredential` is a
   // Config field — a reference *name* — and the card exposes it like any other.
   assert.ok(hostConfigFieldNames().includes(CREDENTIAL_REF_FIELD.field))
@@ -152,17 +152,17 @@ test('PAR-05 the expanded card renders one control per Config field, plus the pa
   assert.deepEqual(missing, [], 'every Config field in the table must render a control')
 
   // The two categories are counted separately. A bare control count is not
-  // evidence of completeness: 23 Config controls and 24 labelled controls with
+  // evidence of completeness: 25 Config controls and 26 labelled controls with
   // the password among them are different statements, and only the first one is
   // about the configuration surface.
   const configControls = [...rendered].filter((name) => config.includes(name))
   const passwordControls = [...rendered].filter((name) => name === 'smtpPasswordSecret')
-  assert.equal(configControls.length, 23, 'exactly 23 Config controls')
+  assert.equal(configControls.length, 25, 'exactly 25 Config controls')
   assert.deepEqual(passwordControls, ['smtpPasswordSecret'], 'exactly one write-only password control')
   assert.equal(mounted.container.querySelectorAll('input[type="password"]').length, 1)
-  assert.equal(configControls.length + passwordControls.length, 24)
+  assert.equal(configControls.length + passwordControls.length, 26)
 
-  // The credential reference control is one of the 23 and is a text field; the
+  // The credential reference control is one of the 25 and is a text field; the
   // password control is the only password input on the card.
   const reference = mounted.field(CREDENTIAL_REF_FIELD.field)
   assert.equal(reference.getAttribute('type'), 'text')
@@ -207,6 +207,36 @@ test('PAR-06 the suppression threshold renders its English and Chinese label and
 })
 
 /* ── Reset coverage ────────────────────────────────────────────────────── */
+
+test('mute lists render bilingually, save arrays, clear an inherited list, and reset overrides', async (t) => {
+  const host = fakeHost()
+  host.base.mutedWorkspaces = ['C:\\Inherited']
+  host.base.mutedSessions = []
+  const { mounted } = await mountedCard(t, host)
+  await click(mounted.toggle())
+  assert.ok(mounted.container.textContent?.includes('Muted workspaces'))
+  assert.ok(mounted.container.textContent?.includes('Muted sessions'))
+  const workspaces = mounted.container.querySelector<HTMLTextAreaElement>('[name="mutedWorkspaces"]')
+  const sessions = mounted.container.querySelector<HTMLTextAreaElement>('[name="mutedSessions"]')
+  assert.ok(workspaces && sessions, 'both lists must be multiline editors')
+  await type(workspaces as unknown as HTMLInputElement, '[]')
+  await type(sessions as unknown as HTMLInputElement, 'session-one\nsession-two')
+  await click(mounted.action('save'))
+  await settle(mounted)
+  assert.deepEqual(host.user.mutedWorkspaces, [], '[] explicitly clears even a composition-layer mute')
+  assert.deepEqual(host.user.mutedSessions, ['session-one', 'session-two'])
+  mounted.seat.setLocale('zh')
+  await settle(mounted)
+  assert.ok(mounted.container.textContent?.includes('免通知工作区'))
+  assert.ok(mounted.container.textContent?.includes('免通知会话'))
+  assert.equal(sessions.value, 'session-one\nsession-two')
+  await click(mounted.action('reset-all'))
+  await click(mounted.action('save'))
+  await settle(mounted)
+  assert.equal(Object.hasOwn(host.user, 'mutedWorkspaces'), false)
+  assert.equal(Object.hasOwn(host.user, 'mutedSessions'), false)
+  assert.deepEqual(host.section.mutedWorkspaces, ['C:\\Inherited'])
+})
 
 test('RST-01 Reset All stages an unset for the suppression threshold override', async (t) => {
   const host = seededHost()

@@ -32,6 +32,18 @@ function field(name: string): FieldDef {
   return found
 }
 
+test('mute list drafts use newlines and preserve punctuation within paths and session IDs', () => {
+  for (const name of ['mutedWorkspaces', 'mutedSessions']) {
+    const def = field(name)
+    assert.equal(def.kind, 'lines')
+    const entries = ['C:\\Work, One; Two', 'session-with,comma;semi']
+    assert.equal(formatField(def, entries), entries.join('\n'))
+    assert.deepEqual(parseField(def, ` ${entries[0]} \r\n\n ${entries[1]} `), { kind: 'value', value: entries })
+    assert.deepEqual(parseField(def, '\n \r\n'), { kind: 'clear' })
+    assert.deepEqual(parseField(def, '[]'), { kind: 'value', value: [] })
+  }
+})
+
 test('FLD-01 the table covers exactly the namespace the host registers', () => {
   // The card edits one settings namespace, and every field that namespace owns
   // must have a control: a field the host accepts but the card cannot reach
