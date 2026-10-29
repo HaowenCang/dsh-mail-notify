@@ -1,0 +1,33 @@
+{
+  "pass": true,
+  "releaseId": 427881233,
+  "url": "https://github.com/HaowenCang/dsh-mail-notify/releases/tag/v0.5.3",
+  "publishedAt": "2026-10-29T13:10:08Z",
+  "assets": [
+    {
+      "name": "dsh-mail-notify-0.5.3.tgz",
+      "bytes": 209019,
+      "sha256": "06c6b24587ed76c8c35217d44f812705db940dfe74865d96d325768166577bad"
+    },
+    {
+      "name": "publish-npm.ps1",
+      "bytes": 2179,
+      "sha256": "4f6b26e43f4119769ba07566d3a612f04f500ce457d142bccb5c5881da9fc78f"
+    },
+    {
+      "name": "release-manifest.json",
+      "bytes": 760,
+      "sha256": "bebf7a2a44c73f7b86f91396ae2d9be73df76ceb28e0f2f606b2cd3c7844faf1"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 262,
+      "sha256": "35369a46176fe40c2d1cf3ea2960075d9e2bbce4f5e22547eb0ba354ce8c57e5"
+    }
+  ],
+  "npm": {
+    "checkedAt": "2026-10-29T13:11:41.472Z",
+    "latest": "0.5.2",
+    "v053Published": false
+  }
+}
