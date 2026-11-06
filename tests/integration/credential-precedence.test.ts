@@ -137,7 +137,7 @@ function compareVersions(left: string, right: string): number {
 
 /**
  * Whether `version` satisfies a declared two-sided host range such as
- * `>=0.2.1-rc.2 <0.2.2-0`.
+ * `>=0.2.1-rc.3 <0.2.2`.
  *
  * The shape is asserted rather than guessed: if the manifest stops expressing
  * the range as a lower and an upper bound, this fails loudly instead of
