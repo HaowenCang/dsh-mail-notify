@@ -15,10 +15,11 @@ packages. Native plugin-manager install with no version exemption and **8/8
 end-to-end probes passed on both `0.2.1-rc.3` and `0.2.2-rc.1`**. Not re-run:
 real-browser Web UI and real SMTP delivery. Other admitted hosts are untested.
 
-**npm publication is pending the maintainer's local interactive 2FA step.**
-Download the attached archive for installation until the registry is verified.
+**Published on npm** as `dsh-mail-notify@0.5.4` (`latest`). The registry
+archive is byte-identical to the attached one (integrity
+`sha512-A9tuZjLEGJBfA/z63k/GCuO+6KtgFybF1yehGp4uNb2YdZZNezZwwJ6fPWQMMeWct2XbOA26yPAHSYkPKGkkZA==`).
 The attached `publish-npm.ps1`, `release-manifest.json`, and `SHA256SUMS.txt`
-support publishing exactly the same archive locally.
+are the files used to validate and publish that archive.
 
 - [Release notes](https://github.com/HaowenCang/dsh-mail-notify/blob/v0.5.4/RELEASE_NOTES_V0.5.4.md)
 - [Compatibility validation and limits](https://github.com/HaowenCang/dsh-mail-notify/blob/v0.5.4/V0.5.4_COMPAT_VALIDATION.md)
