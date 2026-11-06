@@ -5,9 +5,9 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.5.3` (see [release notes](RELEASE_NOTES_V0.5.3.md); npm publication is managed separately)
+- Version: `0.5.4` (see [release notes](RELEASE_NOTES_V0.5.4.md); npm publication is managed separately)
 - Host plugin plus a browser half: a configuration card on the DSH Plugins page
-- Requires DSH `>=0.2.1-rc.2 <0.2.2-0` (minimum supported host: `0.2.1-rc.2`), and Node `^22.19.0 || >=24.0.0`
+- Requires DSH `>=0.2.1-rc.3 <0.2.2` (minimum supported host: `0.2.1-rc.3`), and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
 
 **Verified DSH versions.** A release's host range states which DSH releases are *admitted*; it is
@@ -17,17 +17,20 @@ range.
 
 | Plugin version | DSH version | Status | Evidence |
 | --- | --- | --- | --- |
+| `0.5.4` | `0.2.1-rc.3` and `0.2.2-rc.1`; declared range `>=0.2.1-rc.3 <0.2.2` | Verified on both hosts | Isolated rc.3 and `0.2.2-rc.1` hosts: native plugin-manager install of the packed archive with no version exemption, and the eight real-assembly end-to-end probes on each. Full suite and all three TypeScript programs against the `0.2.2-rc.1` packages. The `0.2.1-rc.3` → `0.2.2-rc.1` package diff changed no surface the plugin depends on; `src/**` is unchanged from `0.5.3`. Not re-run: real-browser Web UI and real SMTP delivery. Full record: [`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md). |
 | `0.5.2` | `0.2.1-rc.2` and `0.2.1-rc.3`; declared range `>=0.2.1-rc.2 <0.2.2-0` | Verified on both hosts in this phase | Isolated rc.2 and rc.3 hosts: native plugin-manager install with no version exemption, the real-assembly probe matrix, the Host config-write and Test Email path, and a real-browser Web UI run on the rc.3 host. The source-level API diff between the two DSH tags found no host surface used by the plugin changed; the executable bytes are identical to the released `0.5.1` `lib/**`. Full record: [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md). |
 | `0.5.1` | `0.2.1-rc.2` | Verified | Full suite (580 tests, 0 skipped; including an isolated real-provider conflict test that proves file-over-environment precedence, fallback and rotation separately); both compatibility compile probes; the eight real-assembly end-to-end probes; the live-policy and Host config-write probes; the schema/volatile/config-check probes; a real Chrome browser run against an isolated `dsh web` instance covering the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption. Runtime details: see [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) and the R1 correction [`V0.5.1_COMPAT_R1_REPORT.md`](V0.5.1_COMPAT_R1_REPORT.md). |
 | `0.5.0` | `0.2.0-rc.2` | Verified | Full suite (575 tests, 0 skipped); both compatibility compile probes; eight real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract, timed questions with a late answer, two-Turn user-prompt attribution); the live-policy probe; the Host config-write probe; the schema/volatile/config-check probes; real Chrome via the DevTools Protocol against an isolated `dsh web` instance, verifying the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption |
 
-**Release channels.** Version `0.5.3` ships as a GitHub release archive; npm
+**Release channels.** Version `0.5.4` ships as a GitHub release archive; npm
 publication is performed separately by the maintainer with interactive 2FA.
 Use the archive installation below until npm publication is verified. The
-compatibility measurements in the table above belong to their named releases
-and do not constitute fresh runtime verification of `0.5.3`. See
-[`V0.5.3_VALIDATION.md`](V0.5.3_VALIDATION.md) for this version's checks and
-[`release/v0.5.3/NPM_PUBLISH.md`](release/v0.5.3/NPM_PUBLISH.md) for publication.
+compatibility measurements in the table above belong to their named releases.
+`0.5.4` changes only the declared host range and the development baseline; its
+feature behavior is that of `0.5.3` (see
+[`V0.5.3_VALIDATION.md`](V0.5.3_VALIDATION.md)). See
+[`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md) for this version's
+host checks.
 
 ### Mute a workspace or session (v0.5.3)
 
@@ -74,29 +77,31 @@ built on (`ctx.configForms`, `plugins.bundle.config`, volatile Config) does not 
 `settings.plugin.item`, `ctx.settingsScope`) does not exist in `0.1.7`. The break is bidirectional, so
 there is no shared-support range to advertise and no dual-generation shim in the source.
 
-The host range is a **range over the `0.2.1` line, not an exact pin.** `0.5.2` declares
-`engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"`, and the same range on the two shared-instance peers
+The host range is a **range, not an exact pin.** `0.5.4` declares
+`engines.dsh: ">=0.2.1-rc.3 <0.2.2"`, and the same range on the two shared-instance peers
 `@deepseek-ai/dsh-credentials` and `@deepseek-ai/dsh-session`. The lower bound is the minimum
-supported host, `0.2.1-rc.2`. The upper bound deliberately excludes the next line with a
-prerelease-safe comparator: `<0.2.2-0` rejects every `0.2.2` prerelease and `0.2.2` itself, so
-**`0.2.2` is not supported.** DSH `0.2.1-rc.2` reads an own `engines.dsh` first and, when it is
-present, decides on it alone; its `@deepseek-ai/dsh*` `peerDependencies` check is the fallback,
-consulted only when no `engines.dsh` is declared. With `engines.dsh` present the two peers are an
-instance declaration, not a second compatibility range — but they carry the same range because npm
-ignores `engines.dsh` entirely and resolves the peers. A root `@deepseek-ai/dsh` peer is
-deliberately absent: the plugin imports no host package, and a host-app peer would pull the whole
-DSH application into a consumer's production dependency tree.
+supported host, `0.2.1-rc.3`; `0.2.1-rc.2` is no longer admitted. The upper bound is the plain
+`<0.2.2`, chosen so that the plugin is **not disabled by the next `0.2.2` prereleases**. DSH evaluates
+`engines.dsh` with `includePrerelease`, so the gate admits `0.2.2-alpha.*` and every `0.2.2-rc.*`
+and rejects only `0.2.2` final and later. (`0.5.2`/`0.5.3` used `<0.2.2-0`, which rejected every
+`0.2.2` prerelease and is why they refuse to install on `0.2.2-rc.1`.)
 
-The range also admits later `0.2.1-*` releases and `0.2.1` final **without publishing a new plugin
-version.** Admitting a host is **not** a claim that it was tested: the hosts this phase actually
-measured are `0.2.1-rc.2` and `0.2.1-rc.3`, while `0.2.1-rc.4` and `0.2.1` final are admitted but
-untested and are not claimed. `0.5.1` pinned the exact string `0.2.1-rc.2`; that policy cannot be
-kept for a release that must admit `0.2.1-rc.3` — the version matrix evaluates the exact pin as a
-DSH-gate REJECT on `0.2.1-rc.3`, and npm returns `ERESOLVE` to a consumer installing that pin on
-`0.2.1-rc.3`. See [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md) for the version matrix and the
-resolution evidence, [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) for the previous exact-pin
-record, and [`docs/compat/01_CONTRACT_DIFF.md`](docs/compat/01_CONTRACT_DIFF.md) §1 for the gate
-rule itself.
+DSH reads an own `engines.dsh` first and, when it is present, decides on it alone; its
+`@deepseek-ai/dsh*` `peerDependencies` check is the fallback, consulted only when no `engines.dsh`
+is declared. With `engines.dsh` present the two peers are an instance declaration, not a second
+compatibility range. They carry the same string. npm/pnpm evaluate peers with default semver
+semantics, under which a `0.2.2-*` prerelease does not satisfy `<0.2.2`; this does not affect DSH
+installation. Inside a DSH profile the host provides these packages, and pnpm prints the same
+non-blocking "Issues with peer dependencies" warning on every measured host, `0.2.1-rc.3` included. A
+root `@deepseek-ai/dsh` peer is deliberately absent: the plugin imports no host package, and a
+host-app peer would pull the whole DSH application into a consumer's production dependency tree.
+
+Admitting a host is **not** a claim that it was tested: `0.5.4` was measured on `0.2.1-rc.3` and
+`0.2.2-rc.1` ([`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md)); other `0.2.1-*`
+releases, `0.2.1` final and later `0.2.2` prereleases are admitted but untested and are not
+claimed. See [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md) for the earlier version matrix,
+[`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) for the previous exact-pin record, and
+[`docs/compat/01_CONTRACT_DIFF.md`](docs/compat/01_CONTRACT_DIFF.md) §1 for the gate rule itself.
 
 **Nodemailer 10.** Phase 6's telemetry release candidate originally retained Nodemailer 7.x; the
 pre-release security review upgraded it to the supported major. Nodemailer supports only its current
@@ -546,7 +551,7 @@ into a turn is exactly the case the mail exists for, and a turn-length floor wou
 ## Credential
 
 Put the password in one of the layers the DSH Credential service reads, naming it with the value
-you gave `smtpPasswordCredential`. On DSH `0.2.1-rc.2` (the minimum supported host) the provider
+you gave `smtpPasswordCredential`. On DSH `0.2.1-rc.3` (the minimum supported host) the provider
 resolves them in this order, and the first place with a non-empty value wins:
 
 ```text
@@ -683,7 +688,7 @@ remove that injection instead.
 | A question call produced no email although the switch is on | Look for `question.unparsable`, which carries `dropReason` and `argumentsReadable` and nothing else — the argument text is deliberately not logged. |
 | No approval email arrived | `notifyApprovals` is `false` by default. Check that the ask actually appended an `approval/asked` audit event: nothing is mailed from `approval/request`, and nothing at all from `approval/decided`. |
 | A Save is refused and says the configuration is invalid | The message names the offending field, e.g. `$.smtpPort expected number <= 65535`. Nothing was written and the running configuration is untouched. Fix the value and Save again. |
-| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is inside the declared range `>=0.2.1-rc.2 <0.2.2-0`; the card is contributed only while the entry is composed. |
+| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is inside the declared range `>=0.2.1-rc.3 <0.2.2`; the card is contributed only while the entry is composed. |
 | A one-shot `headless` run sends no mail and logs `credential-missing` | DSH `0.2.1-rc.2`'s shipped `headless` bundle disables the managed credential store by design for one-shot jobs, so this plugin's `CredentialRef` cannot resolve. Supplying `DSH_MAIL_SMTP_PASSWORD` only through the launch environment is not a substitute: the host's headless environment fallback covers DSH's own model API-key routes, while this plugin reads the password only through the Credential service. Restore the `credentials` / `authorization` / `deepseek-account` rows (the `dsh-headless` README's Credentials section documents the recipe), or run a profile that keeps the service. The plugin refuses to send rather than failing open; Web and desktop profiles are unaffected. |
 | A `settings.yaml` from an older release | DSH `0.1.7` imports its sections into the profile automatically at boot and renames the file to `settings.yaml.imported`. The original is never deleted, and no migration step is needed. See below. |
 

@@ -9,10 +9,10 @@ Verified against:
 
 | Item | Value |
 | --- | --- |
-| DSH | Declared range `>=0.2.1-rc.2 <0.2.2-0`; minimum supported host `0.2.1-rc.2` (tag `dsh-v0.2.1-rc.2`, commit `687f282e8625c6b8d11ff58211a90524be2e4317`). Verified hosts: `0.2.1-rc.2` (`0.5.1` and re-verified by `0.5.2`) and `0.2.1-rc.3` (tag `dsh-v0.2.1-rc.3`, commit `1f81c047fc48fa190a683e469daa699857e9afe8`; `0.5.2` only). `0.2.2` is not supported. Later `0.2.1-*` releases and `0.2.1` final are admitted by the range but untested and not claimed |
-| Host-range declaration | `engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"` — DSH `0.2.1-rc.2` reads an own `engines.dsh` first and decides on it alone; the `@deepseek-ai/dsh*` peer check is its fallback, and both DSH shared-service peers carry the same range |
-| Cordis | `4.0.5` |
-| Schemastery | `3.18.5` |
+| DSH | Declared range `>=0.2.1-rc.3 <0.2.2` (`0.5.4`); minimum supported host `0.2.1-rc.3` (tag `dsh-v0.2.1-rc.3`, commit `1f81c047fc48fa190a683e469daa699857e9afe8`). Verified hosts for `0.5.4`: `0.2.1-rc.3` and `0.2.2-rc.1` (npm `@deepseek-ai/dsh@0.2.2-rc.1`; see [`../V0.5.4_COMPAT_VALIDATION.md`](../V0.5.4_COMPAT_VALIDATION.md)). Earlier records: `0.2.1-rc.2` (`0.5.1`, `0.5.2`; no longer admitted) and `0.2.1-rc.3` (`0.5.2`). Other `0.2.1-*` releases, `0.2.1` final and later `0.2.2` prereleases are admitted by the range but untested and not claimed; `0.2.2` final is not admitted |
+| Host-range declaration | `engines.dsh: ">=0.2.1-rc.3 <0.2.2"` — DSH reads an own `engines.dsh` first and decides on it alone, with `includePrerelease`, so every `0.2.2-*` prerelease is admitted; the `@deepseek-ai/dsh*` peer check is its fallback, and both DSH shared-service peers carry the same string |
+| Cordis | `4.1.0` (development baseline; peer `^4.0.4`) |
+| Schemastery | `3.19.0` (development baseline; peer `^3.18.4`) |
 | Node | `v24.13.0` |
 | Evidence | Phase 1 Inspect + live prototype; Phase 3 source inspection and live composition; Phase 6 telemetry inspection of 858 recorded session logs (1 432 completed turns, 503 208 events); the host contract diff and plugin usage audit for `0.2.1-rc.2` ([`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md), [`compat/02_PLUGIN_USAGE_AUDIT.md`](compat/02_PLUGIN_USAGE_AUDIT.md)); `0.5.1` inspection of the exact `0.2.1-rc.2` installed sources plus the real-assembly, live-policy, Host config-write and browser runs recorded in [`../V0.5.1_COMPAT_REPORT.md`](../V0.5.1_COMPAT_REPORT.md); `0.5.2`'s `rc.2`→`rc.3` source diff and version-range evidence in [`../../_phase052-compat/analysis/API_DIFF.md`](../../_phase052-compat/analysis/API_DIFF.md) and [`../../_phase052-compat/analysis/SEMVER_MATRIX.md`](../../_phase052-compat/analysis/SEMVER_MATRIX.md), with the runtime record in [`../V0.5.2_COMPAT_AUDIT.md`](../V0.5.2_COMPAT_AUDIT.md). `0.5.0` remains the DSH `0.2.0-rc.2` line ([`../V0.5.0_COMPAT_REPORT.md`](../V0.5.0_COMPAT_REPORT.md)) |
 
@@ -32,7 +32,7 @@ which DSH 0.1.7 replaced wholesale and which the plugin's Web card is built on.
 | `connection.fetch.register` | `ctx.connection` through a scoped `ctx.inject(['connection'], …)` | The two `/api` exact routes the card calls: status and delivery test | Yes, for the card |
 
 **Install/compat gate (DSH `0.2.1` line).** The plugin declares
-`engines.dsh: ">=0.2.1-rc.2 <0.2.2-0"` and no
+`engines.dsh: ">=0.2.1-rc.3 <0.2.2"` and no
 `@deepseek-ai/dsh` peer. At `0.2.1-rc.2` and `0.2.1-rc.3` the gate reads an own `engines.dsh` first
 and, when it is present, decides on it alone; the `@deepseek-ai/dsh*` `peerDependencies` check is the
 fallback, consulted only when no `engines.dsh` is declared. This replaces the previous generation's
@@ -41,9 +41,13 @@ rule, under which only peers were read — the reason the published `0.5.0` (pee
 pin is not admitted by a `0.2.1-rc.3` host. The two shared-instance peers
 (`@deepseek-ai/dsh-credentials`, `@deepseek-ai/dsh-session`) carry the same range: with
 `engines.dsh` present they are an instance declaration rather than a second compatibility range, but
-npm ignores `engines.dsh` and resolves the peers. `0.2.2` (and its prereleases) is outside the range
-and is not supported; later `0.2.1-*` releases are admitted by the range without being claimed as
-tested.
+npm ignores `engines.dsh` and resolves the peers. Since `0.5.4` the upper bound is `<0.2.2` rather
+than `<0.2.2-0`: the DSH gate (`includePrerelease`) admits every `0.2.2` prerelease and rejects only
+`0.2.2` final, so a new `0.2.2-rc.*` does not disable the plugin. npm/pnpm evaluate the peers with
+default semver semantics, under which a `0.2.2-*` prerelease falls outside `<0.2.2`; this does not
+affect DSH installation, and inside a profile pnpm prints the same non-blocking peer warning on
+`0.2.1-rc.3` and `0.2.2-rc.1` alike. Admitted hosts other than `0.2.1-rc.3` and
+`0.2.2-rc.1` are not claimed as tested.
 See [`compat/01_CONTRACT_DIFF.md`](compat/01_CONTRACT_DIFF.md) §1 and, for the rc.3 source identity
 of the gate file and the range matrix, `_phase052-compat/analysis/API_DIFF.md` §7 and
 `_phase052-compat/analysis/SEMVER_MATRIX.md` §1.
