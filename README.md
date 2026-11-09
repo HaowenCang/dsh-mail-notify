@@ -77,7 +77,7 @@ built on (`ctx.configForms`, `plugins.bundle.config`, volatile Config) does not 
 `settings.plugin.item`, `ctx.settingsScope`) does not exist in `0.1.7`. The break is bidirectional, so
 there is no shared-support range to advertise and no dual-generation shim in the source.
 
-The host range is a **range, not an exact pin.** `0.5.4` declares
+The host range is a **range, not an exact pin.** `0.5.5` (unchanged from `0.5.4`) declares
 `engines.dsh: ">=0.2.1-rc.3 <0.2.2"`, and the same range on the two shared-instance peers
 `@deepseek-ai/dsh-credentials` and `@deepseek-ai/dsh-session`. The lower bound is the minimum
 supported host, `0.2.1-rc.3`; `0.2.1-rc.2` is no longer admitted. The upper bound is the plain
@@ -96,8 +96,9 @@ non-blocking "Issues with peer dependencies" warning on every measured host, `0.
 root `@deepseek-ai/dsh` peer is deliberately absent: the plugin imports no host package, and a
 host-app peer would pull the whole DSH application into a consumer's production dependency tree.
 
-Admitting a host is **not** a claim that it was tested: `0.5.4` was measured on `0.2.1-rc.3` and
-`0.2.2-rc.1` ([`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md)); other `0.2.1-*`
+Admitting a host is **not** a claim that it was tested: the Host runtime was measured with `0.5.4`
+on `0.2.1-rc.3` and `0.2.2-rc.1` ([`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md)),
+and `0.5.5`'s settings page was checked on `0.2.2-rc.1`; other `0.2.1-*`
 releases, `0.2.1` final and later `0.2.2` prereleases are admitted but untested and are not
 claimed. See [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md) for the earlier version matrix,
 [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) for the previous exact-pin record, and
@@ -825,6 +826,7 @@ prints before booting, so what took effect and what was reported cannot diverge.
 
 | File | Contents |
 | --- | --- |
+| [`RELEASE_NOTES_V0.5.5.md`](RELEASE_NOTES_V0.5.5.md) | v0.5.5 release notes: the settings page moves into the DSH Settings window, with setup guidance, provider presets and authorization-code instructions |
 | [`RELEASE_NOTES_V0.3.1.md`](RELEASE_NOTES_V0.3.1.md) | v0.3.1 release notes: the collapsible settings card and the English/Simplified Chinese localization |
 | [`PHASE1_RUNTIME_CONTRACT.md`](PHASE1_RUNTIME_CONTRACT.md) | Runtime contract: the DSH services, events, and field paths confirmed by Inspect and by a live prototype |
 | [`PHASE1_REPORT.md`](PHASE1_REPORT.md) | Phase 1 report: verification results, evidence levels, confirmed event flow, risks |
