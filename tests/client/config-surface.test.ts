@@ -142,7 +142,7 @@ test('PAR-04 the write-only password is a credential, not a 26th Config field', 
   assert.equal(hostConfigFieldNames().includes('smtpPasswordSecret'), false)
 })
 
-test('PAR-05 the expanded card renders one control per Config field, plus the password control', async (t) => {
+test('PAR-05 the page (Advanced open) renders one control per Config field, plus the password control', async (t) => {
   const { mounted } = await mountedCard(t)
   await click(mounted.toggle())
 
@@ -168,42 +168,30 @@ test('PAR-05 the expanded card renders one control per Config field, plus the pa
   assert.equal(reference.getAttribute('type'), 'text')
 })
 
-test('PAR-06 the suppression threshold renders its English and Chinese label and hint', async (t) => {
+test('PAR-06 the suppression threshold renders its English and Chinese label, unit, and hint', async (t) => {
   const english = await mountedCard(t)
-  await click(english.mounted.toggle())
   const englishText = english.mounted.container.textContent ?? ''
-  assert.ok(englishText.includes('Minimum turn duration'), 'the English label must render')
-  assert.ok(
-    englishText.includes('0 disables duration filtering'),
-    'the English hint must state that 0 disables duration filtering',
-  )
-  assert.ok(
-    englishText.includes('an unknown duration is never suppressed'),
-    'the English hint must state that an unknown duration is not suppressed',
-  )
-  assert.ok(
-    englishText.includes('settled Turn notifications'),
-    'the English hint must say which notifications the setting applies to',
-  )
-  assert.ok(
-    englishText.includes('Question and approval notifications ignore it'),
-    'the English hint must state that the attention notifications ignore it',
-  )
-  // It is a text control of the numeric kind, so a draft is typed rather than
-  // chosen, and it is not one of the two privacy switches.
+  assert.ok(englishText.includes('Skip quick tasks'), 'the English label must render')
+  assert.ok(englishText.includes('0 sends them all'), 'the English hint must state that 0 disables the filter')
+  assert.ok(englishText.includes('tasks whose duration is unknown'), 'the English hint must state that an unknown duration is not suppressed')
+  assert.ok(englishText.includes('No completed / failed / output-limit email'), 'the English hint must say which notifications it applies to')
+  assert.ok(englishText.includes('Questions and approvals are always sent'), 'the English hint must exclude the attention notifications')
+  assert.ok(englishText.includes('60000 = 1 minute'), 'the English hint must give a worked example of the unit')
   const control = english.mounted.field('minTurnDurationMs')
   assert.equal(control.tagName, 'INPUT')
   assert.equal(control.getAttribute('inputmode'), 'numeric')
+  assert.equal(control.nextElementSibling?.textContent, 'ms', 'the unit is printed next to the control')
 
   const chinese = await mountedCard(t, fakeHost())
   chinese.mounted.seat.setLocale('zh')
-  await click(chinese.mounted.toggle())
+  await settle(chinese.mounted)
   const chineseText = chinese.mounted.container.textContent ?? ''
-  assert.ok(chineseText.includes('最短任务时长'), 'the Chinese label must render')
-  assert.ok(chineseText.includes('0 表示不按耗时过滤'), 'the Chinese hint must state that 0 disables filtering')
-  assert.ok(chineseText.includes('耗时未知时不抑制'), 'the Chinese hint must state that an unknown duration is not suppressed')
-  assert.ok(chineseText.includes('已结算任务通知'), 'the Chinese hint must say which notifications apply')
-  assert.ok(chineseText.includes('提问与批准通知不受该项影响'), 'the Chinese hint must exclude the attention notifications')
+  assert.ok(chineseText.includes('忽略短任务'), 'the Chinese label must render')
+  assert.ok(chineseText.includes('0 表示全部发送'), 'the Chinese hint must state that 0 disables filtering')
+  assert.ok(chineseText.includes('耗时未知的任务也照常发送'), 'the Chinese hint must state that an unknown duration is not suppressed')
+  assert.ok(chineseText.includes('不发送完成、出错或达到上限的邮件'), 'the Chinese hint must say which notifications apply')
+  assert.ok(chineseText.includes('提问和批准通知始终发送'), 'the Chinese hint must exclude the attention notifications')
+  assert.equal(chinese.mounted.field('minTurnDurationMs').nextElementSibling?.textContent, '毫秒')
 })
 
 /* ── Reset coverage ────────────────────────────────────────────────────── */
@@ -227,8 +215,8 @@ test('mute lists render bilingually, save arrays, clear an inherited list, and r
   assert.deepEqual(host.user.mutedSessions, ['session-one', 'session-two'])
   mounted.seat.setLocale('zh')
   await settle(mounted)
-  assert.ok(mounted.container.textContent?.includes('免通知工作区'))
-  assert.ok(mounted.container.textContent?.includes('免通知会话'))
+  assert.ok(mounted.container.textContent?.includes('免通知的工作区'))
+  assert.ok(mounted.container.textContent?.includes('免通知的会话'))
   assert.equal(sessions.value, 'session-one\nsession-two')
   await click(mounted.action('reset-all'))
   await click(mounted.action('save'))
@@ -281,7 +269,7 @@ test('RST-02 after Save the user layer no longer carries the field and it re-inh
   assert.equal(Object.prototype.hasOwnProperty.call(host.user, 'minTurnDurationMs'), false, 'the user layer must lose the entry')
   assert.equal(host.section.minTurnDurationMs, 0, 'the effective value re-inherits the composition layer')
   assert.equal((mounted.field('minTurnDurationMs') as HTMLInputElement).value, '0', 'the control shows the inherited value')
-  assert.ok(mounted.container.textContent?.includes('inherited'), 'the field reports itself as inherited again')
+  assert.equal(resetButton(mounted, 'minTurnDurationMs'), null, 'a field back on its default offers no Restore default')
 })
 
 test('RST-03 the field Reset removes the same override, with the same re-inheritance', async (t) => {

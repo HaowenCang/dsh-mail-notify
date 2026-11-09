@@ -1,8 +1,8 @@
 /**
- * Regression coverage for the card's localization contract — matrix rows
- * L10N-01 … L10N-11.
+ * Regression coverage for the settings page's localization contract — matrix
+ * rows L10N-01 … L10N-11.
  *
- * The card must follow the DSH UI language with complete English and Simplified
+ * The page must follow the DSH UI language with complete English and Simplified
  * Chinese copy, translate at render time (so a visible notice changes language
  * live), and keep canonical technical terms. The dictionary's key parity is a
  * compile-time property; these tests pin the runtime half: what actually
@@ -10,17 +10,15 @@
  *
  * ## Scope of the locale model
  *
- * The card consumes one locale surface — the `t` seat the renderer derives from
+ * The page consumes one locale surface — the `t` seat the renderer derives from
  * `LocaleRuntime.bind(namespace)` per `(namespace, revision)` — and the seat in
  * `support/seat.ts` models exactly that published contract (entry-namespace
  * lookup with English fallback, a new translate identity per revision, change
  * notification to mounted outlets). L10N-07 and L10N-08 therefore prove the
- * card's half of the integration; the real service's half (registration into
- * `@deepseek-ai/dsh-client-locale@0.1.5-rc.2`, the preference, the fallback
- * chain, and the live switch in a mounted page) is verified against the
- * installed DSH in the real-browser run recorded in `MIMO_V2_6_PRO_EVAL.md`.
- * The plugin's registration call itself is checked by the compiler against the
- * real `LocaleRuntime` signatures in `src/client/index.tsx`.
+ * page's half of the integration; the real service's half is verified against
+ * the installed DSH in the real-browser run. The plugin's registration call
+ * itself is checked by the compiler against the real `LocaleRuntime`
+ * signatures in `src/client/index.tsx`.
  *
  * @module dsh-mail-notify/tests/client/locale
  */
@@ -32,7 +30,7 @@ import { en, zh, type MailNotifyLocaleKey } from '../../src/client/locale.ts'
 import { click, fakeHost, mountCard, settle, type, type FakeHost, type Mounted } from './support/dom.ts'
 import { createLocaleSeat, type LocaleSeat } from './support/seat.ts'
 
-/** Stage a mounted card in one language, released when the test ends. */
+/** Stage a mounted page in one language, released when the test ends. */
 async function mountedIn(t: TestContext, locale: string): Promise<{
   host: FakeHost
   mounted: Mounted
@@ -49,7 +47,7 @@ async function mountedIn(t: TestContext, locale: string): Promise<{
   return { host, mounted, seat }
 }
 
-/** The card's visible text, collapsed or not. */
+/** The page's visible text. */
 function textOf(mounted: Mounted): string {
   return mounted.container.textContent ?? ''
 }
@@ -60,8 +58,8 @@ test('L10N-01 the English dictionary is complete', () => {
   }
   // Every `{param}` an entry mentions must be one the renderers actually pass;
   // a typo here would render as a bare placeholder in the UI.
-  const passed = new Set(['field', 'min', 'max', 'entries', 'state', 'value', 'message', 'count', 'depth', 'size', 'delivered', 'failed', 'implicit', 'starttls'])
-  for (const [key, value] of Object.entries(en)) {
+  const passed = new Set(['field', 'min', 'max', 'entries', 'value', 'message', 'count', 'depth', 'size', 'delivered', 'failed', 'name', 'host'])
+  for (const [key, value] of [...Object.entries(en), ...Object.entries(zh)]) {
     for (const match of value.matchAll(/\{(\w+)\}/g)) {
       const name = match[1]
       assert.ok(name !== undefined && passed.has(name), `${key} mentions unknown template param {${name}}`)
@@ -69,119 +67,117 @@ test('L10N-01 the English dictionary is complete', () => {
   }
 })
 
-test('L10N-02 the Simplified Chinese dictionary has exact key parity', () => {
+test('L10N-02 the Simplified Chinese dictionary has exact key and parameter parity', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
   for (const [key, value] of Object.entries(zh)) {
     assert.notEqual(value.trim(), '', `${key} must have Chinese copy`)
+    const params = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map((match) => match[1] ?? '').sort()
+    assert.deepEqual(params(value), params(en[key as MailNotifyLocaleKey]), `${key} must use the same params in both languages`)
   }
-  // The mandated vocabulary, pair by pair (task §14).
+  // The vocabulary the page's layout and the other tests are written against,
+  // pair by pair. Changing one of these is a deliberate copy change.
   const mandated: ReadonlyArray<readonly [MailNotifyLocaleKey, string, string]> = [
-    ['cardTitle', 'Mail notifications', '邮件通知'],
-    ['cardSubtitle', 'Configure email notifications', '配置邮件通知'],
-    ['factActive', 'Active', '运行中'],
-    ['factInactive', 'Inactive', '未运行'],
-    ['factConfigured', 'Configured', '已配置'],
-    ['factNotConfigured', 'Not configured', '未配置'],
-    ['factOn', 'On', '已启用'],
-    ['factOff', 'Off', '已关闭'],
-    ['actionExpand', 'Expand', '展开'],
-    ['actionCollapse', 'Collapse', '折叠'],
-    ['groupGeneral', 'General', '常规'],
-    ['groupNotifications', 'Notifications', '通知类型'],
-    ['groupMessage', 'Message content', '邮件内容'],
-    ['groupDelivery', 'Delivery', '发送与重试'],
-    ['groupStatus', 'Status', '状态'],
-    ['labelEnable', 'Enable mail notifications', '启用邮件通知'],
-    ['labelIncludeSubagents', 'Include subagent activity', '包含子智能体活动'],
-    ['labelCompleted', 'Completed turns', '任务完成'],
-    ['labelErrors', 'Errors', '任务错误'],
-    ['labelMaxTokens', 'Token-limit termination', '达到 Token 上限'],
-    ['labelQuestions', 'Questions requiring input', '需要用户回答'],
-    ['labelApprovals', 'Approval requests', '需要用户批准'],
-    ['labelSmtpHost', 'SMTP host', 'SMTP 服务器'],
+    ['navLabel', 'Email alerts', '邮件通知'],
+    ['pageTitle', 'Email notifications', '邮件通知'],
+    ['statusHeading', 'Status', '运行状态'],
+    ['stateActive', 'Running', '运行中'],
+    ['stateInactive', 'Not running', '未运行'],
+    ['stateSetupNeeded', 'Setup needed — fill in the sending account below', '待完成设置：请先填写下方的发信账号'],
+    ['factOn', 'On', '开启'],
+    ['factOff', 'Off', '关闭'],
+    ['groupEvents', 'When to send', '何时发送'],
+    ['groupSmtp', 'Sending account (SMTP)', '发信账号（SMTP）'],
+    ['groupMessage', 'Email content', '邮件内容'],
+    ['groupQuiet', 'Quiet rules', '免打扰'],
+    ['groupAdvanced', 'Advanced', '高级设置'],
+    ['labelEnable', 'Email notifications', '邮件通知'],
+    ['labelIncludeSubagents', 'Include subagents', '包含子智能体'],
+    ['labelCompleted', 'Task completed', '任务完成'],
+    ['labelErrors', 'Task failed', '任务出错'],
+    ['labelMaxTokens', 'Output limit reached', '达到输出上限'],
+    ['labelSmtpHost', 'SMTP server', 'SMTP 服务器'],
     ['labelSmtpPort', 'Port', '端口'],
-    ['labelSecure', 'Security', '安全连接'],
-    ['termImplicitTls', 'Implicit TLS', '隐式 TLS'],
-    ['termStartTls', 'STARTTLS', 'STARTTLS'],
+    ['labelSecure', 'Encryption', '加密方式'],
+    ['optionSecureTls', 'SSL/TLS', 'SSL/TLS'],
+    ['optionSecureStartTls', 'STARTTLS', 'STARTTLS'],
     ['labelSmtpUser', 'Username', '用户名'],
-    ['labelSecret', 'Password', '密码'],
-    ['passwordChange', 'Change password', '修改密码'],
-    ['passwordSet', 'Set password', '设置密码'],
-    ['labelFrom', 'From', '发件人'],
+    ['labelSecret', 'Password / authorization code', '密码 / 授权码'],
+    ['labelFrom', 'Sender address', '发件人地址'],
     ['labelRecipients', 'Recipients', '收件人'],
-    ['labelIncludeMetadata', 'Include metadata', '包含元数据'],
-    ['labelIncludeUserPrompt', 'Include user prompt', '包含用户提示词'],
-    ['labelIncludeFooter', 'Include footer', '包含邮件页脚'],
-    ['labelMaxBody', 'Maximum body length', '最大正文长度'],
-    ['labelQueueSize', 'Queue size', '队列大小'],
-    ['labelRetryAttempts', 'Retry attempts', '重试次数'],
-    ['labelRetryBaseDelay', 'Retry base delay', '重试基础延迟'],
     ['actionSendTest', 'Send test email', '发送测试邮件'],
-    ['actionReset', 'Reset', '恢复继承值'],
+    ['actionResetField', 'Restore default', '恢复默认'],
     ['actionSave', 'Save', '保存'],
     ['actionSaving', 'Saving…', '正在保存…'],
+    ['actionDiscard', 'Discard', '放弃更改'],
     ['noticeSaved', 'Saved', '已保存'],
     ['actionSending', 'Sending…', '正在发送…'],
-    ['testEmailSent', 'Test email sent. The SMTP server accepted the message for {count} recipient(s).', '测试邮件已发送。SMTP 服务器已接受该邮件，共 {count} 个收件人。'],
-    ['noticeResetStaged', 'Reset staged: every field will go back to the composition values when you save.', '已暂存重置：保存后所有字段将恢复为组合配置值。'],
-    ['statusPlugin', 'Plugin: {state}', '插件：{state}'],
-    ['statusCredential', 'Credential: {state}', '凭据：{state}'],
-    ['statusEffectiveQuestions', 'Effective question notifications: {value}', '提问通知实际生效：{value}'],
-    ['statusEffectiveApprovals', 'Effective approval notifications: {value}', '批准通知实际生效：{value}'],
-    ['invalidAddress', 'Not a plausible email address: {entries}', '不是有效的邮件地址：{entries}'],
-    ['noticeSaveRefused', 'The host did not accept the save: {message}', '宿主未接受本次保存：{message}'],
-    ['noticeCredentialRefused', 'The password change was refused: {message}', '密码更改被拒绝：{message}'],
-    ['testEmailServerMessage', 'The SMTP server refused the message: {message}', 'SMTP 服务器拒绝了该邮件：{message}'],
-    ['testEmailFailed', 'The delivery test failed: {message}', '测试邮件发送失败：{message}'],
-    ['statusConfigError', 'The saved configuration cannot be applied, so the previous settings are still in effect: {message}', '已保存的配置无法应用，之前的设置仍然生效：{message}'],
+    ['invalidAddress', 'Not a valid email address: {entries}', '邮箱地址格式不正确：{entries}'],
+    ['noticeSaveRefused', 'Could not save: {message}', '保存失败：{message}'],
+    ['noticeCredentialRefused', 'Could not change the password: {message}', '密码修改失败：{message}'],
+    ['testEmailServerMessage', 'The SMTP server rejected the test email: {message}', 'SMTP 服务器拒收了测试邮件：{message}'],
+    ['testEmailFailed', 'The test email could not be sent: {message}', '测试邮件发送失败：{message}'],
   ]
   for (const [key, english, chinese] of mandated) {
     assert.equal(en[key], english, `the English copy of ${key} is mandated`)
     assert.equal(zh[key], chinese, `the Chinese copy of ${key} is mandated`)
   }
-  // §15's human-attention copy is mandated verbatim in both languages.
-  //
-  // The question hint is phase-neutral since v0.5.0. DSH 0.2's timed
-  // `ask_user_question` can close its foreground wait while the question stays
-  // answerable, so "DSH is waiting for your answer" was false for exactly the
-  // late-answer case; "asks you a question" is true in both question modes. The
-  // approval hint is unchanged because the approval answerer chain does block
-  // until a decision.
-  assert.equal(en.labelQuestions, 'Questions requiring input')
-  assert.equal(en.hintQuestions, 'Send an email immediately when DSH asks you a question.')
-  assert.equal(zh.labelQuestions, '需要用户回答')
-  assert.equal(zh.hintQuestions, '当 DSH 向你提问时立即发送邮件。')
-  assert.equal(en.labelApprovals, 'Approval requests')
-  assert.equal(en.hintApprovals, 'Send an email immediately when DSH is waiting for your approval.')
-  assert.equal(zh.labelApprovals, '需要用户批准')
-  assert.equal(zh.hintApprovals, '当 DSH 正在等待你的批准决定时立即发送邮件。')
+  // The human-attention copy. The question hint is phase-neutral since v0.5.0:
+  // DSH 0.2's timed `ask_user_question` can close its foreground wait while the
+  // question stays answerable, so "is waiting for your answer" would be false
+  // for exactly the late-answer case; "asks you a question" is true in both
+  // question modes. The approval hint may say "waiting" because the approval
+  // answerer chain does block until a decision.
+  assert.equal(en.labelQuestions, 'Agent asks you a question')
+  assert.equal(en.hintQuestions, 'Sent as soon as DSH asks you a question. The email includes the question and its options.')
+  assert.equal(zh.labelQuestions, '智能体向你提问')
+  assert.equal(zh.hintQuestions, 'DSH 向你提问时立即发送，邮件中包含问题及选项。')
+  assert.equal(en.labelApprovals, 'Agent needs your approval')
+  assert.ok(en.hintApprovals.startsWith('Sent as soon as DSH is waiting for your approval.'))
+  assert.equal(zh.labelApprovals, '智能体等待你批准')
+  assert.ok(zh.hintApprovals.startsWith('DSH 正在等待你批准某项操作时立即发送'))
+  for (const dictionary of [en, zh]) {
+    assert.equal(
+      /waiting for your answer|等待你的回答|等待你回答/.test(dictionary.hintQuestions),
+      false,
+      'the question hint must stay phase-neutral',
+    )
+  }
 })
 
-test('L10N-03 the English card title renders', async (t) => {
+test('L10N-02b no implementation vocabulary reaches the page', () => {
+  // The previous copy said "composition layer", "inherit", "envelope sender",
+  // and "code points" — words about the implementation, not about what the
+  // reader gets. None of them may come back.
+  const banned = [/composition/i, /\binherit/i, /envelope/i, /code point/i, /listener/i, /组合配置/, /继承/, /信封/, /码点/, /监听器/]
+  for (const [key, value] of [...Object.entries(en), ...Object.entries(zh)]) {
+    for (const pattern of banned) {
+      assert.equal(pattern.test(value), false, `${key} uses implementation vocabulary (${String(pattern)}): "${value}"`)
+    }
+  }
+})
+
+test('L10N-03 the English page title renders', async (t) => {
   const { mounted } = await mountedIn(t, 'en')
-  assert.ok(textOf(mounted).includes('Mail notifications'))
+  assert.equal(mounted.container.querySelector('h2')?.textContent, 'Email notifications')
 })
 
-test('L10N-04 the Chinese card title renders: 邮件通知', async (t) => {
+test('L10N-04 the Chinese page title renders: 邮件通知', async (t) => {
   const { mounted } = await mountedIn(t, 'zh')
-  assert.ok(textOf(mounted).includes('邮件通知'), 'the collapsed card must carry the Chinese title')
+  assert.equal(mounted.container.querySelector('h2')?.textContent, '邮件通知')
 })
 
-test('L10N-05 the Chinese form renders: 需要用户回答', async (t) => {
+test('L10N-05 the Chinese form renders: 智能体向你提问', async (t) => {
   const { mounted } = await mountedIn(t, 'zh')
-  await click(mounted.toggle())
-  assert.ok(textOf(mounted).includes('需要用户回答'))
+  assert.ok(textOf(mounted).includes('智能体向你提问'))
 })
 
-test('L10N-06 the Chinese form renders: 需要用户批准', async (t) => {
+test('L10N-06 the Chinese form renders: 智能体等待你批准', async (t) => {
   const { mounted } = await mountedIn(t, 'zh')
-  await click(mounted.toggle())
-  assert.ok(textOf(mounted).includes('需要用户批准'))
+  assert.ok(textOf(mounted).includes('智能体等待你批准'))
 })
 
-test('L10N-07 a live locale switch updates a mounted card, notice included, without a reload', async (t) => {
+test('L10N-07 a live locale switch updates a mounted page, notice included, without a reload', async (t) => {
   const { host, mounted, seat } = await mountedIn(t, 'en')
-  await click(mounted.toggle())
   await type(mounted.field('smtpHost') as HTMLInputElement, 'smtp.saved.invalid')
   await click(mounted.action('save'))
   await settle(mounted)
@@ -190,7 +186,7 @@ test('L10N-07 a live locale switch updates a mounted card, notice included, with
   assert.ok((notice.textContent ?? '').includes('Saved'), 'the English notice is on screen')
 
   // The very same DOM nodes must come back in Chinese: the seat's revision
-  // re-rendered the mounted card, and the notice is retranslated because the
+  // re-rendered the mounted page, and the notice is retranslated because the
   // controller stored its identity rather than its English text.
   const section = mounted.container.querySelector('section')
   const noticeNode = notice
@@ -198,12 +194,11 @@ test('L10N-07 a live locale switch updates a mounted card, notice included, with
   await act(async () => {
     /* the seat notification re-renders; this flushes it */
   })
-  assert.equal(mounted.container.querySelector('section'), section, 'the card must not remount')
+  assert.equal(mounted.container.querySelector('section'), section, 'the page must not remount')
   assert.equal(mounted.container.querySelector('[data-notice="operation"]'), noticeNode)
   assert.ok(textOf(mounted).includes('邮件通知'))
   assert.ok((noticeNode.textContent ?? '').includes('已保存'), 'the visible notice switched language live')
   assert.ok(seat.revision > 0, 'the switch advanced the seat revision')
-  // And back again, with the same guarantee.
   seat.setLocale('en')
   await act(async () => {
     /* flush */
@@ -214,7 +209,6 @@ test('L10N-07 a live locale switch updates a mounted card, notice included, with
 
 test('L10N-08 an unsupported locale falls back to English', async (t) => {
   const { mounted, seat } = await mountedIn(t, 'en')
-  await click(mounted.toggle())
   seat.setLocale('fr')
   await act(async () => {
     /* flush */
@@ -222,20 +216,19 @@ test('L10N-08 an unsupported locale falls back to English', async (t) => {
   // `fr` is not a language this plugin ships a dictionary for; the lookup
   // chain's terminal behaviour is the English copy, never a bare key.
   const text = textOf(mounted)
-  assert.ok(text.includes('Mail notifications'))
-  assert.ok(!text.includes('cardTitle'), 'a missing key must never render as itself')
+  assert.ok(text.includes('Email notifications'))
+  assert.ok(!text.includes('pageTitle'), 'a missing key must never render as itself')
   assert.equal(seat.active, 'fr')
 })
 
 test('L10N-09 validation refusals are localized', async (t) => {
   const { mounted } = await mountedIn(t, 'zh')
-  await click(mounted.toggle())
   await type(mounted.field('smtpPort') as HTMLInputElement, 'abc')
   const refusal = mounted.container.querySelector('[data-field-invalid="smtpPort"]')
   assert.ok(refusal !== null, 'the field must report its refusal')
   const text = refusal.textContent ?? ''
-  assert.ok(text.includes('端口 必须为整数'), `the refusal must name the localized field and rule (got "${text}")`)
-  assert.ok(text.includes('该值会导致保存失败。'))
+  assert.ok(text.includes('「端口」必须是整数。'), `the refusal must name the localized field and rule (got "${text}")`)
+  assert.ok(text.includes('请修正后再保存。'))
 
   // The same edit in English renders the English rule through the same
   // identity, with the field label localized too.
@@ -244,12 +237,11 @@ test('L10N-09 validation refusals are localized', async (t) => {
     /* flush */
   })
   const english = mounted.container.querySelector('[data-field-invalid="smtpPort"]')?.textContent ?? ''
-  assert.ok(english.includes('Port must be a whole number'), `got "${english}"`)
+  assert.ok(english.includes('Port must be a whole number.'), `got "${english}"`)
 })
 
 test('L10N-10 save and delivery-test operation messages are localized', async (t) => {
   const { mounted } = await mountedIn(t, 'zh')
-  await click(mounted.toggle())
   await type(mounted.field('smtpHost') as HTMLInputElement, 'smtp.saved.invalid')
   await click(mounted.action('save'))
   await settle(mounted)
@@ -259,25 +251,24 @@ test('L10N-10 save and delivery-test operation messages are localized', async (t
   await click(mounted.action('send-test'))
   await settle(mounted)
   const result = mounted.container.querySelector('[data-notice="test-email"]')?.textContent ?? ''
-  assert.ok(result.includes('测试邮件已发送'), `the delivery-test outcome must render in Chinese (got "${result}")`)
+  assert.ok(result.includes('测试邮件已发出'), `the delivery-test outcome must render in Chinese (got "${result}")`)
 })
 
 test('L10N-11 the canonical technical terms stay correct in both languages', async (t) => {
   const chinese = await mountedIn(t, 'zh')
-  await click(chinese.mounted.toggle())
   const zhText = textOf(chinese.mounted)
-  assert.ok(zhText.includes('隐式 TLS'), 'the security hint names implicit TLS in Chinese')
+  assert.ok(zhText.includes('SSL/TLS'), 'the encryption choices keep their canonical spelling')
   assert.ok(zhText.includes('STARTTLS'), 'STARTTLS keeps its canonical spelling')
   assert.ok(zhText.includes('SMTP 服务器'), 'SMTP stays SMTP in the Chinese label')
-  assert.ok(zhText.includes('当 DSH 向你提问时立即发送邮件。'), 'DSH stays DSH in the Chinese hint')
-  assert.ok(!zhText.includes('TLS升级'), 'no glued pseudo-term replaces the canonical spacing')
+  assert.ok(zhText.includes('DSH 向你提问时立即发送'), 'DSH stays DSH in the Chinese hint')
+  assert.ok(zhText.includes('授权码'), 'the Chinese page names the authorization code mail providers issue')
   chinese.mounted.unmount()
   chinese.mounted.card.dispose()
 
   const english = await mountedIn(t, 'en')
-  await click(english.mounted.toggle())
   const enText = textOf(english.mounted)
-  assert.ok(enText.includes('Implicit TLS'))
+  assert.ok(enText.includes('SSL/TLS'))
   assert.ok(enText.includes('STARTTLS'))
-  assert.ok(enText.includes('SMTP host'))
+  assert.ok(enText.includes('SMTP server'))
+  assert.ok(enText.includes('app password'))
 })
