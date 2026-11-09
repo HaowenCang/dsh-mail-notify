@@ -5,8 +5,8 @@ output, that turn's terminal failures, and the mid-turn requests at which the ag
 for a person — over SMTP.
 
 - Plugin name / patch row id: `dsh-mail-notify`
-- Version: `0.5.4` (see [release notes](RELEASE_NOTES_V0.5.4.md); npm publication is managed separately)
-- Host plugin plus a browser half: a configuration card on the DSH Plugins page
+- Version: `0.5.5` (see [release notes](RELEASE_NOTES_V0.5.5.md); npm publication is managed separately)
+- Host plugin plus a browser half: its own **Email alerts** (邮件通知) page in the DSH Settings window
 - Requires DSH `>=0.2.1-rc.3 <0.2.2` (minimum supported host: `0.2.1-rc.3`), and Node `^22.19.0 || >=24.0.0`
 - Requires Nodemailer `10.x` (the only runtime dependency; resolved automatically on install)
 
@@ -17,24 +17,24 @@ range.
 
 | Plugin version | DSH version | Status | Evidence |
 | --- | --- | --- | --- |
+| `0.5.5` | `0.2.2-rc.1`; declared range unchanged `>=0.2.1-rc.3 <0.2.2` | Web UI verified on `0.2.2-rc.1` | Browser-half release: only `src/client/**` changed, so the Host runtime is that of `0.5.4`. Full suite (626 tests) and all three TypeScript programs; the packed archive installed into an isolated `0.2.2-rc.1` web profile, with the Settings-window entry, the page, provider auto-fill and the authorization-code guide checked in a real browser. Not re-run: the end-to-end probes and real SMTP delivery. |
 | `0.5.4` | `0.2.1-rc.3` and `0.2.2-rc.1`; declared range `>=0.2.1-rc.3 <0.2.2` | Verified on both hosts | Isolated rc.3 and `0.2.2-rc.1` hosts: native plugin-manager install of the packed archive with no version exemption, and the eight real-assembly end-to-end probes on each. Full suite and all three TypeScript programs against the `0.2.2-rc.1` packages. The `0.2.1-rc.3` → `0.2.2-rc.1` package diff changed no surface the plugin depends on; `src/**` is unchanged from `0.5.3`. Not re-run: real-browser Web UI and real SMTP delivery. Full record: [`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md). |
 | `0.5.2` | `0.2.1-rc.2` and `0.2.1-rc.3`; declared range `>=0.2.1-rc.2 <0.2.2-0` | Verified on both hosts in this phase | Isolated rc.2 and rc.3 hosts: native plugin-manager install with no version exemption, the real-assembly probe matrix, the Host config-write and Test Email path, and a real-browser Web UI run on the rc.3 host. The source-level API diff between the two DSH tags found no host surface used by the plugin changed; the executable bytes are identical to the released `0.5.1` `lib/**`. Full record: [`V0.5.2_COMPAT_AUDIT.md`](V0.5.2_COMPAT_AUDIT.md). |
 | `0.5.1` | `0.2.1-rc.2` | Verified | Full suite (580 tests, 0 skipped; including an isolated real-provider conflict test that proves file-over-environment precedence, fallback and rotation separately); both compatibility compile probes; the eight real-assembly end-to-end probes; the live-policy and Host config-write probes; the schema/volatile/config-check probes; a real Chrome browser run against an isolated `dsh web` instance covering the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption. Runtime details: see [`V0.5.1_COMPAT_REPORT.md`](V0.5.1_COMPAT_REPORT.md) and the R1 correction [`V0.5.1_COMPAT_R1_REPORT.md`](V0.5.1_COMPAT_R1_REPORT.md). |
 | `0.5.0` | `0.2.0-rc.2` | Verified | Full suite (575 tests, 0 skipped); both compatibility compile probes; eight real-assembly end-to-end probes (questions, errors, approvals, approval dedupe, approval rejection, credential contract, timed questions with a late answer, two-Turn user-prompt attribution); the live-policy probe; the Host config-write probe; the schema/volatile/config-check probes; real Chrome via the DevTools Protocol against an isolated `dsh web` instance, verifying the plugin row, the single configuration card, all 23 Config controls plus the separate write-only password Credential control, an accepted Save, live activation and a delivered Test Email; and a real plugin-manager installation of the packed archive with no version exemption |
 
-**Release channels.** Version `0.5.4` ships as a GitHub release archive; npm
-publication is performed separately by the maintainer with interactive 2FA.
-Use the archive installation below until npm publication is verified. The
-compatibility measurements in the table above belong to their named releases.
-`0.5.4` changes only the declared host range and the development baseline; its
-feature behavior is that of `0.5.3` (see
-[`V0.5.3_VALIDATION.md`](V0.5.3_VALIDATION.md)). See
-[`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md) for this version's
-host checks.
+**Release channels.** npm publication is performed separately by the maintainer
+with interactive 2FA. The compatibility measurements in the table above belong to
+their named releases. `0.5.5` changes only the browser half: the settings move
+from the plugin's detail page into the DSH Settings window, with clearer copy,
+setup guidance, provider presets and authorization-code instructions (see
+[`RELEASE_NOTES_V0.5.5.md`](RELEASE_NOTES_V0.5.5.md)). The declared host range and
+the Host runtime are those of `0.5.4`
+([`V0.5.4_COMPAT_VALIDATION.md`](V0.5.4_COMPAT_VALIDATION.md)).
 
 ### Mute a workspace or session (v0.5.3)
 
-Expand the plugin's configuration card and use **Muted workspaces** or
+Open **Settings → Email alerts** (邮件通知) and use **Muted workspaces** or
 **Muted sessions** (Chinese: **免通知工作区** / **免通知会话**), then Save:
 
 - Workspaces: one absolute path per line, matching the session's recorded
@@ -338,42 +338,51 @@ on the next boot.
 
 ## Configure in the Web UI
 
-`Settings → Plugins → dsh-mail-notify` shows a **dsh-mail-notify** card, titled **Mail
-notifications** (邮件通知). Every value in the patch example below can be set there instead; the card
-needs no YAML editing and takes effect without restarting DSH. Your edits are persisted into the
-profile's own `cordis.patch.yml`, which is the only configuration document a plugin has.
+Open the DSH Settings window (Ctrl+, in the desktop app, Ctrl+Alt+, in the browser, or **More →
+Settings**) and choose **Email alerts** (邮件通知) in the left navigation. Every value in the patch
+example below can be set there instead; the page needs no YAML editing and takes effect without
+restarting DSH. Your edits are persisted into the profile's own `cordis.patch.yml`, which is the only
+configuration document a plugin has. Before `0.5.5` these settings were a card on the plugin's own
+page under Plugins → Installed; that page now only points to the Settings entry.
 
 The form carries exactly the Host Config's **25 fields** as 25 controls, plus **one separate
 write-only password control**. The password is not a 26th Config field: it is a Credential value
-written through the `credentials` domain, and the card's editable field table deliberately excludes
+written through the `credentials` domain, and the page's editable field table deliberately excludes
 it, so nothing in the form ever reads it back or resets it as configuration. The field list is not
-maintained by hand on either side — the card's table and the Host schema are compared field for field
+maintained by hand on either side — the page's table and the Host schema are compared field for field
 by `tests/client/config-surface.test.ts`, which fails if the schema gains a field the form omits, if
 the form invents a Config field the Host does not declare, or if either side lists a name twice.
 
-Only the fields you actually change are written: a Save records the fields you edited, and the rest
-keep inheriting the composition layer. An invalid value is refused by the **host** before anything is
-written — the clause that refuses it is the plugin's own Config schema, resolved by DSH's config
-editor ahead of persistence — so a rejected save leaves both your profile file and the running
-notification runtime exactly as they were.
+Only the fields you actually change are written: a Save records the fields you edited. Fields marked
+`*` are required while notifications are on, and a Save the Host would refuse is stopped on the page
+with the reason shown. Any other invalid value is refused by the **host** before anything is written,
+so a rejected save leaves both your profile file and the running notification runtime exactly as
+they were.
 
-The card is one collapsible disclosure, collapsed by default so a single plugin cannot push the rest
-of Settings off the screen. Collapsed, it occupies one compact row: its title, and one line of safe
-operational facts — runtime state, SMTP readiness, and the question switch's effective state.
-Expanding reveals the full form; collapsing again discards nothing — staged edits, a password draft,
-an in-flight save, and operation results all stay until you save or discard them. The expansion is
-presentation state only and is never persisted.
+The page reads top to bottom:
 
-The card follows the DSH interface language (Settings → General → Language) and is fully translated
-into English and Simplified Chinese; a language the plugin ships no copy for falls back to English.
-A language switch retranslates the mounted card immediately, notices already on screen included.
+| Section | What it holds |
+| --- | --- |
+| Status | A one-line headline (Off, Setup needed, Running, Not running, or a configuration error with its reason one click away), numbered setup steps while setup is incomplete, which events currently send email, queue counters, and **Send test email** |
+| Master switch | `enabled` |
+| When to send | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, `notifyQuestions`, `notifyApprovals`, `includeSubagents` — with a note that the question and approval emails carry their content to your mail provider |
+| Sending account (SMTP) | Quick fill for QQ, 163, 126, Tencent Exmail and Gmail; `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, the write-only password control with step-by-step instructions for getting the provider's authorization code or app password, `from`, `to` |
+| Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter` |
+| Quiet rules | `minTurnDurationMs`, `mutedWorkspaces`, `mutedSessions` |
+| Advanced (collapsed) | `smtpPasswordCredential` (a reference **name**), `maxBodyChars`, `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries`, and a reset of every field |
 
-The card is registered into the Plugins page's `plugins.bundle.config` slot under the key
-`dsh-mail-notify` — the plugin's **package name**, which is what the page resolves a bundle's
-configuration by. It is *not* registered into `plugins.item`: that slot is the page's Official group
-of standalone cards, and a bundle's configuration is rendered on the bundle's own page, which is also
-where the enable switch and the component list live. The host side of the same configuration is the
-plugin's Cordis `Config` schema, addressed by the profile entry id `dsh-mail-notify`.
+**Quick fill** stages the provider's server, port 465 and SSL/TLS, and fills an empty sender address
+with the username; the picker always shows which provider the server already is. A QQ/Foxmail, 163,
+126 or Gmail username fills an *empty* server in on its own. A server you already filled in is never
+overwritten — the page offers a one-click switch instead. Every one of these only stages drafts:
+nothing is written until Save. A port and encryption that do not match (465 with STARTTLS, 587 with
+SSL/TLS) are warned about without blocking the save.
+
+Each field shows the value in effect. **Restore default** under a field stages the removal of your
+entry, so the field takes the composition layer's value again; it does not write the default back,
+so a later change to the patch is picked up. The reset in Advanced stages that removal for every
+field the plugin owns, and Save applies it. An entry is detected by the **presence** of a key in
+your layer, never by comparing values.
 
 How the layers compose:
 
@@ -389,39 +398,20 @@ re-reads the whole configuration as one snapshot, and the notification runtime i
 That is why a Save takes effect without restarting DSH, and why a change to the master switch stands
 the runtime down or brings it up immediately.
 
-The card shows the **effective** value of every field — what a notification would actually use — and
-marks each one `inherited` (no entry in your layer) or with a `Reset` button (an entry exists).
-**Reset removes the entry**; it does not write the default back, so the field re-inherits the
-composition layer and any later change to the patch is picked up again. `Reset` at the bottom stages
-that removal for every field the plugin owns, and `Save` applies it.
+The page follows the DSH interface language (Settings → General → Language) and is fully translated
+into English and Simplified Chinese; a language the plugin ships no copy for falls back to English.
+A language switch retranslates the mounted page immediately, notices already on screen included.
 
-An override is detected by the **presence** of a key in your layer, never by comparing values: an
-override that happens to equal the composition default is still an override, and a value comparison
-could not see it.
+The page is registered into the Settings window's `settings.section` slot under the id
+`mail-notify` (order 30, after the built-in sections), with its icon in `settings.section.icon`
+under the same id. The one-line pointer on the plugin's own page is registered into
+`plugins.bundle.config` under the key `dsh-mail-notify` — the plugin's **package name**, which is
+what that page resolves a bundle's configuration by. All three are contributed only while the Host
+serves this entry's configuration. The host side of the same configuration is the plugin's Cordis
+`Config` schema, addressed by the profile entry id `dsh-mail-notify`.
 
-| Card region | Fields |
-| --- | --- |
-| Human attention | `notifyQuestions`, `notifyApprovals` — rendered apart because they are the switches that decide whether you learn an agent is blocked |
-| General | `enabled`, `includeSubagents` |
-| Notifications | `notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, `minTurnDurationMs`, `mutedWorkspaces`, `mutedSessions` |
-| SMTP | `smtpHost`, `smtpPort`, `smtpSecure`, `smtpUser`, `from`, `to` |
-| Credential | `smtpPasswordCredential` (a reference **name**), and the write-only password control |
-| Message content | `includeMetadata`, `includeUserPrompt`, `includeFooter`, `maxBodyChars` |
-| Delivery | `queueSize`, `retryAttempts`, `retryBaseDelayMs`, `maxDedupeEntries` |
-| Status | live host facts: whether the runtime is mounted, whether the credential reference is configured, the queue depth and counters, and — prominently — the **effective** `notifyQuestions` and `notifyApprovals` values |
-
-The field rows above are the complete set: 25 Config fields, each rendered as exactly one control. The
-two switches that decide whether you learn an agent is blocked — `notifyQuestions` and
-`notifyApprovals` — form the Human attention group and appear nowhere else; the Notifications group
-carries four turn-level policy fields (`notifyCompleted`, `notifyErrors`, `notifyMaxTokens`, and
-`minTurnDurationMs`) plus the two scope exclusion lists (`mutedWorkspaces`, `mutedSessions`).
-The password control is the one extra control on the card and belongs to no Config
-field: it is a write-only Credential control, not a 26th Config field. `minTurnDurationMs` sits in the
-Notifications group rather than in the human-attention block, because it applies only to settled Turn
-notifications.
-
-The status facts are re-read every five seconds while the card is on screen. If a saved
-configuration cannot be applied, the card says so instead of silently doing nothing; the previously
+The status facts are re-read every five seconds while the page is on screen. If a saved
+configuration cannot be applied, the page says so instead of silently doing nothing; the previously
 running configuration stays in effect.
 
 **Send test email** delivers one fixed message through the *same* credential lookup, transport
@@ -431,9 +421,9 @@ configuration and contains no credential.
 
 ### The password
 
-The browser never reads the SMTP password. The only credential operations the card performs are
+The browser never reads the SMTP password. The only credential operations the page performs are
 `describe` (is a value stored, and is it writable), `set`, and `unset`; the installed DSH
-credentials namespace has no read path at all. The password field starts blank every time the card
+credentials namespace has no read path at all. The password field starts blank every time the page
 renders, a stored password is reported only as *configured*, typing a replacement is write-only,
 and a successful save clears the local draft. A custom `smtpPasswordCredential` reference is
 preserved as you typed it.
@@ -444,9 +434,9 @@ Add a row to the profile's own patch file (`$DSH_HOME/profiles/<profile>/cordis.
 **replaces** the targeted row's whole `config`, so restate every key you rely on; omitted keys fall
 back to the schema defaults.
 
-This remains fully supported, and the two routes are the *same* document: the Web card writes this
+This remains fully supported, and the two routes are the *same* document: the Web settings page writes this
 file, so a hand edit and a Save are indistinguishable afterwards, and a hand edit is what a Save will
-show as that field's override. Every key in the example below is one of the 25 the card exposes, so
+show as that field's override. Every key in the example below is one of the 25 the settings page exposes, so
 the whole document is configurable from the Web UI.
 
 ```yaml
@@ -492,7 +482,7 @@ the whole document is configurable from the Web UI.
 | `smtpPort` | `587` | Integer 1–65535. |
 | `smtpSecure` | `false` | `true` = implicit TLS (normally 465); `false` allows a STARTTLS upgrade (normally 587). |
 | `smtpUser` | `''` | Semantically required while `enabled: true`: a non-empty user name. `''` means not configured yet. |
-| `smtpPasswordCredential` | `DSH_MAIL_SMTP_PASSWORD` | A credential **reference name**, never a password. Exactly the DSH `CredentialRef` grammar, `^[A-Za-z_][A-Za-z0-9_]*$` — an environment-style name. The default is a name because the field-level `pattern()` cannot admit `''`; a `<scope>/<id>` value is a `CredentialKey`, which `resolve()` cannot read, so it is refused at mount with an explanation (D019). The **password** it names is not a configuration value: it lives in the credential store and is written through the card's separate write-only control. |
+| `smtpPasswordCredential` | `DSH_MAIL_SMTP_PASSWORD` | A credential **reference name**, never a password. Exactly the DSH `CredentialRef` grammar, `^[A-Za-z_][A-Za-z0-9_]*$` — an environment-style name. The default is a name because the field-level `pattern()` cannot admit `''`; a `<scope>/<id>` value is a `CredentialKey`, which `resolve()` cannot read, so it is refused at mount with an explanation (D019). The **password** it names is not a configuration value: it lives in the credential store and is written through the settings page's separate write-only control. |
 | `from` | `''` | Semantically required while `enabled: true`: a non-empty, plausible address. `''` means not configured yet. |
 | `to` | `[]` | Semantically required while `enabled: true`: after the address rule and deduplication, at least one recipient. An empty or entirely invalid list refuses to mount. |
 | `includeSubagents` | `false` | Turning this on sends subagent output, subagent questions, and subagent approvals too; read the security section first. |
@@ -561,7 +551,7 @@ inherited process environment                 (read-only fallback)
 $DSH_HOME/.env                                (read-only fallback)
 ```
 
-The managed store wins over the environment: a value saved through the card, or written in this file,
+The managed store wins over the environment: a value saved through the settings page, or written in this file,
 takes effect even when `DSH_MAIL_SMTP_PASSWORD` is also exported in the launching shell. Removing the
 stored value reveals the environment fallback again. `describe()` reports the supplying layer as
 `source` — `file`, `env`, `project-env` or `user-env` — and reports `writable: true` for all four,
@@ -688,7 +678,7 @@ remove that injection instead.
 | A question call produced no email although the switch is on | Look for `question.unparsable`, which carries `dropReason` and `argumentsReadable` and nothing else — the argument text is deliberately not logged. |
 | No approval email arrived | `notifyApprovals` is `false` by default. Check that the ask actually appended an `approval/asked` audit event: nothing is mailed from `approval/request`, and nothing at all from `approval/decided`. |
 | A Save is refused and says the configuration is invalid | The message names the offending field, e.g. `$.smtpPort expected number <= 65535`. Nothing was written and the running configuration is untouched. Fix the value and Save again. |
-| The configuration card is missing from the plugin's page | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is inside the declared range `>=0.2.1-rc.3 <0.2.2`; the card is contributed only while the entry is composed. |
+| **Email alerts** is missing from the Settings window | The Host is not serving this entry's configuration. Check that the row is mounted at all (`dsh --profile <p> --dump-config`) and that DSH is inside the declared range `>=0.2.1-rc.3 <0.2.2`; the page is contributed only while the entry is composed. |
 | A one-shot `headless` run sends no mail and logs `credential-missing` | DSH `0.2.1-rc.2`'s shipped `headless` bundle disables the managed credential store by design for one-shot jobs, so this plugin's `CredentialRef` cannot resolve. Supplying `DSH_MAIL_SMTP_PASSWORD` only through the launch environment is not a substitute: the host's headless environment fallback covers DSH's own model API-key routes, while this plugin reads the password only through the Credential service. Restore the `credentials` / `authorization` / `deepseek-account` rows (the `dsh-headless` README's Credentials section documents the recipe), or run a profile that keeps the service. The plugin refuses to send rather than failing open; Web and desktop profiles are unaffected. |
 | A `settings.yaml` from an older release | DSH `0.1.7` imports its sections into the profile automatically at boot and renames the file to `settings.yaml.imported`. The original is never deleted, and no migration step is needed. See below. |
 
