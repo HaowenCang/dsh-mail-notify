@@ -24,7 +24,7 @@ import { Config } from '../../src/config.ts'
 /** One node of a serialized Schemastery schema. */
 interface SerializedNode {
   type?: string
-  meta?: { volatile?: boolean; role?: string }
+  meta?: { volatile?: boolean; role?: string; default?: unknown; min?: number; max?: number }
   /** The root object node's field-name → uid map. */
   dict?: Record<string, number>
 }
@@ -41,6 +41,11 @@ export interface HostField {
   readonly field: string
   /** Whether the field is a `Volatile` reference, so a Web edit applies live. */
   readonly volatile: boolean
+  /** The schema default, as serialized. */
+  readonly defaultValue: unknown
+  /** Declared numeric bounds, when the field has them. */
+  readonly min: number | undefined
+  readonly max: number | undefined
 }
 
 /**
@@ -65,7 +70,13 @@ export function hostConfigFields(): HostField[] {
     if (node === undefined) {
       throw new Error(`Config.toJSON() carries no node for ${field} (uid ${uid})`)
     }
-    return { field, volatile: node.meta?.volatile === true }
+    return {
+      field,
+      volatile: node.meta?.volatile === true,
+      defaultValue: node.meta?.default,
+      min: node.meta?.min,
+      max: node.meta?.max,
+    }
   })
 }
 

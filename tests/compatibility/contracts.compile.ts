@@ -42,10 +42,20 @@ import type {
   ConfigForm,
   ConfigFormSnapshot,
   ConfigForms,
+  SettingsSectionIconOwnerProps,
+  SettingsSectionOwnerProps,
 } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ConfigPageForm, PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
-import { BUNDLE_CONFIG_SLOT, MAIL_NOTIFY_PACKAGE_NAME, type ClientContext } from '../../src/client/contracts.ts'
+import {
+  BUNDLE_CONFIG_SLOT,
+  MAIL_NOTIFY_PACKAGE_NAME,
+  SETTINGS_SECTION_ICON_SLOT,
+  SETTINGS_SECTION_ID,
+  SETTINGS_SECTION_ORDER,
+  SETTINGS_SECTION_SLOT,
+  type ClientContext,
+} from '../../src/client/contracts.ts'
 import type { MailNotifyCardFace } from '../../src/client/controller.ts'
 import { SETTINGS_NAMESPACE } from '../../src/protocol.ts'
 
@@ -102,6 +112,28 @@ export function slotContractIsKnown(ctx: ClientContext): void {
   const sample: PluginConfigViewProps = { view: 'page' }
   const summary: PluginConfigViewProps = { view: 'summary' }
   void [sample, summary]
+}
+
+/**
+ * The Settings window's section list and its icon list are known `SlotMap`
+ * entries, with the owner props this plugin's page and icon are written
+ * against: `close` for a section, `size`/`active` for an icon. A section is a
+ * list entry, so it carries `id`, `order`, and a (thunked) `label`; the icon
+ * pairs with it by the same `id`.
+ */
+export function settingsSectionContractIsKnown(ctx: ClientContext): void {
+  const section: typeof SETTINGS_SECTION_SLOT = 'settings.section'
+  const icon: typeof SETTINGS_SECTION_ICON_SLOT = 'settings.section.icon'
+  ctx.slots.register(
+    { name: section, id: SETTINGS_SECTION_ID, order: SETTINGS_SECTION_ORDER, label: () => 'label', locale: 'dsh-mail-notify' },
+    (_props: SettingsSectionOwnerProps) => null,
+  )
+  ctx.slots.register({ name: icon, id: SETTINGS_SECTION_ID }, (_props: SettingsSectionIconOwnerProps) => null)
+  ctx.slots.inject(section, () => () => undefined)
+  ctx.slots.inject(icon, () => () => undefined)
+  const owner: SettingsSectionOwnerProps = { close: () => undefined }
+  const iconOwner: SettingsSectionIconOwnerProps = { size: 16, active: false }
+  void [owner, iconOwner]
 }
 
 /**

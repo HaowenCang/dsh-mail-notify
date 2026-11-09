@@ -1,8 +1,9 @@
 /**
- * DOM test support for the card's disclosure and localization surfaces.
+ * DOM test support for the settings page's layout, disclosure, and
+ * localization surfaces.
  *
- * The card is a React component, and the collapse and localization contracts
- * under test are DOM contracts (which controls exist, what `aria-expanded`
+ * The page is a React component, and the contracts under test are DOM
+ * contracts (which controls exist, what the Advanced section's `aria-expanded`
  * says, which drafts survive a re-render). They therefore have to be asserted
  * against a mounted component in a DOM, not against a pure function.
  *
@@ -209,9 +210,35 @@ function makeSnapshot(layers: Layers): Record<string, unknown> {
 }
 
 /**
+ * The composition layer every fake host starts with: a complete sending
+ * account, so the Host's "required while enabled" rule is satisfied and a test
+ * about some other field can save. A test about setup or the required rule
+ * empties it first (`host.base = {}` is not possible — mutate it instead, or use
+ * {@link emptyHost}).
+ */
+export const SMTP_BASE: Readonly<Record<string, unknown>> = {
+  smtpHost: 'smtp.base.invalid',
+  smtpUser: 'sender@example.invalid',
+  from: 'sender@example.invalid',
+  to: ['reader@example.invalid'],
+}
+
+/**
+ * A fake host with no sending account at all — what a fresh install looks
+ * like: enabled by default, nothing filled in.
+ *
+ * @returns the fake host.
+ */
+export function emptyHost(): FakeHost {
+  const host = fakeHost()
+  for (const key of Object.keys(SMTP_BASE)) delete host.base[key]
+  return host
+}
+
+/**
  * Build a fake host with sensible answers.
  *
- * @returns the fake host, ready for a card to bind against.
+ * @returns the fake host, ready for a page to bind against.
  */
 export function fakeHost(): FakeHost {
   let gate: Promise<void> = Promise.resolve()
@@ -220,7 +247,7 @@ export function fakeHost(): FakeHost {
 
   const host: FakeHost = {
     ctx: undefined as unknown as ClientContext,
-    base: {},
+    base: { ...SMTP_BASE },
     get section(): Record<string, unknown> {
       return { ...host.base, ...host.user }
     },
@@ -384,9 +411,9 @@ export interface Mounted {
   root: Root
   /** The locale seat the card renders through. */
   seat: LocaleSeat
-  /** The disclosure control. */
+  /** The Advanced section's disclosure control. */
   toggle(): HTMLButtonElement
-  /** The disclosure region, by the id `aria-controls` names. */
+  /** The Advanced section's region, by the id `aria-controls` names. */
   region(): HTMLElement
   /** One form control by its `name` attribute. */
   field(name: string): HTMLInputElement | HTMLSelectElement
@@ -515,6 +542,20 @@ export async function type(input: HTMLInputElement, text: string): Promise<void>
     setter?.call(input, text)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
+}
+
+/**
+ * Set a switch (a checkbox with `role="switch"`) to one state by clicking it,
+ * the way a person would — and only when it is not already there.
+ *
+ * @param control - the switch.
+ * @param on - the wanted state.
+ */
+export async function setSwitch(control: HTMLInputElement | HTMLSelectElement, on: boolean): Promise<void> {
+  const input = control as HTMLInputElement
+  if (input.type !== 'checkbox') throw new Error(`${input.name} is not a switch`)
+  if (input.checked === on) return
+  await click(input)
 }
 
 /**

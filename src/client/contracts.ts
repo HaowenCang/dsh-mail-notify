@@ -82,7 +82,12 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {
+  ConfigForm,
+  ConfigFormSnapshot,
+  SettingsSectionIconOwnerProps,
+  SettingsSectionOwnerProps,
+} from '@deepseek-ai/dsh-client-ui-settings/client'
 
 /**
  * The client root context DSH hands to a plugin's browser `apply`.
@@ -107,13 +112,45 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /**
+ * The Settings window's page list — where this plugin's settings page lives.
+ *
+ * A list slot rendered by the Settings shell (`dsh-client-ui-settings-general`):
+ * each entry is one navigation row plus the page it opens, ordered by `order`.
+ * This is where every feature with its own settings puts them, and where a
+ * person who presses Ctrl+, / ⌘+, looks first.
+ */
+export const SETTINGS_SECTION_SLOT = 'settings.section'
+
+/**
+ * The navigation icon list, matched to a section by registration `id`.
+ *
+ * Optional: without an icon the shell draws its default glyph.
+ */
+export const SETTINGS_SECTION_ICON_SLOT = 'settings.section.icon'
+
+/**
+ * This plugin's section id. Also the icon registration's id, which is how the
+ * shell pairs the two.
+ */
+export const SETTINGS_SECTION_ID = 'mail-notify'
+
+/**
+ * Navigation position. The built-in pages sit at Account −10, General 0,
+ * Models 10, Plugins 15, and Agent presets 20; 30 puts this page right after
+ * them, ahead of later feature pages.
+ */
+export const SETTINGS_SECTION_ORDER = 30
+
+/**
  * The slot one bundle's configuration occupies inside the Plugins page.
  *
  * A keyed slot: the page resolves it with `entryKey: pkg.name`, so the
  * registration must supply `key` — the *package* name — rather than `id`. The
- * page renders the entry with `view: 'page'` only; a bundle has no one-liner
- * position in this contract, and a registration that answered `view: 'summary'`
- * with content would never be drawn.
+ * page renders the entry with `view: 'page'` only.
+ *
+ * The form itself lives on the Settings page above; this slot
+ * carries only a short note pointing there, so a person who opens the plugin's
+ * detail page still learns where its settings are.
  */
 export const BUNDLE_CONFIG_SLOT = 'plugins.bundle.config'
 
@@ -130,6 +167,12 @@ export const MAIL_NOTIFY_PACKAGE_NAME = 'dsh-mail-notify'
 
 /** The client root context type this plugin's browser half consumes. */
 export type ClientContext = Context
+
+/** What the Settings shell passes a section page (`close`). */
+export type SettingsSectionProps = SettingsSectionOwnerProps
+
+/** What the Settings navigation passes a section icon (`size`, `active`). */
+export type SettingsSectionIconProps = SettingsSectionIconOwnerProps
 
 /**
  * The props the bundle configuration slot renders its entry with.

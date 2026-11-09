@@ -1,21 +1,30 @@
 /**
- * The card's field table, and the pure conversions between stored values and
- * the draft text a control renders.
+ * The settings page's field table, and the pure conversions between stored
+ * values and the draft text a control renders.
  *
  * Kept free of React, of the wire, and of the settings transport: a control
  * shows `format(value)` and stages `parse(text)`, and both directions are
  * decidable without a browser. That is what lets the whole form be tested
- * against the same table the card renders from, rather than against a second
+ * against the same table the page renders from, rather than against a second
  * copy of the rules embedded in a component.
  *
- * Labels and hints are locale keys, not text: the card resolves them at render
- * time through the DSH translate seat, so the same table serves both shipped
- * languages without a branch. A refusal carries both its semantic identity
- * ({@link FieldIssue}, translated at render) and its English rendering
- * (`message`, for callers outside the render path) — never a pre-translated
- * string alone, which would freeze the language at edit time.
+ * ## How the table is grouped
  *
- * The numeric bounds mirror the host schema in `src/config.ts`. They are a
+ * The groups follow the questions a person setting the plugin up actually asks,
+ * in the order they ask them — "is it on?", "when will I get mail?", "how is it
+ * sent?", "what does the mail contain?", "when should it stay quiet?" — and
+ * everything a first-time user never needs to touch sits in one Advanced group
+ * the page keeps collapsed. The order of {@link ALL_FIELDS} is the render order.
+ *
+ * Labels, hints, placeholders, and units are locale keys, not text: the page
+ * resolves them at render time through the DSH translate seat, so the same
+ * table serves both shipped languages without a branch. A refusal carries both
+ * its semantic identity ({@link FieldIssue}, translated at render) and its
+ * English rendering (`message`, for callers outside the render path) — never a
+ * pre-translated string alone, which would freeze the language at edit time.
+ *
+ * The numeric bounds and the `fallback` defaults mirror the host schema in
+ * `src/config.ts` (`tests/client/fields.test.ts` pins the parity). They are a
  * preview, not a boundary: the host re-validates every write, and a bound that
  * drifted here would produce a rejected save rather than an accepted bad value.
  *
@@ -27,64 +36,103 @@ import { en, formatMailText, type MailNotifyLocaleKey } from './locale.ts'
 /** How one control converts between its stored value and its draft text. */
 export type FieldKind = 'boolean' | 'natural' | 'text' | 'addresses' | 'lines'
 
-/** One field of the settings namespace, as the card renders it. */
+/** One labelled choice of a two-valued field rendered as a select. */
+export interface FieldChoice {
+  /** The draft text the choice stages (`'true'` / `'false'`). */
+  readonly value: 'true' | 'false'
+  readonly labelKey: MailNotifyLocaleKey
+}
+
+/** One field of the settings namespace, as the page renders it. */
 export interface FieldDef {
   /** Key inside the `dsh-mail-notify` settings section. */
   readonly field: string
   readonly kind: FieldKind
   /** Locale key of the control label. */
   readonly labelKey: MailNotifyLocaleKey
-  /** Locale key of the one line of guidance under the control. */
+  /** Locale key of the guidance under the label. */
   readonly hintKey: MailNotifyLocaleKey
+  /** Locale key of an example shown inside an empty control. */
+  readonly placeholderKey?: MailNotifyLocaleKey
+  /** Locale key of the unit rendered after a numeric control. */
+  readonly unitKey?: MailNotifyLocaleKey
   /**
-   * Template params for the hint whose values are other locale keys, resolved
-   * through the same translate seat at render time.
+   * Named choices for a boolean whose two values are not "on" and "off" — the
+   * encryption mode, say. A boolean without choices renders as a switch.
    */
-  readonly hintTerms?: Readonly<Record<string, MailNotifyLocaleKey>>
+  readonly choices?: readonly [FieldChoice, FieldChoice]
   /** Inclusive numeric bounds; `natural` only. */
   readonly min?: number
   readonly max?: number
   /**
+   * The schema default — what the field resolves to when neither the user nor
+   * the deployment's composition layer sets it. Shown as the value a "Restore
+   * default" goes back to whenever the composition layer is silent.
+   */
+  readonly fallback: unknown
+  /**
+   * Whether the Host refuses a configuration without this field while the
+   * plugin is enabled (`config-check.ts`). The page marks these fields and
+   * refuses to submit a save that would leave one empty — the Host would refuse
+   * it anyway, only later and in English.
+   */
+  readonly required?: boolean
+  /**
    * Whether the field's value is a decision about privacy rather than about
    * delivery.
    *
-   * The card renders these together and above the rest: both are off by
-   * default because turning one on sends content the operator did not author —
-   * a question's text, or a tool name and its asker's reason — to a third-party
-   * mail system.
+   * Both such switches are off by default because turning one on sends content
+   * the operator did not author — a question's text, or a tool name and its
+   * asker's reason — to a third-party mail system. The page renders a note about
+   * that next to them.
    */
   readonly privacy?: boolean
 }
 
-/** General behaviour. */
-export const GENERAL_FIELDS: readonly FieldDef[] = [
-  {
-    field: 'enabled',
-    kind: 'boolean',
-    labelKey: 'labelEnable',
-    hintKey: 'hintEnable',
-  },
-  {
-    field: 'includeSubagents',
-    kind: 'boolean',
-    labelKey: 'labelIncludeSubagents',
-    hintKey: 'hintIncludeSubagents',
-  },
-]
+/** The master switch, rendered on its own at the top of the page. */
+export const ENABLED_FIELD: FieldDef = {
+  field: 'enabled',
+  kind: 'boolean',
+  labelKey: 'labelEnable',
+  hintKey: 'hintEnable',
+  fallback: true,
+}
 
 /**
- * Notification switches.
+ * Which events send an email.
  *
- * The two human-attention switches lead the list and are rendered as the
- * card's prominent block: they are the switches that decide whether the
- * operator learns that an agent has asked for a person's input.
+ * The three settled-turn outcomes come first, in the order a turn can end; the
+ * two human-attention switches follow as a pair, so the privacy note the page
+ * renders under them sits next to exactly the two switches it is about.
  */
-export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
+export const EVENT_FIELDS: readonly FieldDef[] = [
+  {
+    field: 'notifyCompleted',
+    kind: 'boolean',
+    labelKey: 'labelCompleted',
+    hintKey: 'hintCompleted',
+    fallback: true,
+  },
+  {
+    field: 'notifyErrors',
+    kind: 'boolean',
+    labelKey: 'labelErrors',
+    hintKey: 'hintErrors',
+    fallback: false,
+  },
+  {
+    field: 'notifyMaxTokens',
+    kind: 'boolean',
+    labelKey: 'labelMaxTokens',
+    hintKey: 'hintMaxTokens',
+    fallback: true,
+  },
   {
     field: 'notifyQuestions',
     kind: 'boolean',
     labelKey: 'labelQuestions',
     hintKey: 'hintQuestions',
+    fallback: false,
     privacy: true,
   },
   {
@@ -92,51 +140,36 @@ export const NOTIFICATION_FIELDS: readonly FieldDef[] = [
     kind: 'boolean',
     labelKey: 'labelApprovals',
     hintKey: 'hintApprovals',
+    fallback: false,
     privacy: true,
   },
   {
-    field: 'notifyCompleted',
+    field: 'includeSubagents',
     kind: 'boolean',
-    labelKey: 'labelCompleted',
-    hintKey: 'hintCompleted',
-  },
-  {
-    field: 'notifyErrors',
-    kind: 'boolean',
-    labelKey: 'labelErrors',
-    hintKey: 'hintErrors',
-  },
-  {
-    field: 'notifyMaxTokens',
-    kind: 'boolean',
-    labelKey: 'labelMaxTokens',
-    hintKey: 'hintMaxTokens',
-  },
-  {
-    field: 'minTurnDurationMs',
-    kind: 'natural',
-    min: 0,
-    max: 3_600_000,
-    labelKey: 'labelMinTurnDuration',
-    hintKey: 'hintMinTurnDuration',
-  },
-  {
-    field: 'mutedWorkspaces',
-    kind: 'lines',
-    labelKey: 'labelMutedWorkspaces',
-    hintKey: 'hintMutedWorkspaces',
-  },
-  {
-    field: 'mutedSessions',
-    kind: 'lines',
-    labelKey: 'labelMutedSessions',
-    hintKey: 'hintMutedSessions',
+    labelKey: 'labelIncludeSubagents',
+    hintKey: 'hintIncludeSubagents',
+    fallback: false,
   },
 ]
 
-/** SMTP delivery settings. */
+/**
+ * The sending account.
+ *
+ * The password is not here: it is a credential, written through its own
+ * write-only control, which the page renders between the user name and the
+ * sender address because that is where a person filling in an account expects
+ * it.
+ */
 export const SMTP_FIELDS: readonly FieldDef[] = [
-  { field: 'smtpHost', kind: 'text', labelKey: 'labelSmtpHost', hintKey: 'hintSmtpHost' },
+  {
+    field: 'smtpHost',
+    kind: 'text',
+    labelKey: 'labelSmtpHost',
+    hintKey: 'hintSmtpHost',
+    placeholderKey: 'placeholderSmtpHost',
+    fallback: '',
+    required: true,
+  },
   {
     field: 'smtpPort',
     kind: 'natural',
@@ -144,64 +177,122 @@ export const SMTP_FIELDS: readonly FieldDef[] = [
     max: 65535,
     labelKey: 'labelSmtpPort',
     hintKey: 'hintSmtpPort',
+    fallback: 587,
   },
   {
     field: 'smtpSecure',
     kind: 'boolean',
     labelKey: 'labelSecure',
     hintKey: 'hintSecure',
-    hintTerms: { implicit: 'termImplicitTls', starttls: 'termStartTls' },
+    choices: [
+      { value: 'true', labelKey: 'optionSecureTls' },
+      { value: 'false', labelKey: 'optionSecureStartTls' },
+    ],
+    fallback: false,
   },
-  { field: 'smtpUser', kind: 'text', labelKey: 'labelSmtpUser', hintKey: 'hintSmtpUser' },
+  {
+    field: 'smtpUser',
+    kind: 'text',
+    labelKey: 'labelSmtpUser',
+    hintKey: 'hintSmtpUser',
+    placeholderKey: 'placeholderAddress',
+    fallback: '',
+    required: true,
+  },
   {
     field: 'from',
     kind: 'text',
     labelKey: 'labelFrom',
     hintKey: 'hintFrom',
+    placeholderKey: 'placeholderAddress',
+    fallback: '',
+    required: true,
   },
   {
     field: 'to',
     kind: 'addresses',
     labelKey: 'labelRecipients',
     hintKey: 'hintRecipients',
+    placeholderKey: 'placeholderRecipients',
+    fallback: [],
+    required: true,
   },
 ]
 
-/**
- * The credential reference control.
- *
- * Deliberately separated from {@link SMTP_FIELDS}: this field is a *name*, and
- * the password it names is written through the credentials domain and never
- * rides a settings response. Keeping the two apart in the table is what keeps
- * that distinction visible at the render site.
- */
-export const CREDENTIAL_REF_FIELD: FieldDef = {
-  field: 'smtpPasswordCredential',
-  kind: 'text',
-  labelKey: 'labelCredentialRef',
-  hintKey: 'hintCredentialRef',
-}
-
-/** Message composition. */
+/** What the email contains. */
 export const MESSAGE_FIELDS: readonly FieldDef[] = [
   {
     field: 'includeMetadata',
     kind: 'boolean',
     labelKey: 'labelIncludeMetadata',
     hintKey: 'hintIncludeMetadata',
+    fallback: true,
   },
   {
     field: 'includeUserPrompt',
     kind: 'boolean',
     labelKey: 'labelIncludeUserPrompt',
     hintKey: 'hintIncludeUserPrompt',
+    fallback: false,
   },
   {
     field: 'includeFooter',
     kind: 'boolean',
     labelKey: 'labelIncludeFooter',
     hintKey: 'hintIncludeFooter',
+    fallback: true,
   },
+]
+
+/** When the plugin stays quiet. */
+export const QUIET_FIELDS: readonly FieldDef[] = [
+  {
+    field: 'minTurnDurationMs',
+    kind: 'natural',
+    min: 0,
+    max: 3_600_000,
+    labelKey: 'labelMinTurnDuration',
+    hintKey: 'hintMinTurnDuration',
+    unitKey: 'unitMs',
+    fallback: 0,
+  },
+  {
+    field: 'mutedWorkspaces',
+    kind: 'lines',
+    labelKey: 'labelMutedWorkspaces',
+    hintKey: 'hintMutedWorkspaces',
+    placeholderKey: 'placeholderMutedWorkspaces',
+    fallback: [],
+  },
+  {
+    field: 'mutedSessions',
+    kind: 'lines',
+    labelKey: 'labelMutedSessions',
+    hintKey: 'hintMutedSessions',
+    placeholderKey: 'placeholderMutedSessions',
+    fallback: [],
+  },
+]
+
+/**
+ * The credential reference control.
+ *
+ * Deliberately separate from {@link SMTP_FIELDS}: this field is a *name*, and
+ * the password it names is written through the credentials domain and never
+ * rides a settings response. Almost nobody needs to change it, which is why the
+ * page renders it under Advanced.
+ */
+export const CREDENTIAL_REF_FIELD: FieldDef = {
+  field: 'smtpPasswordCredential',
+  kind: 'text',
+  labelKey: 'labelCredentialRef',
+  hintKey: 'hintCredentialRef',
+  fallback: 'DSH_MAIL_SMTP_PASSWORD',
+}
+
+/** Tuning a first-time user never needs; rendered collapsed. */
+export const ADVANCED_FIELDS: readonly FieldDef[] = [
+  CREDENTIAL_REF_FIELD,
   {
     field: 'maxBodyChars',
     kind: 'natural',
@@ -209,11 +300,9 @@ export const MESSAGE_FIELDS: readonly FieldDef[] = [
     max: 1000000,
     labelKey: 'labelMaxBody',
     hintKey: 'hintMaxBody',
+    unitKey: 'unitChars',
+    fallback: 100_000,
   },
-]
-
-/** Queue and retry. */
-export const DELIVERY_FIELDS: readonly FieldDef[] = [
   {
     field: 'queueSize',
     kind: 'natural',
@@ -221,6 +310,7 @@ export const DELIVERY_FIELDS: readonly FieldDef[] = [
     max: 10000,
     labelKey: 'labelQueueSize',
     hintKey: 'hintQueueSize',
+    fallback: 100,
   },
   {
     field: 'retryAttempts',
@@ -229,6 +319,7 @@ export const DELIVERY_FIELDS: readonly FieldDef[] = [
     max: 10,
     labelKey: 'labelRetryAttempts',
     hintKey: 'hintRetryAttempts',
+    fallback: 3,
   },
   {
     field: 'retryBaseDelayMs',
@@ -237,6 +328,8 @@ export const DELIVERY_FIELDS: readonly FieldDef[] = [
     max: 60000,
     labelKey: 'labelRetryBaseDelay',
     hintKey: 'hintRetryBaseDelay',
+    unitKey: 'unitMs',
+    fallback: 1000,
   },
   {
     field: 'maxDedupeEntries',
@@ -245,18 +338,197 @@ export const DELIVERY_FIELDS: readonly FieldDef[] = [
     max: 100000,
     labelKey: 'labelDedupe',
     hintKey: 'hintDedupe',
+    fallback: 1000,
   },
 ]
 
 /** Every field the namespace owns, in render order. */
 export const ALL_FIELDS: readonly FieldDef[] = [
-  ...GENERAL_FIELDS,
-  ...NOTIFICATION_FIELDS,
+  ENABLED_FIELD,
+  ...EVENT_FIELDS,
   ...SMTP_FIELDS,
-  CREDENTIAL_REF_FIELD,
   ...MESSAGE_FIELDS,
-  ...DELIVERY_FIELDS,
+  ...QUIET_FIELDS,
+  ...ADVANCED_FIELDS,
 ]
+
+/** The settled-turn and human-attention switches, in the order the status line lists them. */
+export const EVENT_SWITCHES: readonly FieldDef[] = EVENT_FIELDS.filter((def) => def.field.startsWith('notify'))
+
+/**
+ * Look one field up by name.
+ *
+ * @param field - the field name.
+ * @returns its definition, or `undefined` for a name the namespace does not own.
+ */
+export function fieldDef(field: string): FieldDef | undefined {
+  return ALL_FIELDS.find((entry) => entry.field === field)
+}
+
+/**
+ * How a person obtains the password a provider wants for SMTP.
+ *
+ * Every provider listed here refuses the ordinary login password over SMTP:
+ * the Chinese providers issue an "authorization code" (授权码), Gmail an "app
+ * password", Tencent Exmail a "client password" when secure login is on. The
+ * steps are written against what the provider's own help pages name, and they
+ * name the setting rather than a full menu path wherever the provider has been
+ * moving its menus, so a redesign leaves them true.
+ */
+export interface SmtpPresetGuide {
+  /** Title of the guide, rendered with `{ name }`. */
+  readonly titleKey: MailNotifyLocaleKey
+  /** The steps in order, each rendered with `{ name }`. */
+  readonly stepKeys: readonly MailNotifyLocaleKey[]
+  /** A caveat shown under the steps, if the provider has one worth knowing. */
+  readonly noteKey?: MailNotifyLocaleKey
+  /** Where the first step starts. Opened in a new tab. */
+  readonly url: string
+  /** Label of the link to {@link url}, rendered with `{ name }`. */
+  readonly linkKey: MailNotifyLocaleKey
+}
+
+/**
+ * A common mail provider's SMTP endpoint, for the page's quick-fill control.
+ *
+ * Every entry is the provider's published SSL/TLS endpoint on port 465. The
+ * quick fill only stages drafts — nothing is written until Save — so a provider
+ * that changes its endpoint costs the user an edit, not a broken save.
+ */
+export interface SmtpPreset {
+  readonly id: string
+  readonly labelKey: MailNotifyLocaleKey
+  readonly host: string
+  readonly port: number
+  readonly secure: boolean
+  /**
+   * Address domains this provider serves, lower case. A username at one of
+   * them identifies the provider. Empty for a provider that hosts other
+   * people's domains (Exmail), which no address can identify.
+   */
+  readonly domains: readonly string[]
+  /** How to get the SMTP password from this provider. */
+  readonly guide: SmtpPresetGuide
+}
+
+/** Steps shared by NetEase's 163 and 126 mailboxes, which have the same settings page. */
+const NETEASE_STEPS: readonly MailNotifyLocaleKey[] = ['guideNetease1', 'guideNetease2', 'guideNetease3', 'guideNetease4']
+
+/** The quick-fill presets, in the order the control lists them. */
+export const SMTP_PRESETS: readonly SmtpPreset[] = [
+  {
+    id: 'qq',
+    labelKey: 'presetQq',
+    host: 'smtp.qq.com',
+    port: 465,
+    secure: true,
+    domains: ['qq.com', 'foxmail.com'],
+    guide: {
+      titleKey: 'guideTitleCode',
+      stepKeys: ['guideQq1', 'guideQq2', 'guideQq3', 'guideQq4'],
+      noteKey: 'guideQqNote',
+      url: 'https://mail.qq.com/',
+      linkKey: 'guideOpenWebmail',
+    },
+  },
+  {
+    id: '163',
+    labelKey: 'preset163',
+    host: 'smtp.163.com',
+    port: 465,
+    secure: true,
+    domains: ['163.com'],
+    guide: {
+      titleKey: 'guideTitleCode',
+      stepKeys: NETEASE_STEPS,
+      noteKey: 'guideNeteaseNote',
+      url: 'https://mail.163.com/',
+      linkKey: 'guideOpenWebmail',
+    },
+  },
+  {
+    id: '126',
+    labelKey: 'preset126',
+    host: 'smtp.126.com',
+    port: 465,
+    secure: true,
+    domains: ['126.com'],
+    guide: {
+      titleKey: 'guideTitleCode',
+      stepKeys: NETEASE_STEPS,
+      noteKey: 'guideNeteaseNote',
+      url: 'https://mail.126.com/',
+      linkKey: 'guideOpenWebmail',
+    },
+  },
+  {
+    id: 'exmail',
+    labelKey: 'presetExmail',
+    host: 'smtp.exmail.qq.com',
+    port: 465,
+    secure: true,
+    domains: [],
+    guide: {
+      titleKey: 'guideTitleExmail',
+      stepKeys: ['guideExmail1', 'guideExmail2', 'guideExmail3'],
+      url: 'https://exmail.qq.com/',
+      linkKey: 'guideOpenWebmail',
+    },
+  },
+  {
+    id: 'gmail',
+    labelKey: 'presetGmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    domains: ['gmail.com', 'googlemail.com'],
+    guide: {
+      titleKey: 'guideTitleGoogle',
+      stepKeys: ['guideGmail1', 'guideGmail2', 'guideGmail3'],
+      noteKey: 'guideGmailNote',
+      url: 'https://myaccount.google.com/apppasswords',
+      linkKey: 'guideOpenAppPasswords',
+    },
+  },
+]
+
+/** The guide for a server no preset matches: what every provider has in common. */
+export const GENERIC_GUIDE: Omit<SmtpPresetGuide, 'url' | 'linkKey'> = {
+  titleKey: 'guideTitleGeneric',
+  stepKeys: ['guideGeneric1', 'guideGeneric2', 'guideGeneric3', 'guideGeneric4'],
+  noteKey: 'guideGenericNote',
+}
+
+/**
+ * The preset whose server this is, compared without case or surrounding space.
+ *
+ * @param host - a server name, staged or saved.
+ * @returns the matching preset, if any.
+ */
+export function presetForHost(host: unknown): SmtpPreset | undefined {
+  if (typeof host !== 'string') return undefined
+  const wanted = host.trim().toLowerCase()
+  if (wanted === '') return undefined
+  return SMTP_PRESETS.find((preset) => preset.host === wanted)
+}
+
+/**
+ * The preset whose mailboxes this address belongs to, by its domain.
+ *
+ * @param address - an email address, typically the SMTP username.
+ * @returns the matching preset, if the domain is one a preset serves.
+ */
+export function presetForAddress(address: unknown): SmtpPreset | undefined {
+  if (typeof address !== 'string') return undefined
+  const at = address.lastIndexOf('@')
+  if (at <= 0) return undefined
+  const domain = address
+    .slice(at + 1)
+    .trim()
+    .toLowerCase()
+  if (domain === '') return undefined
+  return SMTP_PRESETS.find((preset) => preset.domains.includes(domain))
+}
 
 /** A draft that is a value this field accepts. */
 export interface ParsedValue {
@@ -309,13 +581,10 @@ function invalid(def: FieldDef, key: MailNotifyLocaleKey, params: Readonly<Recor
   }
 }
 
-/** Key used by the credential reference when no section value is present. */
-const DEFAULT_CREDENTIAL_REF = 'DSH_MAIL_SMTP_PASSWORD'
-
 /**
  * Read the credential reference the section names, or the well-known default.
  *
- * The default is the same name the bundle's own documentation uses, so a card
+ * The default is the same name the bundle's own documentation uses, so a page
  * with an empty section shows the reference a send would actually resolve
  * rather than a blank control that hides it.
  *
@@ -323,14 +592,14 @@ const DEFAULT_CREDENTIAL_REF = 'DSH_MAIL_SMTP_PASSWORD'
  * @returns the reference name in effect.
  */
 export function credentialRefFrom(value: unknown): string {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : DEFAULT_CREDENTIAL_REF
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : (CREDENTIAL_REF_FIELD.fallback as string)
 }
 
 /**
  * Render a stored value as the control's draft text.
  *
  * An absent value renders as the empty string for every kind: the control then
- * reads as "inherit", which is exactly what the field will do until it is
+ * reads as "default", which is exactly what the field will do until it is
  * written.
  *
  * @param def - the field definition.
@@ -349,7 +618,11 @@ export function formatField(def: FieldDef, value: unknown): string {
     case 'addresses':
       return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string').join(', ') : ''
     case 'lines':
-      return Array.isArray(value) ? (value.length === 0 ? '[]' : value.filter((entry) => typeof entry === 'string').join('\n')) : ''
+      return Array.isArray(value)
+        ? value.length === 0
+          ? '[]'
+          : value.filter((entry) => typeof entry === 'string').join('\n')
+        : ''
   }
 }
 
@@ -357,7 +630,7 @@ export function formatField(def: FieldDef, value: unknown): string {
  * Read a draft as the write it stages.
  *
  * An empty draft is a *clear*, not an empty value: clearing a control and
- * saving is the same gesture as resetting the field, and the host removes the
+ * saving is the same gesture as restoring the default, and the host removes the
  * user-layer entry so the field re-inherits the composition layer.
  *
  * @param def - the field definition.
@@ -395,7 +668,16 @@ export function parseField(def: FieldDef, text: string): ParsedField {
       return { kind: 'value', value: trimmed }
 
     case 'lines':
-      return { kind: 'value', value: trimmed === '[]' ? [] : trimmed.split(/\r?\n|\r/).map((entry) => entry.trim()).filter(Boolean) }
+      return {
+        kind: 'value',
+        value:
+          trimmed === '[]'
+            ? []
+            : trimmed
+                .split(/\r?\n|\r/)
+                .map((entry) => entry.trim())
+                .filter(Boolean),
+      }
 
     case 'addresses': {
       const addresses = trimmed
@@ -405,9 +687,30 @@ export function parseField(def: FieldDef, text: string): ParsedField {
       if (addresses.length === 0) return { kind: 'clear' }
       const malformed = addresses.filter((entry) => !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(entry))
       if (malformed.length > 0) {
-        return invalid(def, 'invalidAddress', { entries: malformed.join(', ') })
+        return invalid(def, 'invalidAddress', {
+          entries: malformed.join(', '),
+        })
       }
       return { kind: 'value', value: addresses }
     }
   }
+}
+
+/**
+ * Whether a value satisfies a required field's presence rule.
+ *
+ * Mirrors `config-check.ts`: a non-empty trimmed string for the text fields, at
+ * least one entry for the recipient list. Address *shape* is the parser's
+ * concern, not this one's.
+ *
+ * @param def - the field definition.
+ * @param value - the value the field would hold after a save.
+ * @returns whether the value counts as filled in.
+ */
+export function isFilled(def: FieldDef, value: unknown): boolean {
+  if (def.kind === 'addresses' || def.kind === 'lines') {
+    return Array.isArray(value) && value.some((entry) => typeof entry === 'string' && entry.trim() !== '')
+  }
+  if (typeof value === 'string') return value.trim() !== ''
+  return value !== undefined && value !== null
 }
